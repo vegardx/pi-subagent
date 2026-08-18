@@ -45,10 +45,12 @@ was delivered without corresponding evidence.
 ## Single-writer ownership
 
 Each run has a lease with owner identity, monotonic fencing token, and
-heartbeat. Every state write and external command carries the current fencing
-token. Reclamation requires process/owner evidence in addition to heartbeat
-expiry; a stale clock observation alone is insufficient. Process and session
-leases are separate with documented lock ordering.
+heartbeat. Every state write and supervisor control-channel command carries the
+current fencing token. Only the current supervisor lease holder may write stock
+Pi RPC stdin; RPC itself has no fencing field. Reclamation requires
+process/owner evidence in addition to heartbeat expiry; a stale clock
+observation alone is insufficient. Process and session leases are separate with
+documented lock ordering.
 
 Events carry schema version, sequence number, event ID, timestamp, owner, and
 fencing token. Appends and snapshots use crash-safe write/fsync/rename rules.

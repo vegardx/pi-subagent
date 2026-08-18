@@ -50,12 +50,6 @@ between child startup and receipt persistence.
 ```ts
 interface SubagentRequest {
 	operationId: OperationId;
-	owner: {
-		id: OwnerId;
-		parentSessionId?: string;
-		workflowRunId?: string;
-		workflowTaskId?: string;
-	};
 	agent: AgentSelector;
 	task: DelegatedTask;
 	contextMode: "fresh" | "fork";
@@ -64,7 +58,6 @@ interface SubagentRequest {
 	extensions?: string[];
 	skills?: string[];
 	workspace: WorkspaceRequest;
-	execution: "foreground" | "background";
 	outputSchema?: JsonSchema;
 	limits: RunLimits;
 }
@@ -76,9 +69,15 @@ interface SubagentPreflight {
 }
 
 interface MutationContext {
-	owner: OwnerId;
 	operationId: OperationId;
 	callerFence?: { scope: string; generation: number };
+}
+
+interface OwnerRegistration {
+	id: OwnerId;
+	parentSessionId?: string;
+	workflowRunId?: string;
+	resultDestination?: string;
 }
 ```
 
@@ -120,26 +119,33 @@ child release. The plan is immutable after launch authority is committed.
 ```ts
 interface SubagentServiceV1 {
 	readonly contract: SubagentRuntimeContractV1;
+	forOwner(owner: OwnerRegistration): SubagentClientV1;
+}
+
+interface SubagentClientV1 {
 	preflight(request: SubagentRequest): Promise<SubagentPreflight>;
 	launch(context: MutationContext, preflightId: string, expectedIdentitySha256: string): Promise<RunReceipt>;
-	findByOperation(owner: OwnerId, operationId: OperationId): Promise<RunReceipt | undefined>;
-	status(owner: OwnerId, runId: RunId): Promise<RunStatus>;
-	logs(owner: OwnerId, runId: RunId, options?: LogOptions): Promise<RunLogs>;
-	wait(owner: OwnerId, runId: RunId, options?: WaitOptions): Promise<RunResult>;
+	findByOperation(operationId: OperationId): Promise<RunReceipt | undefined>;
+	status(runId: RunId): Promise<RunStatus>;
+	logs(runId: RunId, options?: LogOptions): Promise<RunLogs>;
+	wait(runId: RunId, options?: WaitOptions): Promise<RunResult>;
 	steer(context: MutationContext, runId: RunId, input: ControlInput): Promise<ControlReceipt>;
 	followUp(context: MutationContext, runId: RunId, input: ControlInput): Promise<ControlReceipt>;
 	interrupt(context: MutationContext, runId: RunId, reason: StopReason): Promise<InterruptReceipt>;
 	retry(context: MutationContext, runId: RunId, policy?: RetryPolicy): Promise<RunReceipt>;
 	resume(context: MutationContext, runId: RunId, input?: ResumeInput): Promise<RunReceipt>;
 	reconcile(context: MutationContext, runId: RunId): Promise<ReconcileResult>;
-	exportArtifact(owner: OwnerId, artifact: ArtifactRef): Promise<ArtifactExport>;
+	exportArtifact(artifact: ArtifactRef): Promise<ArtifactExport>;
 	release(context: MutationContext, runId: RunId): Promise<CleanupReceipt>;
 }
 ```
 
-Every mutating operation carries a caller-chosen idempotency key. A workflow
-owner also supplies its current fencing generation; the service records the
-highest accepted generation per owner scope and rejects stale mutations.
+`forOwner` returns an opaque client bound to one trusted extension owner; model
+input cannot choose or impersonate an owner. This is authorization within the
+trusted extension process, not a security boundary against arbitrary installed
+extensions. Every mutating operation carries a caller-chosen idempotency key. A
+workflow owner also supplies its current fencing generation; the service records
+the highest accepted generation per owner scope and rejects stale mutations.
 `launch` succeeds only for the exact unexpired preflight identity and consumes
 its launch authority once. Run IDs are not bearer authorization; owner identity
 is checked for every operation. Result delivery destinations are persisted and
@@ -246,6 +252,7 @@ interface RunResult {
 	output?: ArtifactRef;
 	structuredOutput?: unknown;
 	usage: Usage;
+	usageComplete: boolean;
 	failure?: ClassifiedFailure;
 	processCleanup: CleanupOutcome;
 	workspaceCleanup: CleanupOutcome;

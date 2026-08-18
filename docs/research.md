@@ -24,7 +24,7 @@ Adopt as concepts:
 - independent ambient-extension disabling and explicit extension args;
 - acknowledged file-backed control channel;
 - session leases and validated resume descriptors;
-- process-tree cleanup proof;
+- tracked process-group cleanup proof;
 - durable background startup handshake;
 - worktree handoff preservation;
 - compact widget plus full inspector.
@@ -36,9 +36,10 @@ owner-session result routing.
 
 ### Pi SDK
 
-Use public `ModelRuntime`, `AgentSession`, `SessionManager`, `RpcClient`,
-`DefaultResourceLoader`, tool factories, `SourceInfo`, project trust, and
-`getAgentDir()`.
+Use public `ModelRuntime`, `AgentSession`, `SessionManager`, the documented
+classic RPC protocol, `DefaultResourceLoader`, tool factories, `SourceInfo`,
+project trust, and `getAgentDir()`. Implement the RPC JSONL client directly
+because the public `RpcClient` does not expose required spawn/process controls.
 
 ## Rejected defaults
 

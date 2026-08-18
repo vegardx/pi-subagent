@@ -7,6 +7,8 @@
 - A project cannot supply agents/resources before Pi project trust.
 - Provider credential material held by the runtime does not enter child prompts, journals, or artifacts.
 - Parallel mutating children cannot share an unisolated checkout accidentally.
+- Process cleanup proof is scoped to tracked birth identities/process groups
+  unless a stronger sandbox boundary can enumerate escaped descendants.
 
 ## Trust boundaries
 
@@ -34,8 +36,10 @@ hostile child requires an OS sandbox denying the supervisor root or an external
 broker with capabilities unavailable to the child.
 
 The initial runtime claims crash consistency and protection against accidental
-child writes—not protection from a malicious same-UID process. Documentation
-and tests must preserve this distinction.
+child writes—not protection from a malicious same-UID process. Owner-bound
+service clients are cooperative authorization between trusted extensions, not
+protection against arbitrary installed code. Documentation and tests must
+preserve these distinctions.
 
 ## Extension providers
 

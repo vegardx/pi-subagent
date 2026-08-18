@@ -39,9 +39,12 @@ No model-facing tool may bypass the service.
 
 ## Canonical backend
 
-The first backend is a child Pi process in classic RPC mode. It provides context
-and process isolation, active steering, cancellation, session control, and a
-structured event stream.
+The first backend is a child Pi process in classic RPC mode. The supervisor
+implements the documented JSONL protocol directly so it can own process groups,
+stdio, readiness, and terminal evidence; Pi's convenience `RpcClient` does not
+expose the required spawn controls. Stock RPC is not reconnectable: supervisor
+loss interrupts the child, and recovery uses validated session resume rather
+than live stdio adoption.
 
 Children start with ambient extensions disabled. The launch plan supplies only
 the extension providers needed for granted tools:
@@ -65,7 +68,9 @@ Use Pi rather than rebuilding:
 - extension lifecycle and UI APIs.
 
 This repository owns what Pi does not provide: subagent supervision, process
-trees, run persistence, worktrees, capability projection, and recovery.
+trees, run persistence, worktrees, capability projection, named-agent discovery,
+and recovery. Pi packages do not define an agent resource category, so packaged
+agent definitions use an explicit pi-subagent manifest convention.
 
 ## Dependency rule
 
