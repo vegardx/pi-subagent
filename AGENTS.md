@@ -3,11 +3,13 @@
 `pi-subagent` is a native Pi subagent runtime. Keep the repository independent
 from pi-workflow and pi-maestro policy.
 
-## Current phase
+## Contract discipline
 
-The repository is documentation-first. Do not implement runtime behavior until
-the glossary, contracts, state transitions, authority model, and acceptance
-criteria are explicit.
+- Treat the glossary and public contracts as the source of truth for terminology
+  and ownership.
+- Update contracts, state transitions, authority rules, and acceptance coverage
+  when behavior changes.
+- Do not claim behavior that is not implemented and validated.
 
 ## Design rules
 
