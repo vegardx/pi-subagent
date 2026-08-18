@@ -6,7 +6,9 @@
 - Agent definitions set ceilings; calls may only narrow them.
 - Ambient child extensions are disabled by default.
 - A tool grant and the extension implementing it are one registry declaration.
-- Project-controlled agents and resources require Pi project trust.
+- Project-controlled `.pi` resources and agent/skill definitions require Pi
+  project trust. Pi's ordinary context-file behavior is broader; pi-subagent may
+  apply a documented stricter explicit-context policy to children.
 - Worktrees isolate Git state, not operating-system access.
 - Sandboxing and filesystem write confinement must be enforced below prompts.
 

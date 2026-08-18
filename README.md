@@ -32,6 +32,7 @@ stages or define delivery policy.
 - [Acceptance inventory](docs/acceptance.md)
 - [Implementation research](docs/research.md)
 - [Research source ledger](docs/research-sources.md)
+- [Implementation plan](docs/implementation-plan.md)
 - [Roadmap](docs/roadmap.md)
 
 ## Relationship to pi-workflow
