@@ -18,9 +18,9 @@ normal Gondolin cache.
 
 ## Result
 
-Gondolin is suitable as the tool-effect isolation backend on this platform,
-subject to a project-owned cross-process VM capacity manager. This is a
-qualification result, not production acceptance.
+Gondolin is suitable as the tool-effect isolation backend on this platform.
+pi-subagent supplies the cross-process VM capacity layer that Gondolin does not
+provide. This is a qualification result, not production acceptance.
 
 | Check | Result | Evidence |
 | --- | --- | --- |
@@ -36,12 +36,12 @@ qualification result, not production acceptance.
 | Native Pi sessions | Pass | Two concurrent in-process `AgentSession`s used separate VMs and returned exact markers. |
 | Ambient resource isolation | Pass | Both native sessions loaded zero extensions, skills, prompts, themes, and context files. |
 | VM shutdown | Pass | Every recorded QEMU PID was absent after `vm.close()`; no Gondolin/QEMU runner remained after the drive. |
-| Global cross-process VM limit | Blocked | Gondolin configures one VM but does not coordinate capacity between Pi seat processes. pi-subagent must own this layer. |
+| Global cross-process VM limit | Pass | A pi-subagent host-socket lease enforced capacity across worker processes and recovered automatically after a killed owner. |
 
-The final drive completed five executable checks with no failures and one
-blocked runtime-layer requirement. Warm QEMU boots were approximately 0.45–0.75
-seconds at 512 MB and one vCPU. Two concurrent native model sessions completed
-in approximately 5.3 seconds.
+The final drive completed six executable checks with no failures or blocked
+requirements. Warm QEMU boots were approximately 0.5–1.0 seconds at 512 MB and
+one vCPU. Two concurrent native model sessions completed in approximately 4.9
+seconds.
 
 ## Important behavior
 
@@ -67,13 +67,18 @@ not yet implement the full ignore behavior and need cycle-safe, bounded traversa
 before becoming production tools.
 
 Gondolin's memory and CPU options constrain each QEMU instance, but global
-capacity is outside Gondolin. Production launch authority needs a
-cross-process, crash-recoverable capacity lease before creating a VM.
+capacity is outside Gondolin. pi-subagent now reserves deterministic localhost
+TCP listeners as OS-owned capacity slots. Binding is atomic across seat
+processes, the OS releases a slot on process death, unrelated port occupation
+reduces capacity safely, and guest internal-network blocking prevents access to
+the lease ports. An atomically installed policy file rejects seats configured
+with a different slot count or port range. Per-slot JSON records are
+observational rather than authoritative.
 
 ## Remaining qualification
 
 - Linux/KVM execution and cleanup evidence;
-- cross-process global VM-capacity lease and stale-owner recovery;
+- integration of the capacity lease into production VM launch authority;
 - adversarial write-budget tests for truncate, append, concurrent handles,
   rename, links, and failed writes;
 - CPU-loop, fork-loop, guest-root-disk, and host-pressure measurements;

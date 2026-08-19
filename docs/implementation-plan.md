@@ -234,9 +234,8 @@ This is a disposable spike, not production architecture hidden in a test.
 
 The macOS arm64 drive is recorded in
 [`docs/qualification/gondolin-darwin-arm64.md`](qualification/gondolin-darwin-arm64.md).
-VM/tool/session isolation passed. Cross-process global VM-capacity enforcement
-remains blocked on a pi-subagent-owned lease, and Linux qualification remains
-outstanding.
+VM/tool/session isolation and the pi-subagent-owned cross-process VM-capacity
+lease passed. Linux qualification remains outstanding.
 
 ### Build and measure
 

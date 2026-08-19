@@ -41,7 +41,13 @@ into a new attempt with a fresh VM only after the prior seat and VM are proved
 terminal and authority and workspace identity are revalidated.
 
 One VM belongs to exactly one attempt. VMs are not pooled or shared between
-agents. This makes filesystem, process, network, cancellation, and cleanup state
+agents. Before VM creation, the seat reserves one pi-subagent capacity slot by
+binding its deterministic localhost TCP listener. An atomically installed
+capacity policy rejects seats with a different slot count or port range. The OS
+makes acquisition atomic across seats and releases the slot if its owner process
+dies. The guest
+cannot reach these listeners because internal-network access is blocked. This
+makes filesystem, process, network, capacity, cancellation, and cleanup state
 attributable to one attempt.
 
 ## Layers
