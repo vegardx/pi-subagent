@@ -144,7 +144,7 @@ export const RunResultSchema = Type.Object(
 		structuredOutput: Type.Optional(Type.Unknown()),
 		usage: UsageSchema,
 		usageComplete: Type.Boolean(),
-		runtimeMs: Type.Integer({ minimum: 0 }),
+		runtimeMs: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
 		failure: Type.Optional(ClassifiedFailureSchema),
 		sandboxCleanup: CleanupOutcomeSchema,
 		workspaceCleanup: CleanupOutcomeSchema,
