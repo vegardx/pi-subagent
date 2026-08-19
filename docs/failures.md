@@ -19,6 +19,7 @@ operator guidance. Unknown failures are not silently treated as transient.
 | Timeout | Attempt or settlement deadline | New attempt only by policy |
 | Cancellation | Caller stop won before completion | Never |
 | Seat interruption | Seat exited or reloaded during an active attempt | Explicit validated resume |
+| Lease loss | Seat lost fenced ownership of run/session/worktree | Abort local work; reconcile before retry |
 | Sandbox cleanup | VM closure or QEMU identity cannot be proved | Reconcile; cleanup blocked |
 | Workspace | Worktree preparation, handoff, or cleanup failed | Preparation may retry; cleanup fails closed |
 | Persistence | Journal, receipt, or fsync failure | Fail closed before authority release |

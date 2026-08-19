@@ -34,9 +34,11 @@ session persistence, lifecycle state, and Git operations. Model-driven tool
 effects cross the VM boundary.
 
 There is no child Pi process and no detached supervisor in the initial runtime.
-Active attempts stop when the seat exits or reloads. Explicit resume restores
-the persisted Pi session into a new attempt with a fresh VM after revalidating
-authority and workspace identity.
+Active attempts stop when their owning seat exits or reloads. A fenced
+cross-process lease prevents another seat from concurrently mutating the same
+run, session, or worktree. Explicit resume restores the persisted Pi session
+into a new attempt with a fresh VM only after the prior seat and VM are proved
+terminal and authority and workspace identity are revalidated.
 
 One VM belongs to exactly one attempt. VMs are not pooled or shared between
 agents. This makes filesystem, process, network, cancellation, and cleanup state
@@ -143,7 +145,9 @@ stateDiagram-v2
 
 Cancellation aborts model activity, terminates guest work, closes the VM, and
 records workspace disposition. Completion requires a terminal `AgentSession`,
-a closed VM, and proved or intentionally retained workspace state.
+a closed VM, and proved workspace cleanup. Intentionally retained work remains
+`cleanup-blocked` until explicit release. Cross-seat lease generations fence
+stale lifecycle and cleanup writes.
 
 ## Platform use
 

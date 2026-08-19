@@ -107,8 +107,11 @@ approval are intentionally out of scope.
 ## Lifecycle and denial of service
 
 One VM belongs to one active attempt and closes on completion, cancellation,
-seat exit, or reload. The runtime records enough QEMU identity to verify closure
-but does not claim active work survives loss of the seat.
+seat exit, or reload. A fenced cross-process lease prevents another seat from
+mutating the same run or worktree. The runtime records host-process and QEMU
+identity; a replacement seat cannot resume or reuse the worktree until the prior
+writer and VM are proved terminal. Active work does not survive loss of its
+seat.
 
 Timeouts and output bounds are not enough if a guest can exhaust host storage or
 memory first. Qualification must prove configured VM memory and concurrency

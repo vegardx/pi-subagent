@@ -42,7 +42,9 @@ these definitions rather than redefine them.
 | Handoff | Host-captured commit or artifact preserving worktree changes before cleanup. |
 | Retry | New attempt with the same task after a classified failure. It gets a fresh VM. |
 | Resume | New attempt continuing a retained Pi session after validation. It gets a fresh VM. |
-| Reconcile | Compare persisted state with session, VM, workspace, and handoff reality and classify drift. |
+| Seat lease | Cross-process claim allowing one seat instance to mutate a run, session, VM, or worktree. |
+| Fencing generation | Monotonic value attached to state changes so a superseded seat cannot commit stale writes. |
+| Reconcile | Compare persisted state with seat, session, VM, workspace, and handoff reality and classify drift. |
 | Cleanup blocked | Terminal state where required VM or workspace cleanup cannot be proved. |
 | Terminal state | State from which the runtime will not continue automatically. |
 | Contract revision | Exact public and persisted format identity. Revisions are not backwards-compatible. |

@@ -70,7 +70,8 @@ must never target a real home or active repository.
 Using bounded disposable fixtures:
 
 - a guest cannot allocate memory beyond its configured VM limit;
-- global and per-owner VM concurrency limits prevent accidental fan-out;
+- global and per-owner VM concurrency limits prevent accidental fan-out across
+  multiple Pi seat processes;
 - guest root-overlay growth has a hard maximum;
 - writes through the workspace VFS stop at a configured byte quota;
 - output and artifact streams truncate or fail at documented bounds;
@@ -103,8 +104,11 @@ Using bounded disposable fixtures:
 
 ## Idempotency and lifecycle
 
-- concurrent duplicate operation ID creates one attempt in one seat;
+- concurrent duplicate operation ID from separate seats creates one attempt;
 - the same operation ID with a different request identity fails;
+- a live owning seat fences another seat from run, session, worktree, and
+  cleanup mutation;
+- stale lease reclamation requires host-process and VM terminal evidence;
 - retry creates a new attempt and fresh VM;
 - graceful stop aborts the session, closes the VM, and records workspace state;
 - seat reload/exit marks active work interrupted rather than completed;
@@ -139,7 +143,8 @@ Using bounded disposable fixtures:
 - torn journal tail, corrupt snapshot, and unknown schema fail closed;
 - stale `active` state after seat loss reconciles to interrupted or
   cleanup-blocked, never completed;
-- a stale QEMU process is not adopted by a new native session;
+- a stale QEMU process is not adopted by a new native session and blocks reuse
+  of its worktree until termination is proved;
 - files use private modes and bounded serialization;
 - numerical output, log, event, artifact, runtime, retry, token, and cost bounds
   produce documented truncation or terminal outcomes;

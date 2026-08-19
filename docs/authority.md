@@ -12,7 +12,7 @@
 - Filesystem, process, and network policy are enforced below prompts.
 - A requested boundary never silently degrades.
 - VM count, memory, guest storage, workspace writes, runtime, and output are
-  bounded below the prompt layer.
+  bounded below the prompt layer and across concurrent seat processes.
 
 ## Capability resolution
 
