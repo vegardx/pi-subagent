@@ -27,6 +27,14 @@ export {
 	transitionRunStatus,
 } from "./lifecycle/reducer.js";
 export {
+	type JournalEvent,
+	JournalEventSchema,
+	PersistenceCorruptionError,
+	RunJournal,
+	type RunSnapshot,
+	RunSnapshotSchema,
+} from "./persistence/journal.js";
+export {
 	createVmCapacityManager,
 	VmCapacityExhaustedError,
 	type VmCapacityLease,
