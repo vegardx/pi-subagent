@@ -15,6 +15,7 @@ import {
 	createVmCapacityManager,
 	VmCapacityExhaustedError,
 } from "../../src/sandbox/capacity.js";
+import { createGondolinAttemptSandbox } from "../../src/sandbox/gondolin.js";
 import {
 	driveNativeSession,
 	type NativeSessionDrive,
@@ -168,7 +169,14 @@ async function closeVm(vm: VM): Promise<void> {
 async function setupFixtures() {
 	await mkdir(root, { recursive: true, mode: 0o700 });
 	await mkdir(evidenceDirectory, { recursive: true, mode: 0o700 });
-	for (const name of ["writer", "reader", "agent-a", "agent-b", "quota"]) {
+	for (const name of [
+		"writer",
+		"reader",
+		"agent-a",
+		"agent-b",
+		"quota",
+		"adapter",
+	]) {
 		await mkdir(path.join(root, name), { mode: 0o700 });
 	}
 	await writeFile(path.join(root, "outside-sentinel"), "HOST_SENTINEL\n");
@@ -404,6 +412,33 @@ async function qualifyConcurrentIsolation() {
 	return "Two 512M/1-vCPU VMs booted concurrently and wrote only their own mounts.";
 }
 
+async function qualifyProductionAdapter(): Promise<string> {
+	const workspace = path.join(root, "adapter");
+	const capacity = await createVmCapacityManager({
+		root: path.join(root, "adapter-capacity"),
+		maxSlots: 1,
+	});
+	const sandbox = await createGondolinAttemptSandbox({
+		owner: "qualification-adapter",
+		workspace,
+		readOnly: false,
+		workspaceWriteBytes: 64 * 1024,
+		capacity,
+	});
+	const result = await sandbox.vm.exec(
+		"printf production-adapter > /workspace/adapter.txt",
+	);
+	assert(result.ok, "production adapter guest write failed");
+	await sandbox.cancel();
+	assert(sandbox.isClosed(), "production adapter did not close");
+	assert(
+		(await readFile(path.join(workspace, "adapter.txt"), "utf8")) ===
+			"production-adapter",
+		"production adapter write did not reach its workspace",
+	);
+	return `Production adapter routed a write through VM ${sandbox.record.vmId}, proved close, and released capacity slot ${sandbox.record.capacitySlot}.`;
+}
+
 async function qualifyGlobalCapacity(): Promise<string> {
 	const manager = await createVmCapacityManager({
 		root: path.join(root, "capacity"),
@@ -473,6 +508,7 @@ async function main() {
 	await check("workspace write budget", qualifyWriteBudget);
 	await check("concurrent VM isolation", qualifyConcurrentIsolation);
 	await check("global VM capacity lease", qualifyGlobalCapacity);
+	await check("production Gondolin adapter", qualifyProductionAdapter);
 	await check("concurrent native AgentSessions", qualifyNativeSessions);
 	const summary = checks.reduce<Record<CheckStatus, number>>(
 		(result, item) => {

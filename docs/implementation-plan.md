@@ -372,6 +372,13 @@ session, VM, or worktree.
 
 ## Deliverable 4 — native session and VM tools
 
+The production Gondolin adapter now acquires global capacity before startup,
+uses explicit QEMU with bounded memory/CPU/network settings, mounts either a
+read-only or write-budgeted canonical workspace, exposes the promoted seven-tool
+operation set, and releases capacity only after VM closure proves its host PID
+gone. Cancellation closes the entire per-attempt VM. Native session service
+integration and durable sandbox receipts remain outstanding.
+
 ### Build
 
 - isolated `DefaultResourceLoader` configuration;
