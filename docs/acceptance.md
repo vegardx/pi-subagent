@@ -7,7 +7,7 @@ mocks alone do not prove VM isolation.
 
 Before production implementation:
 
-- QEMU capability probe succeeds on supported macOS and Linux hosts;
+- QEMU capability probe succeeds on the supported macOS Apple Silicon host;
 - pinned Gondolin package and image boot successfully;
 - a disposable workspace mounts at `/workspace`;
 - Pi `read`, `write`, `edit`, `bash`, `grep`, `find`, and `ls` operations execute
@@ -159,8 +159,10 @@ Using bounded disposable fixtures:
   present;
 - tool and command ownership has no collisions;
 - public runtime capability contract matches implementation exactly;
-- supported Pi, Node, Gondolin, image, QEMU, macOS, and Linux ranges are tested
-  and documented;
+- supported Pi, Node, Gondolin, image, QEMU, and macOS Apple Silicon ranges are
+  tested and documented;
+- CI on an unsupported host is described only as build portability evidence,
+  never runtime or release support;
 - `pi-workflow` uses the public service without creating another runtime;
 - incompatible consumer contract revisions fail startup instead of receiving a
   compatibility shim.

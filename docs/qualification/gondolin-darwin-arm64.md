@@ -94,7 +94,6 @@ observational rather than authoritative.
 
 ## Remaining qualification
 
-- Linux/KVM execution and cleanup evidence;
 - integration of the capacity lease into production VM launch authority;
 - adversarial write-budget tests for truncate, append, concurrent handles,
   rename, links, and failed writes;
