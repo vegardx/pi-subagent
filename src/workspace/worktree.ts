@@ -58,6 +58,11 @@ export type WorktreeRecord = {
 	releasedAt?: string;
 };
 
+export type WorktreeObservation = {
+	state: "absent" | "clean" | "dirty" | "branch-retained" | "unknown";
+	reason?: string;
+};
+
 export class WorktreeError extends Error {
 	constructor(message: string, options?: ErrorOptions) {
 		super(message, options);
@@ -313,6 +318,87 @@ export async function releaseWorktreeBranch(
 	await lease.assertCurrent();
 	await writeRecord(record.recordPath, released);
 	return released;
+}
+
+export async function observeWorktree(
+	record: WorktreeRecord,
+): Promise<WorktreeObservation> {
+	let worktreeExists = true;
+	try {
+		const metadata = await stat(record.worktreePath);
+		if (!metadata.isDirectory()) {
+			return { state: "unknown", reason: "worktree path is not a directory" };
+		}
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+			worktreeExists = false;
+		} else {
+			return { state: "unknown", reason: "worktree path observation failed" };
+		}
+	}
+	const expectedHead = record.handoffCommit ?? record.baselineHead;
+	if (!worktreeExists) {
+		try {
+			const listed = (
+				await git(record.repositoryRoot, ["branch", "--list", record.branch])
+			)
+				.toString("utf8")
+				.trim();
+			if (!listed) {
+				return record.releasedAt
+					? { state: "absent" }
+					: { state: "unknown", reason: "branch disappeared without release" };
+			}
+			const branchHead = (
+				await git(record.repositoryRoot, [
+					"rev-parse",
+					"--verify",
+					record.branch,
+				])
+			)
+				.toString("utf8")
+				.trim();
+			return branchHead === expectedHead
+				? { state: "branch-retained" }
+				: { state: "unknown", reason: "retained branch identity mismatch" };
+		} catch {
+			return { state: "unknown", reason: "retained branch observation failed" };
+		}
+	}
+	try {
+		const canonicalWorktree = await realpath(record.worktreePath);
+		const worktreeRoot = (
+			await git(record.worktreePath, ["rev-parse", "--show-toplevel"])
+		)
+			.toString("utf8")
+			.trim();
+		const branch = (
+			await git(record.worktreePath, ["branch", "--show-current"])
+		)
+			.toString("utf8")
+			.trim();
+		const head = (
+			await git(record.worktreePath, ["rev-parse", "--verify", "HEAD"])
+		)
+			.toString("utf8")
+			.trim();
+		if (
+			canonicalWorktree !== record.worktreePath ||
+			worktreeRoot !== record.worktreePath ||
+			branch !== record.branch ||
+			head !== expectedHead
+		) {
+			return { state: "unknown", reason: "worktree identity mismatch" };
+		}
+		const status = await git(record.worktreePath, [
+			"status",
+			"--porcelain=v1",
+			"-z",
+		]);
+		return { state: status.byteLength > 0 ? "dirty" : "clean" };
+	} catch {
+		return { state: "unknown", reason: "worktree inspection failed" };
+	}
 }
 
 export async function readWorktreeRecord(

@@ -159,6 +159,14 @@ export {
 	WorkspacePreflightError,
 } from "./preflight/workspace.js";
 export {
+	captureQemuProcessIdentity,
+	createHostProcessController,
+	type ProcessController,
+	type ProcessIdentity,
+	type ProcessObservation,
+	processIdentitiesEqual,
+} from "./reconciliation/process.js";
+export {
 	type AttemptControl,
 	type AttemptExecutionResult,
 	boundAttemptOutput,
@@ -217,10 +225,12 @@ export {
 export {
 	captureWorktreeHandoff,
 	createAttemptWorktree,
+	observeWorktree,
 	readWorktreeRecord,
 	releaseWorktreeBranch,
 	removeCleanWorktree,
 	WorktreeError,
+	type WorktreeObservation,
 	type WorktreeRecord,
 	WorktreeRecordSchema,
 } from "./workspace/worktree.js";
