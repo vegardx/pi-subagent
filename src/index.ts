@@ -112,3 +112,12 @@ export {
 	type VmCapacityLeaseRecord,
 	type VmCapacityManager,
 } from "./sandbox/capacity.js";
+export {
+	captureWorktreeHandoff,
+	createAttemptWorktree,
+	readWorktreeRecord,
+	removeCleanWorktree,
+	WorktreeError,
+	type WorktreeRecord,
+	WorktreeRecordSchema,
+} from "./workspace/worktree.js";

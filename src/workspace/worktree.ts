@@ -1,0 +1,266 @@
+import { execFile } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
+import {
+	mkdir,
+	open,
+	readFile,
+	realpath,
+	rename,
+	stat,
+} from "node:fs/promises";
+import path from "node:path";
+import { promisify } from "node:util";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
+import {
+	type AttemptId,
+	AttemptIdSchema,
+	CONTRACT_REVISION,
+	type RunId,
+	RunIdSchema,
+} from "../contracts.js";
+import type { WorkspacePreflight } from "../preflight/workspace.js";
+
+const execFileAsync = promisify(execFile);
+const MAX_GIT_OUTPUT = 64 * 1024 * 1024;
+
+export const WorktreeRecordSchema = Type.Object(
+	{
+		schema: Type.Literal("pi-subagent-worktree"),
+		contractRevision: Type.Literal(CONTRACT_REVISION),
+		runId: RunIdSchema,
+		attemptId: AttemptIdSchema,
+		repositoryRoot: Type.String({ minLength: 1, maxLength: 4096 }),
+		worktreePath: Type.String({ minLength: 1, maxLength: 4096 }),
+		recordPath: Type.String({ minLength: 1, maxLength: 4096 }),
+		branch: Type.String({ minLength: 1, maxLength: 1024 }),
+		baselineHead: Type.String({ pattern: "^[a-f0-9]{40,64}$" }),
+		createdAt: Type.String({ format: "date-time" }),
+		handoffCommit: Type.Optional(Type.String({ pattern: "^[a-f0-9]{40,64}$" })),
+	},
+	{ additionalProperties: false },
+);
+
+export type WorktreeRecord = {
+	schema: "pi-subagent-worktree";
+	contractRevision: typeof CONTRACT_REVISION;
+	runId: RunId;
+	attemptId: AttemptId;
+	repositoryRoot: string;
+	worktreePath: string;
+	recordPath: string;
+	branch: string;
+	baselineHead: string;
+	createdAt: string;
+	handoffCommit?: string;
+};
+
+export class WorktreeError extends Error {
+	constructor(message: string, options?: ErrorOptions) {
+		super(message, options);
+		this.name = "WorktreeError";
+	}
+}
+
+async function git(cwd: string, args: string[]): Promise<Buffer> {
+	try {
+		const result = await execFileAsync("git", args, {
+			cwd,
+			encoding: "buffer",
+			maxBuffer: MAX_GIT_OUTPUT,
+			env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+		});
+		return result.stdout;
+	} catch (error) {
+		throw new WorktreeError(
+			`git worktree operation failed: git ${args.join(" ")}`,
+			{
+				cause: error,
+			},
+		);
+	}
+}
+
+async function syncDirectory(directory: string): Promise<void> {
+	const handle = await open(directory, "r");
+	try {
+		await handle.sync();
+	} finally {
+		await handle.close();
+	}
+}
+
+async function writeRecord(filePath: string, record: WorktreeRecord) {
+	if (!Value.Check(WorktreeRecordSchema, record)) {
+		throw new WorktreeError("invalid worktree record");
+	}
+	const temporary = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
+	const handle = await open(temporary, "wx", 0o600);
+	try {
+		await handle.writeFile(`${JSON.stringify(record, null, 2)}\n`, "utf8");
+		await handle.sync();
+	} finally {
+		await handle.close();
+	}
+	await rename(temporary, filePath);
+	await syncDirectory(path.dirname(filePath));
+}
+
+function identitySegment(value: string, length: number): string {
+	return createHash("sha256").update(value).digest("hex").slice(0, length);
+}
+
+export async function createAttemptWorktree(options: {
+	root: string;
+	runId: RunId;
+	attemptId: AttemptId;
+	workspace: WorkspacePreflight;
+}): Promise<WorktreeRecord> {
+	if (options.workspace.mode !== "worktree" || options.workspace.dirty) {
+		throw new WorktreeError(
+			"writing worktree requires a clean worktree preflight",
+		);
+	}
+	await mkdir(options.root, { recursive: true, mode: 0o700 });
+	const root = await realpath(options.root);
+	const worktreesRoot = path.join(root, "worktrees");
+	const recordsRoot = path.join(root, "records");
+	await mkdir(worktreesRoot, { recursive: true, mode: 0o700 });
+	await mkdir(recordsRoot, { recursive: true, mode: 0o700 });
+	const worktreePath = path.join(worktreesRoot, options.attemptId);
+	const branch = `pi-subagent/${identitySegment(options.runId, 16)}/${identitySegment(options.attemptId, 32)}`;
+	const recordPath = path.join(recordsRoot, `${options.attemptId}.json`);
+	const record: WorktreeRecord = {
+		schema: "pi-subagent-worktree",
+		contractRevision: CONTRACT_REVISION,
+		runId: options.runId,
+		attemptId: options.attemptId,
+		repositoryRoot: options.workspace.repositoryRoot,
+		worktreePath,
+		recordPath,
+		branch,
+		baselineHead: options.workspace.head,
+		createdAt: new Date().toISOString(),
+	};
+	const reservation = await open(recordPath, "wx", 0o600).catch((error) => {
+		if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+			throw new WorktreeError("worktree attempt is already reserved");
+		}
+		throw error;
+	});
+	await reservation.close();
+	try {
+		await git(options.workspace.repositoryRoot, [
+			"worktree",
+			"add",
+			"-b",
+			branch,
+			worktreePath,
+			options.workspace.head,
+		]);
+		await writeRecord(recordPath, record);
+		return record;
+	} catch (error) {
+		throw new WorktreeError("worktree creation requires reconciliation", {
+			cause: error,
+		});
+	}
+}
+
+export async function captureWorktreeHandoff(
+	record: WorktreeRecord,
+	message: string,
+): Promise<WorktreeRecord> {
+	if (!message.trim() || message.length > 512) {
+		throw new WorktreeError(
+			"handoff commit message must contain 1-512 characters",
+		);
+	}
+	if (record.handoffCommit) {
+		throw new WorktreeError("worktree handoff already captured");
+	}
+	const canonicalWorktree = await realpath(record.worktreePath);
+	if (canonicalWorktree !== record.worktreePath) {
+		throw new WorktreeError("worktree path identity mismatch");
+	}
+	const worktreeRoot = (
+		await git(record.worktreePath, ["rev-parse", "--show-toplevel"])
+	)
+		.toString("utf8")
+		.trim();
+	const branch = (await git(record.worktreePath, ["branch", "--show-current"]))
+		.toString("utf8")
+		.trim();
+	const head = (await git(record.worktreePath, ["rev-parse", "HEAD"]))
+		.toString("utf8")
+		.trim();
+	if (
+		worktreeRoot !== record.worktreePath ||
+		branch !== record.branch ||
+		head !== record.baselineHead
+	) {
+		throw new WorktreeError("worktree baseline identity mismatch");
+	}
+	await git(record.worktreePath, ["add", "-A"]);
+	const staged = await git(record.worktreePath, ["diff", "--cached", "--quiet"])
+		.then(() => false)
+		.catch(() => true);
+	if (!staged) throw new WorktreeError("worktree has no changes to hand off");
+	await git(record.worktreePath, ["commit", "-m", message]);
+	const handoffCommit = (
+		await git(record.worktreePath, ["rev-parse", "--verify", "HEAD"])
+	)
+		.toString("utf8")
+		.trim();
+	const updated = { ...record, handoffCommit };
+	await writeRecord(record.recordPath, updated);
+	return updated;
+}
+
+export async function removeCleanWorktree(
+	record: WorktreeRecord,
+): Promise<void> {
+	const metadata = await stat(record.worktreePath);
+	if (!metadata.isDirectory())
+		throw new WorktreeError("worktree path is not a directory");
+	const canonicalWorktree = await realpath(record.worktreePath);
+	if (canonicalWorktree !== record.worktreePath) {
+		throw new WorktreeError("worktree path identity mismatch");
+	}
+	const status = await git(record.worktreePath, [
+		"status",
+		"--porcelain=v1",
+		"-z",
+	]);
+	if (status.byteLength > 0)
+		throw new WorktreeError("dirty worktree is retained");
+	const worktreeRoot = (
+		await git(record.worktreePath, ["rev-parse", "--show-toplevel"])
+	)
+		.toString("utf8")
+		.trim();
+	const branch = (await git(record.worktreePath, ["branch", "--show-current"]))
+		.toString("utf8")
+		.trim();
+	const head = (await git(record.worktreePath, ["rev-parse", "HEAD"]))
+		.toString("utf8")
+		.trim();
+	if (
+		worktreeRoot !== record.worktreePath ||
+		branch !== record.branch ||
+		head !== (record.handoffCommit ?? record.baselineHead)
+	) {
+		throw new WorktreeError("worktree cleanup identity mismatch");
+	}
+	await git(record.repositoryRoot, ["worktree", "remove", record.worktreePath]);
+}
+
+export async function readWorktreeRecord(
+	filePath: string,
+): Promise<WorktreeRecord> {
+	const value = JSON.parse(await readFile(filePath, "utf8")) as unknown;
+	if (!Value.Check(WorktreeRecordSchema, value)) {
+		throw new WorktreeError("invalid worktree record");
+	}
+	return value as WorktreeRecord;
+}

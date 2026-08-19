@@ -142,8 +142,9 @@ Unprovable state becomes explicit `unknown` or `cleanup-blocked`, never success.
 ## Workspaces and handoff
 
 A read-only checkout has no workspace mutation to retain. A writing attempt's
-worktree remains host-owned across seat restart. Completion records an immutable
-commit or artifact handoff before removal.
+worktree and reservation record remain host-owned across seat restart. Handoff
+stages every change, creates an immutable commit, and persists that commit before
+cleanup. Cleanup refuses dirty worktrees or any path, branch, or HEAD mismatch.
 
 Cancellation or interruption preserves uncaptured writes unless cleanup policy
 can prove there are none. Explicit `release` removes a retained worktree only
