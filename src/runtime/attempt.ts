@@ -24,8 +24,9 @@ import {
 import type { RunJournal } from "../persistence/journal.js";
 import type { RunLease } from "../persistence/run-lease.js";
 import type { DiscoveredAgent } from "../preflight/agents.js";
-import { canonicalJson } from "../preflight/canonical.js";
+import { canonicalJson, canonicalSha256 } from "../preflight/canonical.js";
 import { verifyLaunchPlanIdentity } from "../preflight/compile.js";
+import type { ForkContextProjection } from "../preflight/context.js";
 import { resolveExactPiModel } from "../preflight/models.js";
 import type { SkillProjection } from "../preflight/skills.js";
 import type { VmCapacityManager } from "../sandbox/capacity.js";
@@ -160,6 +161,7 @@ export async function runNativeAttempt(options: {
 	journal: RunJournal;
 	artifactStore: ArtifactStore;
 	skills: SkillProjection;
+	forkContext?: ForkContextProjection;
 	sessionRoot: string;
 	resumeSessionFile?: string;
 	registerControl?: (control: AttemptControl | undefined) => void;
@@ -177,8 +179,14 @@ export async function runNativeAttempt(options: {
 	) {
 		throw new Error("attempt ownership mismatch");
 	}
-	if (options.plan.contextMode !== "fresh") {
-		throw new Error("fork context is not implemented");
+	if (
+		(options.plan.contextMode === "fork" && !options.forkContext) ||
+		(options.plan.contextMode === "fresh" && options.forkContext) ||
+		(options.forkContext &&
+			canonicalSha256(options.forkContext.grant) !==
+				canonicalSha256(options.plan.forkContext))
+	) {
+		throw new Error("fork context projection mismatch");
 	}
 	if (options.plan.resources.some((resource) => resource.kind === "context")) {
 		throw new Error("explicit context resources are not implemented");
@@ -300,7 +308,15 @@ export async function runNativeAttempt(options: {
 			: SessionManager.create(
 					GUEST_WORKSPACE,
 					path.join(options.sessionRoot, options.plan.attemptId),
+					options.forkContext
+						? { parentSession: options.forkContext.parentSessionFile }
+						: undefined,
 				);
+		if (!options.resumeSessionFile && options.forkContext) {
+			for (const message of options.forkContext.messages) {
+				sessionManager.appendMessage(message);
+			}
+		}
 		const created = await createAgentSession({
 			cwd: GUEST_WORKSPACE,
 			agentDir: getAgentDir(),

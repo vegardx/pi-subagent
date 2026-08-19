@@ -127,6 +127,22 @@ export const AgentLaunchPlanSchema = Type.Object(
 		agent: ResourceNameSchema,
 		task: DelegatedTaskSchema,
 		contextMode: Type.Union([Type.Literal("fresh"), Type.Literal("fork")]),
+		forkContext: Type.Optional(
+			Type.Object(
+				{
+					parentSessionId: Type.String({ minLength: 1, maxLength: 128 }),
+					parentSessionSha256: Sha256Schema,
+					messageIds: Type.Array(
+						Type.String({ minLength: 1, maxLength: 128 }),
+						{
+							maxItems: 100,
+						},
+					),
+					projectionSha256: Sha256Schema,
+				},
+				{ additionalProperties: false },
+			),
+		),
 		model: ExactModelRequestSchema,
 		cwd: Type.Literal("/workspace"),
 		tools: Type.Array(ResourceNameSchema, { maxItems: 64, uniqueItems: true }),

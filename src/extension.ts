@@ -27,6 +27,7 @@ const MUTATING_TOOLS = new Set(["write", "edit", "bash"]);
 const parameters = Type.Object({
 	agent: Type.String({ minLength: 1, maxLength: 128 }),
 	task: Type.String({ minLength: 1, maxLength: 16 * 1024 }),
+	contextMode: Type.Optional(StringEnum(["fresh", "fork"] as const)),
 	model: Type.Optional(Type.String({ minLength: 3, maxLength: 512 })),
 	thinking: Type.Optional(StringEnum(THINKING_LEVELS)),
 	tools: Type.Optional(
@@ -211,9 +212,11 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 				scope: "builtin" as const,
 			};
 			agents.set(agent.name, agent);
+			const parentSessionFile = ctx.sessionManager.getSessionFile();
 			const client = runtime.forOwner({
 				id: `pi-session:${ctx.sessionManager.getSessionId()}`,
 				parentSessionId: ctx.sessionManager.getSessionId(),
+				...(parentSessionFile ? { parentSessionFile } : {}),
 			});
 			const preflight = await client.preflight({
 				operationId: `tool-${canonicalSha256({
@@ -226,7 +229,7 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 					context: [],
 					instructions: ["Complete the goal and report the result."],
 				},
-				contextMode: "fresh",
+				contextMode: params.contextMode ?? "fresh",
 				model: agent.defaultModel,
 				tools,
 				preloadSkills: [...(params.preloadSkills ?? [])],

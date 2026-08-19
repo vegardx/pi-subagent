@@ -4,7 +4,10 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import {
+	type ModelRuntime,
+	SessionManager,
+} from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 import type { RunResult } from "../src/contracts.js";
 import type { SubagentRequest } from "../src/launch-contracts.js";
@@ -234,6 +237,58 @@ describe("foreground subagent service", () => {
 		await expect(
 			client.launch(preflight.preflightId, preflight.identitySha256),
 		).rejects.toThrow("workspace changed after preflight");
+	});
+
+	it("projects an authorized parent session for fork context", async () => {
+		let observedFork = "";
+		const data = await serviceFor("fork", async (input) => {
+			observedFork = JSON.stringify(input.forkContext?.messages ?? []);
+			return {
+				result: result(input.plan.runId, "completed"),
+				output: "done",
+				sessionFile: undefined,
+				handoff: undefined,
+				structuredOutput: undefined,
+				error: undefined,
+			};
+		});
+		const parent = SessionManager.create(
+			data.repository,
+			path.join(data.root, "parent-sessions"),
+		);
+		parent.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "SERVICE_PARENT_MARKER" }],
+			timestamp: Date.now(),
+		});
+		const parentSessionFile = parent.getSessionFile();
+		const parentHeader = parent.getHeader();
+		if (!parentSessionFile || !parentHeader) {
+			throw new Error("parent session file missing");
+		}
+		await writeFile(
+			parentSessionFile,
+			`${[parentHeader, ...parent.getEntries()]
+				.map((entry) => JSON.stringify(entry))
+				.join("\n")}\n`,
+		);
+		const client = data.service.forOwner({
+			id: "owner-fork",
+			parentSessionId: parent.getSessionId(),
+			parentSessionFile,
+		});
+		const preflight = await client.preflight({
+			...data.request,
+			operationId: "operation-fork",
+			contextMode: "fork",
+		});
+		expect(preflight.launchPlan.forkContext?.messageIds).toHaveLength(1);
+		const receipt = await client.launch(
+			preflight.preflightId,
+			preflight.identitySha256,
+		);
+		await client.wait(receipt.runId);
+		expect(observedFork).toContain("SERVICE_PARENT_MARKER");
 	});
 
 	it("delivers ordered idempotent steering and follow-up controls", async () => {

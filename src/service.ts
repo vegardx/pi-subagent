@@ -37,6 +37,10 @@ import {
 	compileLaunchPlan,
 	type ResolvedSandbox,
 } from "./preflight/compile.js";
+import {
+	type ForkContextProjection,
+	projectForkContext,
+} from "./preflight/context.js";
 import { createExactModelResolver } from "./preflight/models.js";
 import { digestFileResource } from "./preflight/resources.js";
 import {
@@ -65,6 +69,7 @@ import {
 export type OwnerRegistration = {
 	id: string;
 	parentSessionId?: string;
+	parentSessionFile?: string;
 	workflowRunId?: string;
 };
 
@@ -136,6 +141,7 @@ type PreparedPreflight = SubagentPreflight & {
 	agent: DiscoveredAgent;
 	workspace: WorkspacePreflight;
 	skills: SkillProjection;
+	forkContext?: ForkContextProjection;
 };
 
 type ActiveRun = {
@@ -143,6 +149,7 @@ type ActiveRun = {
 	plan: AgentLaunchPlan;
 	workspace: WorkspacePreflight;
 	skills: SkillProjection;
+	forkContext?: ForkContextProjection;
 	journal: RunJournal;
 	artifacts: ArtifactStore;
 	abort: AbortController;
@@ -493,6 +500,7 @@ export async function createSubagentService(options: {
 		agent: DiscoveredAgent;
 		workspace: WorkspacePreflight;
 		skills: SkillProjection;
+		forkContext?: ForkContextProjection;
 		kind: "initial" | "retry" | "resume";
 		ordinal: number;
 		parentAttemptId?: AttemptId;
@@ -563,6 +571,7 @@ export async function createSubagentService(options: {
 				journal,
 				artifactStore: artifacts,
 				skills: input.skills,
+				...(input.forkContext ? { forkContext: input.forkContext } : {}),
 				sessionRoot: path.join(options.root, "sessions"),
 				...(input.resumeSessionFile
 					? { resumeSessionFile: input.resumeSessionFile }
@@ -579,6 +588,7 @@ export async function createSubagentService(options: {
 				plan: input.plan,
 				workspace: input.workspace,
 				skills: input.skills,
+				...(input.forkContext ? { forkContext: input.forkContext } : {}),
 				journal,
 				artifacts,
 				abort,
@@ -721,6 +731,18 @@ export async function createSubagentService(options: {
 							...new Set([...agent.preloadSkills, ...request.preloadSkills]),
 						],
 					});
+					let forkContext: ForkContextProjection | undefined;
+					if (request.contextMode === "fork") {
+						if (!owner.parentSessionId || !owner.parentSessionFile) {
+							throw new Error(
+								"fork context requires an authorized parent session",
+							);
+						}
+						forkContext = await projectForkContext({
+							parentSessionId: owner.parentSessionId,
+							parentSessionFile: owner.parentSessionFile,
+						});
+					}
 					const ids = deterministicIds(owner.id, request);
 					const launchPlan = await compileLaunchPlan({
 						ownerId: owner.id,
@@ -736,6 +758,7 @@ export async function createSubagentService(options: {
 						),
 						workspace,
 						sandbox: options.sandbox,
+						...(forkContext ? { forkContext: forkContext.grant } : {}),
 						resolveModel,
 					});
 					const preflightId = randomUUID();
@@ -749,6 +772,7 @@ export async function createSubagentService(options: {
 						agent,
 						workspace,
 						skills,
+						...(forkContext ? { forkContext } : {}),
 					};
 					preflights.set(preflightId, prepared);
 					return {
@@ -807,6 +831,22 @@ export async function createSubagentService(options: {
 					});
 					assertSkillProjection(prepared.launchPlan, currentSkills);
 					prepared.skills = currentSkills;
+					if (prepared.launchPlan.contextMode === "fork") {
+						if (!owner.parentSessionId || !owner.parentSessionFile) {
+							throw new Error("fork context authorization was lost");
+						}
+						const currentFork = await projectForkContext({
+							parentSessionId: owner.parentSessionId,
+							parentSessionFile: owner.parentSessionFile,
+						});
+						if (
+							canonicalSha256(currentFork.grant) !==
+							canonicalSha256(prepared.launchPlan.forkContext)
+						) {
+							throw new Error("fork context changed after preflight");
+						}
+						prepared.forkContext = currentFork;
+					}
 					return runExclusive(async () => {
 						const existing = runs.get(prepared.launchPlan.runId);
 						if (existing) {
@@ -830,6 +870,9 @@ export async function createSubagentService(options: {
 							agent: prepared.agent,
 							workspace: prepared.workspace,
 							skills: prepared.skills,
+							...(prepared.forkContext
+								? { forkContext: prepared.forkContext }
+								: {}),
 							kind: "initial",
 							ordinal: 0,
 							rootPlan: prepared.launchPlan,
@@ -913,6 +956,24 @@ export async function createSubagentService(options: {
 							preloadSkills: run.plan.preloadSkills,
 						});
 						assertSkillProjection(run.plan, skills);
+						let forkContext: ForkContextProjection | undefined;
+						if (run.plan.contextMode === "fork") {
+							if (!owner.parentSessionId || !owner.parentSessionFile) {
+								throw new Error(
+									"fork retry requires the authorized parent session",
+								);
+							}
+							forkContext = await projectForkContext({
+								parentSessionId: owner.parentSessionId,
+								parentSessionFile: owner.parentSessionFile,
+							});
+							if (
+								canonicalSha256(forkContext.grant) !==
+								canonicalSha256(run.plan.forkContext)
+							) {
+								throw new Error("fork context changed before retry");
+							}
+						}
 						const plan = retryPlan(run.plan, run.result, latest.ordinal + 1);
 						return startAttempt({
 							ownerId: owner.id,
@@ -920,6 +981,7 @@ export async function createSubagentService(options: {
 							agent,
 							workspace,
 							skills,
+							...(forkContext ? { forkContext } : {}),
 							kind: "retry",
 							ordinal: latest.ordinal + 1,
 							parentAttemptId: latest.attemptId,

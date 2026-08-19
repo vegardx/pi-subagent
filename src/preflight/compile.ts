@@ -10,6 +10,7 @@ import {
 	SubagentRequestSchema,
 } from "../launch-contracts.js";
 import { canonicalJson, canonicalSha256 } from "./canonical.js";
+import type { ForkContextGrant } from "./context.js";
 
 export type AgentDefinition = {
 	name: string;
@@ -121,6 +122,7 @@ export async function compileLaunchPlan(input: {
 	resources: ResourceGrant[];
 	workspace: ResolvedWorkspace;
 	sandbox: ResolvedSandbox;
+	forkContext?: ForkContextGrant;
 	resolveModel(model: ExactModelRequest): Promise<ExactModelRequest>;
 }): Promise<AgentLaunchPlan> {
 	if (!Value.Check(SubagentRequestSchema, input.request)) {
@@ -130,6 +132,12 @@ export async function compileLaunchPlan(input: {
 		throw new PreflightError(
 			`request violates schema${details ? `: ${details}` : ""}`,
 		);
+	}
+	if (
+		(input.request.contextMode === "fork" && !input.forkContext) ||
+		(input.request.contextMode === "fresh" && input.forkContext)
+	) {
+		throw new PreflightError("context projection mismatch");
 	}
 	if (input.request.agent !== input.agent.name) {
 		throw new PreflightError("agent resolution mismatch");
@@ -172,6 +180,7 @@ export async function compileLaunchPlan(input: {
 		agent: input.agent.name,
 		task: input.request.task,
 		contextMode: input.request.contextMode,
+		...(input.forkContext ? { forkContext: input.forkContext } : {}),
 		model,
 		cwd: "/workspace" as const,
 		tools: [...input.request.tools].sort(),

@@ -114,6 +114,22 @@ describe("semantic preflight", () => {
 		expect(first.network.blockInternalRanges).toBe(true);
 	});
 
+	it("requires an exact fork projection for fork context", async () => {
+		const forkRequest = { ...request, contextMode: "fork" as const };
+		await expect(compile({ request: forkRequest })).rejects.toThrow(
+			"context projection mismatch",
+		);
+		const forkContext = {
+			parentSessionId: "parent-session",
+			parentSessionSha256: a,
+			messageIds: ["message-1"],
+			projectionSha256: b,
+		};
+		const plan = await compile({ request: forkRequest, forkContext });
+		expect(plan.forkContext).toEqual(forkContext);
+		expect(verifyLaunchPlanIdentity(plan)).toBe(true);
+	});
+
 	it("rejects capability and limit escalation", async () => {
 		await expect(
 			compile({ request: { ...request, tools: ["read", "delete-host"] } }),
