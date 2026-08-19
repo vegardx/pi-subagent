@@ -47,6 +47,20 @@ const plan = {
 	cwd: "/workspace",
 	tools: ["read", "write", "edit", "bash"],
 	skills: [],
+	resources: [
+		{
+			kind: "agent",
+			name: "worker",
+			source: "/agents/worker.md",
+			sha256: hash,
+		},
+		{
+			kind: "tool",
+			name: "read",
+			source: "<builtin:read>",
+			sha256: hash,
+		},
+	],
 	workspace: {
 		mode: "worktree",
 		hostPathSha256: hash,
