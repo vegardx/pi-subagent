@@ -3,7 +3,9 @@ import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { AgentLaunchPlan } from "../src/launch-contracts.js";
+import { AttemptRecordStore } from "../src/persistence/attempt-record.js";
 import { PersistenceCorruptionError } from "../src/persistence/journal.js";
+import { acquireRunLease } from "../src/persistence/run-lease.js";
 import { RunRecordStore } from "../src/persistence/run-record.js";
 import { canonicalSha256 } from "../src/preflight/canonical.js";
 
@@ -99,6 +101,56 @@ describe("run record store", () => {
 		const replay = await store.create("owner", launch, workspace);
 		expect(replay).toEqual(first);
 		expect(await store.list()).toEqual([first]);
+	});
+
+	it("serializes competing next-attempt publications under one run lease", async () => {
+		const storeRoot = root("attempt-lineage");
+		const [left, right] = await Promise.all([
+			AttemptRecordStore.open(storeRoot),
+			AttemptRecordStore.open(storeRoot),
+		]);
+		const initial = plan();
+		const lease = await acquireRunLease({
+			root: path.join(storeRoot, "leases"),
+			runId: initial.runId,
+		});
+		await left.create({
+			ownerId: initial.ownerId,
+			plan: initial,
+			lease,
+			ordinal: 0,
+			kind: "initial",
+		});
+		const nextPlan = (attemptId: string): AgentLaunchPlan => {
+			const { identitySha256: _identity, ...base } = initial;
+			const draft = { ...base, attemptId };
+			return { ...draft, identitySha256: canonicalSha256(draft) };
+		};
+		const outcomes = await Promise.allSettled([
+			left.create({
+				ownerId: initial.ownerId,
+				plan: nextPlan("attempt_left"),
+				lease,
+				ordinal: 1,
+				kind: "retry",
+				parentAttemptId: initial.attemptId,
+			}),
+			right.create({
+				ownerId: initial.ownerId,
+				plan: nextPlan("attempt_right"),
+				lease,
+				ordinal: 1,
+				kind: "retry",
+				parentAttemptId: initial.attemptId,
+			}),
+		]);
+		expect(
+			outcomes.filter((outcome) => outcome.status === "fulfilled"),
+		).toHaveLength(1);
+		expect(
+			outcomes.filter((outcome) => outcome.status === "rejected"),
+		).toHaveLength(1);
+		await lease.release();
 	});
 
 	it("rejects conflicting and corrupt identities", async () => {

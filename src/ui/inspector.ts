@@ -13,6 +13,7 @@ import type {
 	RunSummary,
 	SubagentService,
 } from "../service.js";
+import { formatBytes } from "./format.js";
 
 export type InspectorAction =
 	| "steer"
@@ -84,15 +85,6 @@ function formatAge(timestamp: string, now = Date.now()): string {
 function formatTokens(tokens: number): string {
 	if (tokens < 1000) return String(tokens);
 	return `${(tokens / 1000).toFixed(tokens < 10_000 ? 1 : 0)}k`;
-}
-
-function formatBytes(bytes: number): string {
-	if (bytes < 1024) return `${bytes} B`;
-	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
-	if (bytes < 1024 * 1024 * 1024) {
-		return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
-	}
-	return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GiB`;
 }
 
 function shortId(value: string): string {

@@ -60,6 +60,7 @@ export type RetentionRun = {
 	status: RunStatus;
 	terminalAt?: string;
 	attemptIds: string[];
+	worktreeAttemptIds: string[];
 	retainedWorktree: boolean;
 };
 
@@ -82,6 +83,7 @@ export type RetentionReport = {
 	protected: RetentionRunReport[];
 	selected: RetentionRunReport[];
 	pruned: RetentionRunReport[];
+	recoveredTrashIntents: RunId[];
 };
 
 export type RetentionManager = {
@@ -263,7 +265,11 @@ async function linkedPaths(
 	];
 	for (const attemptId of run.attemptIds) {
 		paths.push(path.join(root, "sessions", attemptId));
-		paths.push(path.join(root, "workspace", "records", `${attemptId}.json`));
+	}
+	for (const worktreeAttemptId of run.worktreeAttemptIds) {
+		paths.push(
+			path.join(root, "workspace", "records", `${worktreeAttemptId}.json`),
+		);
 	}
 	paths.push(...operationPaths);
 	const unique: string[] = [];
@@ -294,6 +300,112 @@ function relativeWithin(root: string, candidate: string): string {
 		throw new Error("retention path escapes service root");
 	}
 	return relative;
+}
+
+type TrashManifest = {
+	schema: "pi-subagent-retention-trash";
+	contractRevision: number;
+	runId: RunId;
+	createdAt: string;
+	commitPath: string;
+	paths: string[];
+};
+
+function safeTrashRelative(value: string): boolean {
+	return (
+		value.length > 0 &&
+		!path.isAbsolute(value) &&
+		value !== ".." &&
+		!value.startsWith(`..${path.sep}`)
+	);
+}
+
+async function recoverTrashIntents(
+	root: string,
+	trashRoot: string,
+): Promise<RunId[]> {
+	const recovered: RunId[] = [];
+	for (const entry of (await readdir(trashRoot)).sort()) {
+		const trashPath = path.join(trashRoot, entry);
+		if (!(await pathExists(path.join(trashPath, "manifest.json")))) continue;
+		if (await pathExists(path.join(trashPath, "completed.json"))) continue;
+		let manifest: TrashManifest;
+		try {
+			manifest = JSON.parse(
+				await readFile(path.join(trashPath, "manifest.json"), "utf8"),
+			) as TrashManifest;
+		} catch {
+			throw new Error("invalid retention trash manifest JSON");
+		}
+		if (
+			manifest.schema !== "pi-subagent-retention-trash" ||
+			manifest.contractRevision !== CONTRACT_REVISION ||
+			!Value.Check(RunIdSchema, manifest.runId) ||
+			!Array.isArray(manifest.paths) ||
+			manifest.paths.length > 128 ||
+			manifest.paths.some(
+				(relative) =>
+					typeof relative !== "string" || !safeTrashRelative(relative),
+			)
+		) {
+			throw new Error("invalid retention trash manifest");
+		}
+		let lease: RunLease;
+		try {
+			lease = await acquireRunLease({
+				root: path.join(root, "leases"),
+				runId: manifest.runId,
+			});
+		} catch (error) {
+			if (error instanceof RunLeaseUnavailableError) continue;
+			throw error;
+		}
+		try {
+			const leaseRelative = path.join("leases", `${manifest.runId}.lease.json`);
+			const orderedPaths = [
+				...manifest.paths.filter(
+					(relative) =>
+						relative !== leaseRelative && relative !== manifest.commitPath,
+				),
+				...manifest.paths.filter((relative) => relative === leaseRelative),
+				...manifest.paths.filter(
+					(relative) => relative === manifest.commitPath,
+				),
+			];
+			for (const relative of orderedPaths) {
+				const source = path.join(root, relative);
+				const destination = path.join(trashPath, relative);
+				const sourceExists = await pathExists(source);
+				const destinationExists = await pathExists(destination);
+				if (sourceExists && destinationExists) {
+					throw new Error("retention trash recovery found duplicate state");
+				}
+				if (!sourceExists && !destinationExists) {
+					throw new Error("retention trash recovery found missing state");
+				}
+				if (!sourceExists) continue;
+				if (relative !== manifest.commitPath) {
+					await lease.assertCurrent();
+				}
+				await mkdir(path.dirname(destination), {
+					recursive: true,
+					mode: 0o700,
+				});
+				await rename(source, destination);
+				await syncDirectory(path.dirname(source));
+				await syncDirectory(path.dirname(destination));
+			}
+			await writeDurable(
+				path.join(trashPath, "completed.json"),
+				`${JSON.stringify({ runId: manifest.runId, completedAt: new Date().toISOString() }, null, 2)}\n`,
+			);
+			await syncDirectory(trashPath);
+			recovered.push(manifest.runId);
+		} finally {
+			await lease.release();
+		}
+	}
+	return recovered;
 }
 
 async function moveRunToTrash(options: {
@@ -476,8 +588,15 @@ export async function createRetentionManager(options: {
 				throw new Error("invalid retention byte budget");
 			}
 			return withLease(async () => {
+				const recoveredTrashIntents = pruneOptions.dryRun
+					? []
+					: await recoverTrashIntents(root, trashRoot);
+				const recoveredSet = new Set(recoveredTrashIntents);
+				const candidateRuns = pruneOptions.runs.filter(
+					(run) => !recoveredSet.has(run.runId),
+				);
 				const seenRunIds = new Set<string>();
-				for (const run of pruneOptions.runs) {
+				for (const run of candidateRuns) {
 					if (
 						!Value.Check(RunIdSchema, run.runId) ||
 						!Value.Check(RunStatusSchema, run.status) ||
@@ -485,7 +604,13 @@ export async function createRetentionManager(options: {
 							(attemptId) => !Value.Check(AttemptIdSchema, attemptId),
 						) ||
 						run.attemptIds.length > 32 ||
+						run.worktreeAttemptIds.some(
+							(attemptId) => !Value.Check(AttemptIdSchema, attemptId),
+						) ||
+						run.worktreeAttemptIds.length > 32 ||
 						new Set(run.attemptIds).size !== run.attemptIds.length ||
+						new Set(run.worktreeAttemptIds).size !==
+							run.worktreeAttemptIds.length ||
 						seenRunIds.has(run.runId)
 					) {
 						throw new Error("invalid retention run descriptor");
@@ -513,7 +638,7 @@ export async function createRetentionManager(options: {
 					bytes: number;
 					terminalTime?: number;
 				}> = [];
-				for (const run of pruneOptions.runs) {
+				for (const run of candidateRuns) {
 					const paths = await linkedPaths(
 						root,
 						run,
@@ -651,6 +776,7 @@ export async function createRetentionManager(options: {
 					protected: protectedRuns,
 					selected: selectedReports,
 					pruned,
+					recoveredTrashIntents,
 				};
 			});
 		},

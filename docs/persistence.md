@@ -20,7 +20,9 @@ path is inside the session root and `SessionManager` identity matches the durabl
 root, branch, HEAD, status, handoff/baseline commit, release receipt, and retained
 branch evidence before conservative failed/interrupted/cleanup-blocked outcomes
 are persisted. Immutable run
-records persist owner and launch identity before execution. Startup scans them,
+records persist owner and launch identity before execution. Attempt publication
+requires the current run lease and a process-wide root/run queue, so competing
+next-attempt IDs cannot publish the same ordinal and parent. Startup scans them,
 restores proved terminal snapshots and artifact access, skips runs held by a
 live seat, and classifies unproved stale execution as cleanup-blocked. Artifact
 blobs are content-addressed, privately stored, bounded per artifact and store,
@@ -186,8 +188,8 @@ are reported separately and never evicted to make the ordinary budget appear
 satisfied.
 
 A run pin protects the full graph: run and attempt records, journal and snapshot,
-artifacts, sessions, operation mappings, lease record, and released worktree
-metadata. Worktree records gain a durable `releasedAt` receipt only after both
+artifacts, sessions, operation mappings, lease record, and every distinct
+`worktreeAttemptId` referenced by attempt lineage. Worktree records gain a durable `releasedAt` receipt only after both
 the verified worktree and branch are gone; any unreleased or uncertain worktree
 protects its run.
 
@@ -201,5 +203,7 @@ Pin removal is also recoverable through trash.
 Operators use `/subagent-prune` for a report and `/subagent-prune --apply` after
 confirmation. The run record moves last as the graph commit marker and a durable
 completion receipt distinguishes finished trash moves from recoverable partial
-intents. `/subagent-pin <run-id> [reason]` and `/subagent-unpin <run-id>`
+intents. Applied pruning scans incomplete manifests first, reacquires the run
+lease, resumes each remaining rename with lease and commit paths ordered last,
+and writes the completion receipt before considering new candidates. `/subagent-pin <run-id> [reason]` and `/subagent-unpin <run-id>`
 manage pins owned by the current Pi session.

@@ -595,6 +595,16 @@ The extension is a thin adapter over the standalone service.
 
 ## Deliverable 8 — acceptance and stable release
 
+Targeted independent correctness, security, adversarial, and simplification
+reviews found resumed-session usage double counting, host Git hook/environment
+authority, incomplete worktree retention edges, concurrent attempt-lineage
+publication, and two duplicated UX registries/formatters. Fixes now baseline
+usage/output per resumed attempt, harden host Git execution, include distinct
+worktree IDs, fence and serialize attempt publication, recover partial trash
+intents, and centralize command/format sources. The alleged unrecoverable trash
+case was narrowed to an actual missing recovery loop; the run-record-last commit
+ordering remains the crash-safety boundary.
+
 ### Build
 
 - execute every item in `docs/acceptance.md`;

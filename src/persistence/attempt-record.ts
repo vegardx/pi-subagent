@@ -24,8 +24,10 @@ import {
 } from "../launch-contracts.js";
 import { verifyLaunchPlanIdentity } from "../preflight/compile.js";
 import { PersistenceCorruptionError } from "./journal.js";
+import type { RunLease } from "./run-lease.js";
 
 const MAX_ATTEMPT_RECORD_BYTES = 1024 * 1024;
+const attemptTails = new Map<string, Promise<void>>();
 
 export const AttemptRecordSchema = Type.Object(
 	{
@@ -105,39 +107,110 @@ export class AttemptRecordStore {
 	async create(input: {
 		ownerId: string;
 		plan: AgentLaunchPlan;
+		lease: RunLease;
 		ordinal: number;
 		kind: AttemptRecord["kind"];
 		parentAttemptId?: string;
 		worktreeAttemptId?: string;
 	}): Promise<AttemptRecord> {
-		const record: AttemptRecord = {
-			schema: "pi-subagent-attempt-record",
-			contractRevision: CONTRACT_REVISION,
-			ownerId: input.ownerId,
-			runId: input.plan.runId,
-			attemptId: input.plan.attemptId,
-			ordinal: input.ordinal,
-			kind: input.kind,
-			...(input.parentAttemptId
-				? { parentAttemptId: input.parentAttemptId }
-				: {}),
-			...(input.worktreeAttemptId
-				? { worktreeAttemptId: input.worktreeAttemptId }
-				: {}),
-			plan: input.plan,
-			createdAt: new Date().toISOString(),
-		};
-		if (
-			!Value.Check(AttemptRecordSchema, record) ||
-			!verifyLaunchPlanIdentity(input.plan)
-		) {
-			throw new Error("invalid attempt record");
+		if (input.lease.record.runId !== input.plan.runId) {
+			throw new Error("attempt record lease identity mismatch");
 		}
-		const directory = this.runDirectory(record.runId);
-		await mkdir(directory, { recursive: true, mode: 0o700 });
-		await chmod(directory, 0o700);
-		const target = path.join(directory, `${record.attemptId}.json`);
+		const tailKey = `${this.root}\0${input.plan.runId}`;
+		const previous = attemptTails.get(tailKey) ?? Promise.resolve();
+		let release = () => {};
+		const current = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		attemptTails.set(tailKey, current);
+		await previous;
 		try {
+			await input.lease.assertCurrent();
+			const record: AttemptRecord = {
+				schema: "pi-subagent-attempt-record",
+				contractRevision: CONTRACT_REVISION,
+				ownerId: input.ownerId,
+				runId: input.plan.runId,
+				attemptId: input.plan.attemptId,
+				ordinal: input.ordinal,
+				kind: input.kind,
+				...(input.parentAttemptId
+					? { parentAttemptId: input.parentAttemptId }
+					: {}),
+				...(input.worktreeAttemptId
+					? { worktreeAttemptId: input.worktreeAttemptId }
+					: {}),
+				plan: input.plan,
+				createdAt: new Date().toISOString(),
+			};
+			if (
+				!Value.Check(AttemptRecordSchema, record) ||
+				!verifyLaunchPlanIdentity(input.plan)
+			) {
+				throw new Error("invalid attempt record");
+			}
+			const directory = this.runDirectory(record.runId);
+			await mkdir(directory, { recursive: true, mode: 0o700 });
+			await chmod(directory, 0o700);
+			const target = path.join(directory, `${record.attemptId}.json`);
+			try {
+				const existing = await this.readPath(target);
+				if (
+					existing.ownerId !== record.ownerId ||
+					existing.plan.identitySha256 !== record.plan.identitySha256 ||
+					existing.ordinal !== record.ordinal ||
+					existing.kind !== record.kind ||
+					existing.worktreeAttemptId !== record.worktreeAttemptId
+				) {
+					throw new Error("attempt record conflicts with existing identity");
+				}
+				return existing;
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+			}
+			await input.lease.assertCurrent();
+			const latest = await this.latest(record.runId);
+			if (record.kind === "initial") {
+				if (
+					latest ||
+					record.ordinal !== 0 ||
+					record.parentAttemptId !== undefined
+				) {
+					throw new Error("invalid initial attempt lineage");
+				}
+			} else if (
+				!latest ||
+				record.ordinal !== latest.ordinal + 1 ||
+				record.parentAttemptId !== latest.attemptId
+			) {
+				throw new Error("invalid attempt lineage");
+			}
+			const content = `${JSON.stringify(record)}\n`;
+			if (Buffer.byteLength(content) > MAX_ATTEMPT_RECORD_BYTES) {
+				throw new Error("attempt record exceeds byte limit");
+			}
+			const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
+			const handle = await open(temporary, "wx", 0o600);
+			try {
+				await handle.writeFile(content, "utf8");
+				await handle.sync();
+			} finally {
+				await handle.close();
+			}
+			let created = false;
+			try {
+				await input.lease.assertCurrent();
+				await link(temporary, target);
+				created = true;
+				await syncDirectory(directory);
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+			} finally {
+				await unlink(temporary).catch((error: NodeJS.ErrnoException) => {
+					if (error.code !== "ENOENT") throw error;
+				});
+			}
+			if (created) return record;
 			const existing = await this.readPath(target);
 			if (
 				existing.ownerId !== record.ownerId ||
@@ -149,61 +222,12 @@ export class AttemptRecordStore {
 				throw new Error("attempt record conflicts with existing identity");
 			}
 			return existing;
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-		}
-		const latest = await this.latest(record.runId);
-		if (record.kind === "initial") {
-			if (
-				latest ||
-				record.ordinal !== 0 ||
-				record.parentAttemptId !== undefined
-			) {
-				throw new Error("invalid initial attempt lineage");
+		} finally {
+			release();
+			if (attemptTails.get(tailKey) === current) {
+				attemptTails.delete(tailKey);
 			}
-		} else if (
-			!latest ||
-			record.ordinal !== latest.ordinal + 1 ||
-			record.parentAttemptId !== latest.attemptId
-		) {
-			throw new Error("invalid attempt lineage");
 		}
-		const content = `${JSON.stringify(record)}\n`;
-		if (Buffer.byteLength(content) > MAX_ATTEMPT_RECORD_BYTES) {
-			throw new Error("attempt record exceeds byte limit");
-		}
-		const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
-		const handle = await open(temporary, "wx", 0o600);
-		try {
-			await handle.writeFile(content, "utf8");
-			await handle.sync();
-		} finally {
-			await handle.close();
-		}
-		let created = false;
-		try {
-			await link(temporary, target);
-			created = true;
-			await syncDirectory(directory);
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-		} finally {
-			await unlink(temporary).catch((error: NodeJS.ErrnoException) => {
-				if (error.code !== "ENOENT") throw error;
-			});
-		}
-		if (created) return record;
-		const existing = await this.readPath(target);
-		if (
-			existing.ownerId !== record.ownerId ||
-			existing.plan.identitySha256 !== record.plan.identitySha256 ||
-			existing.ordinal !== record.ordinal ||
-			existing.kind !== record.kind ||
-			existing.worktreeAttemptId !== record.worktreeAttemptId
-		) {
-			throw new Error("attempt record conflicts with existing identity");
-		}
-		return existing;
 	}
 
 	async list(runId: string): Promise<AttemptRecord[]> {
