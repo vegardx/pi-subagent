@@ -117,6 +117,7 @@ export type RunSummary = {
 	pinned: boolean;
 	controllable: boolean;
 	retryable: boolean;
+	retryAt?: string;
 	resumable: boolean;
 	retainedWorktree: boolean;
 	requiresAttention: boolean;
@@ -308,17 +309,39 @@ async function pathState(
 	}
 }
 
+export class RetryBackoffError extends Error {
+	constructor(readonly retryAt: string) {
+		super(`retry backoff remains active until ${retryAt}`);
+		this.name = "RetryBackoffError";
+	}
+}
+
+function retryDelayMs(failure: RunResult["failure"], ordinal: number): number {
+	if (failure?.retry !== "backoff") return 0;
+	return Math.min(
+		300_000,
+		(failure.retryAfterMs ?? 1_000) * 2 ** Math.min(ordinal, 8),
+	);
+}
+
 function retryPlan(
 	current: AgentLaunchPlan,
 	result: AttemptExecutionResult,
 	ordinal: number,
 ): AgentLaunchPlan {
 	if (current.limits.retries < 1) throw new Error("retry budget exhausted");
+	if (
+		result.result.failure?.retry !== "manual" &&
+		result.result.failure?.retry !== "backoff"
+	) {
+		throw new Error("failure classification does not permit retry");
+	}
+	const remainingRuntimeMs = current.limits.runtimeMs - result.result.runtimeMs;
 	const remainingTokens =
 		current.limits.tokens - result.result.usage.totalTokens;
 	const remainingCost = current.limits.cost - result.result.usage.cost;
-	if (remainingTokens < 1 || remainingCost <= 0) {
-		throw new Error("retry run-wide usage budget exhausted");
+	if (remainingRuntimeMs < 1_000 || remainingTokens < 1 || remainingCost <= 0) {
+		throw new Error("retry run-wide budget exhausted");
 	}
 	const attemptId = `attempt_${canonicalSha256({
 		runId: current.runId,
@@ -332,6 +355,7 @@ function retryPlan(
 		attemptId,
 		limits: {
 			...current.limits,
+			runtimeMs: remainingRuntimeMs,
 			tokens: remainingTokens,
 			cost: remainingCost,
 			retries: current.limits.retries - 1,
@@ -346,11 +370,15 @@ function resumePlan(
 	ordinal: number,
 ): AgentLaunchPlan {
 	if (current.limits.resumes < 1) throw new Error("resume budget exhausted");
+	if (result.result.failure?.retry !== "resume") {
+		throw new Error("failure classification does not permit resume");
+	}
+	const remainingRuntimeMs = current.limits.runtimeMs - result.result.runtimeMs;
 	const remainingTokens =
 		current.limits.tokens - result.result.usage.totalTokens;
 	const remainingCost = current.limits.cost - result.result.usage.cost;
-	if (remainingTokens < 1 || remainingCost <= 0) {
-		throw new Error("resume run-wide usage budget exhausted");
+	if (remainingRuntimeMs < 1_000 || remainingTokens < 1 || remainingCost <= 0) {
+		throw new Error("resume run-wide budget exhausted");
 	}
 	const attemptId = `attempt_${canonicalSha256({
 		runId: current.runId,
@@ -364,6 +392,7 @@ function resumePlan(
 		attemptId,
 		limits: {
 			...current.limits,
+			runtimeMs: remainingRuntimeMs,
 			tokens: remainingTokens,
 			cost: remainingCost,
 			resumes: current.limits.resumes - 1,
@@ -606,6 +635,14 @@ export async function createSubagentService(options: {
 					status: "cleanup-blocked",
 					usage: emptyUsage(),
 					usageComplete: false,
+					runtimeMs: 0,
+					failure: {
+						code: "unknown",
+						origin: "service",
+						retry: "reconcile",
+						message: "Terminal state was not proved before seat loss",
+						guidance: "Reconcile external state before continuing.",
+					},
 					sandboxCleanup: "unknown",
 					workspaceCleanup:
 						recoveredPlan.workspace.mode === "read-only"
@@ -858,6 +895,23 @@ export async function createSubagentService(options: {
 		]);
 		const latestAttempt = attempts.at(-1);
 		const updatedAt = events.at(-1)?.timestamp ?? run.createdAt;
+		const retryFailure = run.result?.result.failure;
+		const retryTerminal = events.findLast(
+			(event) => event.type === "attempt-failed",
+		);
+		const retryDelay = retryDelayMs(retryFailure, latestAttempt?.ordinal ?? 0);
+		const retryAt =
+			retryDelay > 0 && retryTerminal
+				? new Date(
+						Date.parse(retryTerminal.timestamp) + retryDelay,
+					).toISOString()
+				: undefined;
+		const remainingRuntime =
+			run.plan.limits.runtimeMs - (run.result?.result.runtimeMs ?? 0);
+		const remainingTokens =
+			run.plan.limits.tokens - (run.result?.result.usage.totalTokens ?? 0);
+		const remainingCost =
+			run.plan.limits.cost - (run.result?.result.usage.cost ?? 0);
 		const goalPreview = run.plan.task.goal
 			.replaceAll(/\s+/g, " ")
 			.slice(0, 240);
@@ -879,11 +933,21 @@ export async function createSubagentService(options: {
 			retryable:
 				run.status === "failed" &&
 				run.result !== undefined &&
-				run.plan.limits.retries > 0,
+				(retryFailure?.retry === "manual" ||
+					retryFailure?.retry === "backoff") &&
+				run.plan.limits.retries > 0 &&
+				remainingRuntime >= 1_000 &&
+				remainingTokens >= 1 &&
+				remainingCost > 0,
+			...(retryAt ? { retryAt } : {}),
 			resumable:
 				run.status === "interrupted" &&
 				run.result?.sessionFile !== undefined &&
-				run.plan.limits.resumes > 0,
+				run.result.result.failure?.retry === "resume" &&
+				run.plan.limits.resumes > 0 &&
+				remainingRuntime >= 1_000 &&
+				remainingTokens >= 1 &&
+				remainingCost > 0,
 			retainedWorktree: await retainedWorktree(run, attempts),
 			requiresAttention: [
 				"active",
@@ -1430,9 +1494,33 @@ export async function createSubagentService(options: {
 						if (run.status !== "failed" || !run.result) {
 							throw new Error("run is not retryable");
 						}
+						if (
+							run.result.result.failure?.retry !== "manual" &&
+							run.result.result.failure?.retry !== "backoff"
+						) {
+							throw new Error("failure classification does not permit retry");
+						}
 						const latest = await attemptRecords.latest(runId);
 						if (!latest || latest.attemptId !== run.plan.attemptId) {
 							throw new Error("attempt history mismatch");
+						}
+						const retryDelay = retryDelayMs(
+							run.result.result.failure,
+							latest.ordinal,
+						);
+						if (retryDelay > 0) {
+							const terminalEvent = (await run.journal.readEvents()).findLast(
+								(event) => event.type === "attempt-failed",
+							);
+							if (!terminalEvent) {
+								throw new Error("retry terminal evidence is unavailable");
+							}
+							const retryAt = new Date(
+								Date.parse(terminalEvent.timestamp) + retryDelay,
+							);
+							if (retryAt.getTime() > Date.now()) {
+								throw new RetryBackoffError(retryAt.toISOString());
+							}
 						}
 						const rootRecord = await runRecords.read(runId);
 						const workspace = await preflightWorkspace({
@@ -1511,6 +1599,9 @@ export async function createSubagentService(options: {
 						const run = ownedRun(runId);
 						if (run.status !== "interrupted" || !run.result?.sessionFile) {
 							throw new Error("run is not resumable");
+						}
+						if (run.result.result.failure?.retry !== "resume") {
+							throw new Error("failure classification does not permit resume");
 						}
 						const latest = await attemptRecords.latest(runId);
 						if (!latest || latest.attemptId !== run.plan.attemptId) {
@@ -1683,6 +1774,34 @@ export async function createSubagentService(options: {
 								: {}),
 							usage: run.result?.result.usage ?? emptyUsage(),
 							usageComplete: run.result?.result.usageComplete ?? false,
+							runtimeMs: run.result?.result.runtimeMs ?? 0,
+							failure:
+								status === "interrupted"
+									? {
+											code: "seat-interruption",
+											origin: "service",
+											retry: "resume",
+											message: "Prior attempt ended before terminal proof",
+											guidance:
+												"Resume the retained session in a fresh VM after validation.",
+										}
+									: status === "cleanup-blocked"
+										? {
+												code: "sandbox-cleanup",
+												origin: "service",
+												retry: "reconcile",
+												message: "External cleanup remains unproved",
+												guidance:
+													"Reconcile recorded sandbox and workspace identities.",
+											}
+										: {
+												code: "unknown",
+												origin: "service",
+												retry: "reconcile",
+												message: "Prior attempt failed without terminal proof",
+												guidance:
+													"Inspect lifecycle evidence before continuing.",
+											},
 							sandboxCleanup,
 							workspaceCleanup,
 							truncated: run.result?.result.truncated ?? false,

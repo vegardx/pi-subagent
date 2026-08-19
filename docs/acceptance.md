@@ -190,8 +190,17 @@ Using bounded disposable fixtures:
 - a stale QEMU process is not adopted by a new native session and blocks reuse
   of its worktree until termination is proved;
 - files use private modes and bounded serialization;
-- numerical output, log, event, artifact, runtime, retry, token, and cost bounds
-  produce documented truncation or terminal outcomes;
+- every non-completed terminal result has one bounded stable failure code,
+  origin, retry disposition, message, and guidance;
+- unknown failures fail closed to reconciliation rather than transient retry;
+- only manual and elapsed-backoff classifications enter retry; only seat
+  interruption with a retained session enters resume;
+- transient retry delay grows exponentially from durable attempt ordinal and is
+  capped at five minutes;
+- numerical output, log, event, artifact, cumulative runtime, retry, resume,
+  token, and cost bounds produce documented truncation or terminal outcomes;
+- retry/resume subtract each attempt's measured runtime before compiling the next
+  immutable plan and reject less than one second remaining;
 - retention never selects active, interrupted, cleanup-blocked, pinned, or
   unreleased-worktree runs;
 - ordinary terminal runs older than 30 days are selected;

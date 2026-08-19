@@ -77,6 +77,59 @@ export const ArtifactRefSchema = Type.Object(
 );
 export type ArtifactRef = Static<typeof ArtifactRefSchema>;
 
+export const FailureCodeSchema = Type.Union([
+	Type.Literal("authentication"),
+	Type.Literal("cancellation"),
+	Type.Literal("lease-loss"),
+	Type.Literal("model-output"),
+	Type.Literal("mount-policy"),
+	Type.Literal("network-policy"),
+	Type.Literal("persistence"),
+	Type.Literal("provider-transient"),
+	Type.Literal("resource-drift"),
+	Type.Literal("sandbox-capability"),
+	Type.Literal("sandbox-cleanup"),
+	Type.Literal("sandbox-launch"),
+	Type.Literal("seat-interruption"),
+	Type.Literal("timeout"),
+	Type.Literal("tool"),
+	Type.Literal("trust"),
+	Type.Literal("unknown"),
+	Type.Literal("validation"),
+	Type.Literal("workspace"),
+]);
+export type FailureCode = Static<typeof FailureCodeSchema>;
+
+export const ClassifiedFailureSchema = Type.Object(
+	{
+		code: FailureCodeSchema,
+		origin: Type.Union([
+			Type.Literal("model"),
+			Type.Literal("operator"),
+			Type.Literal("persistence"),
+			Type.Literal("provider"),
+			Type.Literal("sandbox"),
+			Type.Literal("service"),
+			Type.Literal("tool"),
+			Type.Literal("workspace"),
+		]),
+		retry: Type.Union([
+			Type.Literal("never"),
+			Type.Literal("manual"),
+			Type.Literal("backoff"),
+			Type.Literal("resume"),
+			Type.Literal("reconcile"),
+		]),
+		message: Type.String({ minLength: 1, maxLength: 4096 }),
+		guidance: Type.String({ minLength: 1, maxLength: 1024 }),
+		retryAfterMs: Type.Optional(
+			Type.Integer({ minimum: 1_000, maximum: 300_000 }),
+		),
+	},
+	{ additionalProperties: false },
+);
+export type ClassifiedFailure = Static<typeof ClassifiedFailureSchema>;
+
 export const RunResultSchema = Type.Object(
 	{
 		runId: RunIdSchema,
@@ -91,6 +144,8 @@ export const RunResultSchema = Type.Object(
 		structuredOutput: Type.Optional(Type.Unknown()),
 		usage: UsageSchema,
 		usageComplete: Type.Boolean(),
+		runtimeMs: Type.Integer({ minimum: 0 }),
+		failure: Type.Optional(ClassifiedFailureSchema),
 		sandboxCleanup: CleanupOutcomeSchema,
 		workspaceCleanup: CleanupOutcomeSchema,
 		truncated: Type.Boolean(),
@@ -111,7 +166,10 @@ export function isRunResult(value: unknown): value is RunResult {
 	if (!Value.Check(RunResultSchema, value)) return false;
 	const result = value as RunResult;
 	const proved = cleanupIsProved(result);
-	if (result.status === "completed") return proved;
+	if (result.status === "completed") {
+		return proved && result.failure === undefined;
+	}
+	if (result.failure === undefined) return false;
 	if (result.status === "cleanup-blocked") return !proved;
 	return true;
 }
@@ -132,6 +190,9 @@ export const SubagentRuntimeContractSchema = Type.Object(
 				preflight: Type.Boolean(),
 				idempotentLaunch: Type.Boolean(),
 				resume: Type.Boolean(),
+				classifiedFailures: Type.Boolean(),
+				cumulativeRuntimeBudget: Type.Boolean(),
+				retryBackoff: Type.Boolean(),
 				worktrees: Type.Boolean(),
 				publicNetworkEgress: Type.Boolean(),
 				explicitResources: Type.Boolean(),
@@ -160,6 +221,9 @@ export const SUBAGENT_RUNTIME_CONTRACT: SubagentRuntimeContract = {
 		preflight: true,
 		idempotentLaunch: true,
 		resume: true,
+		classifiedFailures: true,
+		cumulativeRuntimeBudget: true,
+		retryBackoff: true,
 		worktrees: true,
 		publicNetworkEgress: true,
 		explicitResources: true,

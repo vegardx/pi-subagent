@@ -10,9 +10,13 @@ export {
 	AttemptIdSchema,
 	type AttemptStatus,
 	AttemptStatusSchema,
+	type ClassifiedFailure,
+	ClassifiedFailureSchema,
 	type CleanupOutcome,
 	CleanupOutcomeSchema,
 	CONTRACT_REVISION,
+	type FailureCode,
+	FailureCodeSchema,
 	isRunResult,
 	type RunId,
 	RunIdSchema,
@@ -160,6 +164,7 @@ export {
 	boundAttemptOutput,
 	runNativeAttempt,
 } from "./runtime/attempt.js";
+export { classifyAttemptFailure } from "./runtime/failure.js";
 export {
 	createFinalAnswerController,
 	type FinalAnswerController,
@@ -195,6 +200,7 @@ export {
 	createSubagentService,
 	type OwnerRegistration,
 	type ReconcileResult,
+	RetryBackoffError,
 	type RunInspection,
 	type RunLogPage,
 	type RunObservation,

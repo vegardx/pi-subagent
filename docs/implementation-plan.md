@@ -495,8 +495,13 @@ worktree identity across initial/retry/resume execution. Failed runs can retry
 with a new attempt while decrementing remaining retry/token/cost budgets.
 Interrupted runs can reopen a contained persisted Pi session in a fresh VM while
 decrementing resume/token/cost budgets and reusing a retained worktree when
-present. Deeper VM session-registry reconciliation and retry
-backoff/classification remain outstanding. Cross-process retention fencing,
+present. Stable terminal failure classification now binds code, origin, retry
+disposition, bounded message, and operator guidance into every non-completed
+result. Unknown errors fail closed to reconciliation; manual retry and
+exponentially delayed transient retry are distinct; resume requires a seat
+interruption classification and retained session. Runtime, token, and cost are
+cumulative across fresh attempts. Deeper VM session-registry reconciliation
+remains outstanding. Cross-process retention fencing,
 owner pins, unreleased-worktree protection, 30-day age selection, the 2 GiB
 ordinary-data budget, dry-run reporting, and recoverable trash are integrated.
 Owner-bound release now reacquires fencing,

@@ -18,7 +18,7 @@ import { RunRecordStore } from "../src/persistence/run-record.js";
 import { digestFileResource } from "../src/preflight/resources.js";
 import { preflightWorkspace } from "../src/preflight/workspace.js";
 import { createVmCapacityManager } from "../src/sandbox/capacity.js";
-import { createSubagentService } from "../src/service.js";
+import { createSubagentService, RetryBackoffError } from "../src/service.js";
 
 const execFileAsync = promisify(execFile);
 const hash = "a".repeat(64);
@@ -92,9 +92,42 @@ async function fixture(name: string) {
 }
 
 function result(runId: string, status: RunResult["status"]): RunResult {
+	const failures: Partial<
+		Record<RunResult["status"], NonNullable<RunResult["failure"]>>
+	> = {
+		failed: {
+			code: "timeout",
+			origin: "service",
+			retry: "manual",
+			message: "test failure",
+			guidance: "retry manually",
+		},
+		cancelled: {
+			code: "cancellation",
+			origin: "operator",
+			retry: "never",
+			message: "test cancellation",
+			guidance: "start a new run",
+		},
+		interrupted: {
+			code: "seat-interruption",
+			origin: "operator",
+			retry: "resume",
+			message: "test interruption",
+			guidance: "resume",
+		},
+		"cleanup-blocked": {
+			code: "sandbox-cleanup",
+			origin: "sandbox",
+			retry: "reconcile",
+			message: "test cleanup block",
+			guidance: "reconcile",
+		},
+	};
 	return {
 		runId,
 		status,
+		...(failures[status] ? { failure: failures[status] } : {}),
 		usage: {
 			input: 1,
 			output: 1,
@@ -104,6 +137,7 @@ function result(runId: string, status: RunResult["status"]): RunResult {
 			cost: 0,
 		},
 		usageComplete: true,
+		runtimeMs: 100,
 		sandboxCleanup: "proved",
 		workspaceCleanup: "not-needed",
 		truncated: false,
@@ -607,6 +641,7 @@ describe("foreground subagent service", () => {
 		);
 		expect((await client.wait(initial.runId)).result.status).toBe("failed");
 		await data.service.shutdown();
+		let retryRuntimeMs = 0;
 		const restarted = await createSubagentService({
 			root: path.join(data.root, "state"),
 			agentDir: path.join(data.root, "agent"),
@@ -626,14 +661,17 @@ describe("foreground subagent service", () => {
 				guestDiskBytes: 2 * 1024 * 1024 * 1024,
 			},
 			resolveModel: async (model) => model,
-			executeAttempt: async (input) => ({
-				result: result(input.plan.runId, "completed"),
-				output: input.agent.prompt,
-				sessionFile: undefined,
-				handoff: undefined,
-				structuredOutput: undefined,
-				error: undefined,
-			}),
+			executeAttempt: async (input) => {
+				retryRuntimeMs = input.plan.limits.runtimeMs;
+				return {
+					result: result(input.plan.runId, "completed"),
+					output: input.agent.prompt,
+					sessionFile: undefined,
+					handoff: undefined,
+					structuredOutput: undefined,
+					error: undefined,
+				};
+			},
 		});
 		const restartedClient = restarted.forOwner({ id: "owner-a" });
 		const retry = await restartedClient.retry(initial.runId);
@@ -641,6 +679,7 @@ describe("foreground subagent service", () => {
 		expect((await restartedClient.wait(initial.runId)).output).toBe(
 			"worker prompt",
 		);
+		expect(retryRuntimeMs).toBe(data.request.limits.runtimeMs - 100);
 		const history = await (
 			await AttemptRecordStore.open(
 				path.join(data.root, "state", "attempt-records"),
@@ -653,12 +692,56 @@ describe("foreground subagent service", () => {
 		expect(history[1]?.parentAttemptId).toBe(initial.attemptId);
 	});
 
+	it("enforces exponential backoff for transient failures", async () => {
+		const data = await serviceFor("retry-backoff", async (input) => {
+			const execution = {
+				result: {
+					...result(input.plan.runId, "failed"),
+					failure: {
+						code: "provider-transient" as const,
+						origin: "provider" as const,
+						retry: "backoff" as const,
+						message: "status 429 rate limit",
+						guidance: "wait before retry",
+						retryAfterMs: 300_000,
+					},
+				},
+				output: "failed",
+				sessionFile: undefined,
+				handoff: undefined,
+				structuredOutput: undefined,
+				error: "status 429 rate limit",
+			};
+			await input.journal.append("attempt-failed", { status: "failed" });
+			await input.journal.writeSnapshot(execution);
+			return execution;
+		});
+		const client = data.service.forOwner({ id: "owner-backoff" });
+		const preflight = await client.preflight({
+			...data.request,
+			operationId: "operation-backoff",
+		});
+		const receipt = await client.launch(
+			preflight.preflightId,
+			preflight.identitySha256,
+		);
+		await client.wait(receipt.runId);
+		await expect(client.retry(receipt.runId)).rejects.toBeInstanceOf(
+			RetryBackoffError,
+		);
+		const summary = (await client.listRuns()).runs[0];
+		expect(summary?.retryable).toBe(true);
+		expect(summary?.retryAt).toBeDefined();
+	});
+
 	it("resumes an interrupted session as a fresh attempt", async () => {
 		let attempts = 0;
+		let resumedRuntimeMs = 0;
 		let retainedSession = "";
 		let dataRoot = "";
 		const data = await serviceFor("resume", async (input) => {
 			attempts++;
+			if (attempts === 2) resumedRuntimeMs = input.plan.limits.runtimeMs;
 			if (attempts === 1) {
 				retainedSession = path.join(
 					dataRoot,
@@ -704,6 +787,7 @@ describe("foreground subagent service", () => {
 			"initial",
 			"resume",
 		]);
+		expect(resumedRuntimeMs).toBe(data.request.limits.runtimeMs - 100);
 	});
 
 	it("reconciles a stale pre-terminal run conservatively", async () => {
