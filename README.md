@@ -26,6 +26,23 @@ does not provide detached execution or survival across seat exit.
 `pi-subagent` owns physical agent execution. It does not schedule workflow
 stages or define delivery policy.
 
+## Operator UX
+
+Use `/subagents` for the current-project run inspector. It provides bounded
+Overview, Activity, Result, and Technical tabs, live status updates, state-valid
+actions, search/filtering, current/all-project scope, retention preview, and an
+attention-only widget. Direct commands use the same service authority:
+
+```text
+/subagents list [--all]
+/subagents show|status <run-prefix>
+/subagents logs|wait <run-prefix>
+/subagents steer|follow-up|stop <run-prefix>
+/subagents retry|resume|reconcile|release <run-prefix>
+/subagents pin|unpin <run-prefix>
+/subagents prune [--apply]
+```
+
 The project does not provide backwards compatibility. Public contracts and
 persisted formats may change incompatibly; consumers must use the exact supported
 contract revision.

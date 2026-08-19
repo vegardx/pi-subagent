@@ -1,17 +1,27 @@
-import { stat } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { realpath, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
 import {
 	type ExtensionAPI,
+	type ExtensionCommandContext,
 	type ExtensionContext,
 	getAgentDir,
 	ModelRuntime,
 } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import type { ExactModelRequest } from "./launch-contracts.js";
 import type { DiscoveredAgent } from "./preflight/agents.js";
 import { canonicalSha256 } from "./preflight/canonical.js";
-import type { SubagentService } from "./service.js";
+import type { RunSummary, SubagentService } from "./service.js";
+import {
+	attentionWidgetLines,
+	type InspectorAction,
+	type InspectorState,
+	showRetentionReport,
+	showSubagentInspector,
+} from "./ui/inspector.js";
 
 const READ_ONLY_TOOLS = ["read", "grep", "find", "ls"];
 const THINKING_LEVELS = [
@@ -101,6 +111,7 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 	let modelRuntime: ModelRuntime | undefined;
 	let service: SubagentService | undefined;
 	let servicePromise: Promise<SubagentService> | undefined;
+	let widgetUnsubscribe: (() => void) | undefined;
 
 	async function ensureService(
 		ctx: ExtensionContext,
@@ -174,75 +185,428 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 		return servicePromise;
 	}
 
-	pi.on("session_shutdown", async () => {
+	pi.on("session_start", async (_event, ctx) => {
+		if (ctx.mode !== "tui") return;
+		try {
+			const runtime = await ensureService(ctx);
+			const repositoryRoot = await currentRepositoryRoot(ctx);
+			const refresh = async () => {
+				const page = await runtime.listRuns({
+					...(repositoryRoot ? { repositoryRoot } : {}),
+					statuses: ["active", "stopping", "interrupted", "cleanup-blocked"],
+					limit: 100,
+				});
+				ctx.ui.setWidget("pi-subagent", attentionWidgetLines(page.runs), {
+					placement: "belowEditor",
+				});
+			};
+			await refresh();
+			widgetUnsubscribe = runtime.subscribe(() => void refresh());
+		} catch {
+			ctx.ui.setWidget("pi-subagent", undefined);
+		}
+	});
+
+	pi.on("session_shutdown", async (_event, ctx) => {
+		widgetUnsubscribe?.();
+		widgetUnsubscribe = undefined;
+		ctx.ui.setWidget("pi-subagent", undefined);
 		await service?.shutdown();
 		service = undefined;
 		servicePromise = undefined;
 		modelRuntime = undefined;
 	});
 
-	pi.registerCommand("subagent-prune", {
-		description:
-			"Preview retention pruning; pass --apply to move selected runs to recoverable trash",
-		async handler(args, ctx) {
-			const apply = args.trim() === "--apply";
-			if (args.trim() && !apply) {
-				ctx.ui.notify("Usage: /subagent-prune [--apply]", "error");
-				return;
-			}
+	function operatorOutput(
+		ctx: ExtensionContext,
+		message: string,
+		level: "info" | "warning" | "error" = "info",
+	): void {
+		if (ctx.mode === "print") console.log(message);
+		else ctx.ui.notify(message, level);
+	}
+
+	async function currentRepositoryRoot(
+		ctx: ExtensionContext,
+	): Promise<string | undefined> {
+		const result = await pi.exec("git", ["rev-parse", "--show-toplevel"], {
+			cwd: ctx.cwd,
+			timeout: 5000,
+		});
+		if (result.code !== 0) return undefined;
+		return realpath(result.stdout.trim());
+	}
+
+	async function resolveRun(
+		runtime: SubagentService,
+		prefix: string,
+		repositoryRoot?: string,
+	): Promise<RunSummary> {
+		const matches: RunSummary[] = [];
+		let cursor: string | undefined;
+		do {
+			const page = await runtime.listRuns({
+				...(repositoryRoot ? { repositoryRoot } : {}),
+				limit: 100,
+				...(cursor ? { cursor } : {}),
+			});
+			matches.push(...page.runs.filter((run) => run.runId.startsWith(prefix)));
+			cursor = page.nextCursor;
+		} while (cursor && matches.length < 2);
+		if (matches.length === 0) throw new Error(`Run not found: ${prefix}`);
+		if (matches.length > 1)
+			throw new Error(`Run prefix is ambiguous: ${prefix}`);
+		const match = matches[0];
+		if (!match) throw new Error(`Run not found: ${prefix}`);
+		return match;
+	}
+
+	function ownerClient(
+		runtime: SubagentService,
+		run: RunSummary,
+		ctx: ExtensionCommandContext,
+	) {
+		const parentSessionFile = ctx.sessionManager.getSessionFile();
+		return runtime.forOwner({
+			id: run.ownerId,
+			...(run.ownerId === `pi-session:${ctx.sessionManager.getSessionId()}`
+				? {
+						parentSessionId: ctx.sessionManager.getSessionId(),
+						...(parentSessionFile ? { parentSessionFile } : {}),
+					}
+				: {}),
+		});
+	}
+
+	async function performAction(
+		action: InspectorAction,
+		run: RunSummary,
+		ctx: ExtensionCommandContext,
+		runtime: SubagentService,
+		providedText?: string,
+	): Promise<void> {
+		const client = ownerClient(runtime, run, ctx);
+		if (["stop", "retry", "resume", "release"].includes(action)) {
+			const descriptions: Record<string, string> = {
+				stop: "The active model session will stop and its VM will close.",
+				retry: "A new attempt and fresh VM will consume remaining budgets.",
+				resume: "The retained Pi session will continue in a fresh VM.",
+				release:
+					"The verified worktree and reservation branch will be removed.",
+			};
 			if (
-				apply &&
 				ctx.hasUI &&
 				!(await ctx.ui.confirm(
-					"Prune subagent runs?",
-					"Selected runs will move to recoverable trash.",
+					`${action} ${run.agentDisplayName}?`,
+					descriptions[action] ?? "Continue?",
 				))
 			) {
 				return;
 			}
-			const runtime = await ensureService(ctx);
-			const report = await runtime.prune({ dryRun: !apply });
-			const affected = apply ? report.pruned : report.selected;
-			ctx.ui.notify(
-				`${apply ? "Pruned" : "Would prune"} ${affected.length} run(s), ${formatBytes(affected.reduce((total, run) => total + run.bytes, 0))}; protected ${report.protected.length}.`,
-				affected.length > 0 ? "warning" : "info",
+		}
+		if (action === "steer" || action === "follow-up") {
+			const text =
+				providedText ??
+				(action === "steer"
+					? await ctx.ui.input("Steer active run", "Instruction")
+					: await ctx.ui.editor("Queue follow-up", ""));
+			if (!text?.trim()) return;
+			const input = { operationId: randomUUID(), text: text.trim() };
+			const receipt =
+				action === "steer"
+					? await client.steer(run.runId, input)
+					: await client.followUp(run.runId, input);
+			ctx.ui.notify(`${action}: ${receipt.state}`, "info");
+			return;
+		}
+		if (action === "export-output") {
+			const inspection = await runtime.inspectRun(run.runId);
+			const ref = inspection.result?.result.output;
+			if (!ref) throw new Error("run has no output artifact");
+			const destination = await ctx.ui.input(
+				"Export output artifact",
+				path.join(ctx.cwd, `${run.agentDisplayName}-output.txt`),
 			);
-		},
-	});
+			if (!destination?.trim()) return;
+			const target = path.resolve(ctx.cwd, destination.trim());
+			if (
+				ctx.hasUI &&
+				!(await ctx.ui.confirm(
+					"Export artifact?",
+					`${ref.bytes} bytes (${ref.mediaType}) will be written to ${target}. Existing content will be replaced.`,
+				))
+			) {
+				return;
+			}
+			const artifact = await client.exportArtifact(run.runId, ref);
+			await writeFile(target, artifact.content, { flag: "w" });
+			ctx.ui.notify(`Exported ${target}.`, "info");
+			return;
+		}
+		if (action === "stop") await client.interrupt(run.runId);
+		else if (action === "retry") await client.retry(run.runId);
+		else if (action === "resume") await client.resume(run.runId);
+		else if (action === "reconcile") await client.reconcile(run.runId);
+		else if (action === "release") await client.release(run.runId);
+		else if (action === "pin") {
+			const reason =
+				providedText ?? (await ctx.ui.input("Pin run", "Reason (optional)"));
+			if (reason === undefined) return;
+			await client.pin(run.runId, reason.trim() || "operator pin");
+		} else if (action === "unpin") {
+			await client.unpin(run.runId);
+		}
+		ctx.ui.notify(`${action} accepted for ${run.runId}.`, "info");
+	}
 
-	pi.registerCommand("subagent-pin", {
-		description: "Pin an owned subagent run: /subagent-pin <run-id> [reason]",
+	async function retention(
+		ctx: ExtensionCommandContext,
+		runtime: SubagentService,
+		apply = false,
+	): Promise<void> {
+		const preview = await runtime.prune({ dryRun: true });
+		const summary = `${preview.selected.length} run(s), ${formatBytes(preview.selected.reduce((total, run) => total + run.bytes, 0))}; ${preview.protected.length} protected.`;
+		if (!apply) {
+			if (ctx.mode !== "tui") {
+				operatorOutput(
+					ctx,
+					`Retention dry run: ${summary}`,
+					preview.selected.length ? "warning" : "info",
+				);
+				return;
+			}
+			apply = (await showRetentionReport({ ctx, report: preview })) === "apply";
+			if (!apply) return;
+		}
+		if (
+			ctx.hasUI &&
+			!(await ctx.ui.confirm(
+				"Apply subagent retention?",
+				`${summary} Selected state moves to recoverable trash.`,
+			))
+		) {
+			return;
+		}
+		const report = await runtime.prune({ dryRun: false });
+		operatorOutput(
+			ctx,
+			`Pruned ${report.pruned.length} run(s), ${formatBytes(report.pruned.reduce((total, run) => total + run.bytes, 0))}.`,
+		);
+	}
+
+	async function inspector(
+		ctx: ExtensionCommandContext,
+		initialState?: Partial<InspectorState>,
+	): Promise<void> {
+		const runtime = await ensureService(ctx);
+		const repositoryRoot = await currentRepositoryRoot(ctx);
+		if (ctx.mode !== "tui") {
+			if (initialState?.view === "detail" && initialState.selectedRunId) {
+				const detail = await runtime.inspectRun(initialState.selectedRunId);
+				operatorOutput(
+					ctx,
+					[
+						`${detail.summary.status.padEnd(15)} ${detail.summary.runId}`,
+						`agent: ${detail.summary.agentDisplayName}`,
+						`goal: ${detail.summary.goalPreview}`,
+						`model: ${detail.plan.model.provider}/${detail.plan.model.id}:${detail.plan.model.thinking}`,
+						`workspace: ${detail.summary.workspaceMode}${detail.summary.retainedWorktree ? " retained" : ""}`,
+						`attempts: ${detail.attempts.length}`,
+					].join("\n"),
+				);
+				return;
+			}
+			const page = await runtime.listRuns({
+				...(repositoryRoot ? { repositoryRoot } : {}),
+				limit: 20,
+			});
+			operatorOutput(
+				ctx,
+				page.runs.length
+					? page.runs
+							.map(
+								(run) =>
+									`${run.status.padEnd(15)} ${run.runId} ${run.agentDisplayName}`,
+							)
+							.join("\n")
+					: "No subagent runs.",
+			);
+			return;
+		}
+		let state: Partial<InspectorState> = initialState ?? {};
+		for (;;) {
+			const intent = await showSubagentInspector({
+				ctx,
+				service: runtime,
+				...(repositoryRoot ? { repositoryRoot } : {}),
+				initialState: state,
+			});
+			state = intent.state;
+			if (intent.type === "close") return;
+			if (intent.type === "search") {
+				const search = await ctx.ui.input(
+					"Search subagent runs",
+					intent.state.search ?? "",
+				);
+				if (search !== undefined) state = { ...state, view: "runs", search };
+				continue;
+			}
+			if (intent.type === "filter") {
+				const filter = await ctx.ui.select("Filter subagent runs", [
+					"All",
+					"Needs attention",
+					"Active",
+					"Interrupted",
+					"Cleanup blocked",
+					"Failed",
+					"Completed",
+				]);
+				const filters: Record<string, RunSummary["status"][] | undefined> = {
+					All: undefined,
+					"Needs attention": [
+						"active",
+						"stopping",
+						"interrupted",
+						"cleanup-blocked",
+					],
+					Active: ["active", "stopping"],
+					Interrupted: ["interrupted"],
+					"Cleanup blocked": ["cleanup-blocked"],
+					Failed: ["failed"],
+					Completed: ["completed"],
+				};
+				if (filter) {
+					const statuses = filters[filter];
+					state = {
+						...state,
+						view: "runs",
+						...(statuses ? { statuses } : {}),
+					};
+					if (!statuses) delete state.statuses;
+				}
+				continue;
+			}
+			if (intent.type === "retention") {
+				await retention(ctx, runtime);
+				continue;
+			}
+			try {
+				await performAction(intent.action, intent.run, ctx, runtime);
+			} catch (error) {
+				ctx.ui.notify(
+					error instanceof Error ? error.message : String(error),
+					"error",
+				);
+			}
+		}
+	}
+
+	pi.registerCommand("subagents", {
+		description: "Inspect and control isolated subagent runs",
+		getArgumentCompletions(prefix) {
+			const commands = [
+				"list",
+				"show",
+				"status",
+				"logs",
+				"wait",
+				"steer",
+				"follow-up",
+				"stop",
+				"retry",
+				"resume",
+				"reconcile",
+				"release",
+				"pin",
+				"unpin",
+				"prune",
+			];
+			if (prefix.includes(" ")) return null;
+			const matches = commands
+				.filter((command) => command.startsWith(prefix))
+				.map((command) => ({ value: command, label: command }));
+			return matches.length ? matches : null;
+		},
 		async handler(args, ctx) {
-			const [runId, ...reasonParts] = args.trim().split(/\s+/);
-			if (!runId) {
-				ctx.ui.notify("Usage: /subagent-pin <run-id> [reason]", "error");
+			const [subcommand, runPrefix, ...rest] = args
+				.trim()
+				.split(/\s+/)
+				.filter(Boolean);
+			if (!subcommand) {
+				await inspector(ctx);
 				return;
 			}
 			const runtime = await ensureService(ctx);
-			const client = runtime.forOwner({
-				id: `pi-session:${ctx.sessionManager.getSessionId()}`,
-			});
-			await client.pin(runId, reasonParts.join(" ") || "operator pin");
-			ctx.ui.notify(`Pinned ${runId}.`, "info");
-		},
-	});
-
-	pi.registerCommand("subagent-unpin", {
-		description: "Remove this session owner's pin from a subagent run",
-		async handler(args, ctx) {
-			const runId = args.trim();
-			if (!runId || runId.includes(" ")) {
-				ctx.ui.notify("Usage: /subagent-unpin <run-id>", "error");
+			const repositoryRoot = await currentRepositoryRoot(ctx);
+			if (subcommand === "list") {
+				if (runPrefix && runPrefix !== "--all") {
+					throw new Error("Usage: /subagents list [--all]");
+				}
+				await inspector(ctx, {
+					allProjects: runPrefix === "--all",
+					view: "runs",
+				});
 				return;
 			}
-			const runtime = await ensureService(ctx);
-			const client = runtime.forOwner({
-				id: `pi-session:${ctx.sessionManager.getSessionId()}`,
-			});
-			const removed = await client.unpin(runId);
-			ctx.ui.notify(
-				removed ? `Unpinned ${runId}.` : `${runId} was not pinned.`,
-				"info",
+			if (subcommand === "prune") {
+				if (runPrefix && runPrefix !== "--apply") {
+					throw new Error("Usage: /subagents prune [--apply]");
+				}
+				await retention(ctx, runtime, runPrefix === "--apply");
+				return;
+			}
+			if (!runPrefix) throw new Error(`Run prefix required for ${subcommand}.`);
+			const run = await resolveRun(runtime, runPrefix, repositoryRoot);
+			if (subcommand === "show" || subcommand === "status") {
+				if (rest.length)
+					throw new Error(`Unexpected arguments for ${subcommand}.`);
+				await inspector(ctx, { view: "detail", selectedRunId: run.runId });
+				return;
+			}
+			if (subcommand === "logs") {
+				if (rest.length) throw new Error("Unexpected arguments for logs.");
+				const page = await runtime.runLogs(run.runId, { tail: 20 });
+				operatorOutput(
+					ctx,
+					page.events
+						.map(
+							(event) =>
+								`${event.sequence.toString().padStart(4)} ${event.timestamp} ${event.type}`,
+						)
+						.join("\n") || "No lifecycle events.",
+				);
+				return;
+			}
+			if (subcommand === "wait") {
+				if (rest.length) throw new Error("Unexpected arguments for wait.");
+				const result = await ownerClient(runtime, run, ctx).wait(run.runId);
+				operatorOutput(ctx, `${run.runId}: ${result.result.status}`);
+				return;
+			}
+			const actions: Record<string, InspectorAction> = {
+				steer: "steer",
+				"follow-up": "follow-up",
+				stop: "stop",
+				retry: "retry",
+				resume: "resume",
+				reconcile: "reconcile",
+				release: "release",
+				pin: "pin",
+				unpin: "unpin",
+			};
+			const action = actions[subcommand];
+			if (!action) throw new Error(`Unknown subagents command: ${subcommand}`);
+			if (rest.length > 0 && !["steer", "follow-up", "pin"].includes(action)) {
+				throw new Error(`Unexpected arguments for ${subcommand}.`);
+			}
+			await performAction(
+				action,
+				run,
+				ctx,
+				runtime,
+				["steer", "follow-up", "pin"].includes(action)
+					? rest.join(" ") || undefined
+					: undefined,
 			);
 		},
 	});
@@ -253,7 +617,28 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 		description:
 			"Run one native Pi subagent in a dedicated Gondolin VM. Models and credentials stay in the host Pi seat; tool effects are confined to a read-only checkout or private Git worktree.",
 		parameters,
-		async execute(toolCallId, params, signal, _onUpdate, ctx) {
+		renderCall(args, theme) {
+			return new Text(
+				`${theme.fg("toolTitle", theme.bold("subagent"))} ${theme.fg("muted", args.agent)}`,
+				0,
+				0,
+			);
+		},
+		renderResult(result, { expanded, isPartial }, theme) {
+			const text = result.content.find((item) => item.type === "text");
+			const content = text?.type === "text" ? text.text : "";
+			return new Text(
+				theme.fg(
+					isPartial ? "warning" : "success",
+					expanded
+						? content
+						: content.split("\n")[0] || (isPartial ? "active" : "completed"),
+				),
+				0,
+				0,
+			);
+		},
+		async execute(toolCallId, params, signal, onUpdate, ctx) {
 			const runtime = await ensureService(ctx);
 			const model = parseModel(params.model, ctx);
 			const selectedProvider = ctx.modelRegistry.getProvider(model.provider);
@@ -331,6 +716,19 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 				preflight.preflightId,
 				preflight.identitySha256,
 			);
+			onUpdate?.({
+				content: [
+					{
+						type: "text",
+						text: `Subagent ${params.agent} is active (${receipt.runId}).`,
+					},
+				],
+				details: {
+					runId: receipt.runId,
+					attemptId: receipt.attemptId,
+					status: receipt.status,
+				},
+			});
 			const onAbort = () => void client.interrupt(receipt.runId);
 			signal?.addEventListener("abort", onAbort, { once: true });
 			try {

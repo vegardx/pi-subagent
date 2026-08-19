@@ -24,11 +24,7 @@ describe("Pi extension adapter", () => {
 		piSubagentExtension(api);
 		expect(tool?.name).toBe("subagent");
 		expect(tool?.description).toContain("Gondolin VM");
-		expect(events).toEqual(["session_shutdown"]);
-		expect(commands).toEqual([
-			"subagent-prune",
-			"subagent-pin",
-			"subagent-unpin",
-		]);
+		expect(events).toEqual(["session_start", "session_shutdown"]);
+		expect(commands).toEqual(["subagents"]);
 	});
 });

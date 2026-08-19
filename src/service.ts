@@ -123,6 +123,7 @@ export type RunQuery = {
 	repositoryRoot?: string;
 	ownerId?: string;
 	statuses?: RunStatus[];
+	search?: string;
 	limit?: number;
 	cursor?: string;
 };
@@ -131,6 +132,20 @@ export type RunPage = {
 	runs: RunSummary[];
 	nextCursor?: string;
 	total: number;
+};
+
+export type AttemptSummary = {
+	attemptId: AttemptId;
+	ordinal: number;
+	kind: "initial" | "retry" | "resume";
+	createdAt: string;
+};
+
+export type RunInspection = {
+	summary: RunSummary;
+	plan: AgentLaunchPlan;
+	attempts: AttemptSummary[];
+	result?: AttemptExecutionResult;
 };
 
 export type RunLogPage = {
@@ -193,6 +208,11 @@ export type SubagentClient = {
 export type SubagentService = {
 	forOwner(owner: OwnerRegistration): SubagentClient;
 	listRuns(query?: RunQuery): Promise<RunPage>;
+	inspectRun(runId: RunId): Promise<RunInspection>;
+	runLogs(
+		runId: RunId,
+		options?: { cursor?: string; limit?: number; tail?: number },
+	): Promise<RunLogPage>;
 	subscribe(listener: (event: RunObservation) => void): () => void;
 	prune(options?: {
 		dryRun?: boolean;
@@ -871,6 +891,47 @@ export async function createSubagentService(options: {
 		return descriptors;
 	};
 
+	const readLogs = async (
+		run: ActiveRun,
+		logOptions: { cursor?: string; limit?: number; tail?: number } = {},
+	): Promise<RunLogPage> => {
+		if (logOptions.cursor !== undefined && logOptions.tail !== undefined) {
+			throw new Error("log cursor and tail are mutually exclusive");
+		}
+		const limit = logOptions.limit ?? logOptions.tail ?? 100;
+		if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
+			throw new Error("log limit must be an integer from 1 to 500");
+		}
+		const events = await run.journal.readEvents();
+		let offset = 0;
+		if (logOptions.tail !== undefined) {
+			if (
+				!Number.isSafeInteger(logOptions.tail) ||
+				logOptions.tail < 1 ||
+				logOptions.tail > 500
+			) {
+				throw new Error("log tail must be an integer from 1 to 500");
+			}
+			offset = Math.max(0, events.length - logOptions.tail);
+		} else if (logOptions.cursor !== undefined) {
+			offset = Number(logOptions.cursor);
+			if (
+				!Number.isSafeInteger(offset) ||
+				offset < 0 ||
+				String(offset) !== logOptions.cursor
+			) {
+				throw new Error("invalid log cursor");
+			}
+		}
+		const page = events.slice(offset, offset + limit);
+		const nextOffset = offset + page.length;
+		return {
+			events: page,
+			...(nextOffset < events.length ? { nextCursor: String(nextOffset) } : {}),
+			total: events.length,
+		};
+	};
+
 	const listRuns = async (query: RunQuery = {}): Promise<RunPage> => {
 		const limit = query.limit ?? 50;
 		if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
@@ -898,7 +959,7 @@ export async function createSubagentService(options: {
 			throw new Error("invalid run status filter");
 		}
 		const pins = new Set((await retention.listPins()).map((pin) => pin.runId));
-		const summaries = await Promise.all(
+		let summaries = await Promise.all(
 			[...runs.values()]
 				.filter(
 					(run) =>
@@ -910,6 +971,24 @@ export async function createSubagentService(options: {
 				)
 				.map((run) => summarizeRun(run, pins)),
 		);
+		const search = query.search?.trim().toLowerCase();
+		if (search) {
+			if (Buffer.byteLength(search) > 512) {
+				throw new Error("run search exceeds byte limit");
+			}
+			summaries = summaries.filter((run) =>
+				[
+					run.runId,
+					run.agentDisplayName,
+					run.goalPreview,
+					run.repositoryRoot,
+					run.status,
+				]
+					.join("\n")
+					.toLowerCase()
+					.includes(search),
+			);
+		}
 		const priority: Record<RunStatus, number> = {
 			active: 0,
 			stopping: 1,
@@ -944,6 +1023,32 @@ export async function createSubagentService(options: {
 		},
 
 		listRuns,
+
+		async inspectRun(runId) {
+			const run = runs.get(runId);
+			if (!run) throw new Error("run not found");
+			const pins = new Set(
+				(await retention.listPins(runId)).map((pin) => pin.runId),
+			);
+			const attempts = await attemptRecords.list(runId);
+			return {
+				summary: await summarizeRun(run, pins),
+				plan: run.plan,
+				attempts: attempts.map((attempt) => ({
+					attemptId: attempt.attemptId,
+					ordinal: attempt.ordinal,
+					kind: attempt.kind,
+					createdAt: attempt.createdAt,
+				})),
+				...(run.result ? { result: run.result } : {}),
+			};
+		},
+
+		runLogs(runId, logOptions) {
+			const run = runs.get(runId);
+			if (!run) throw new Error("run not found");
+			return readLogs(run, logOptions);
+		},
 
 		async prune(pruneOptions = {}) {
 			return runExclusive(async () => {
@@ -1275,47 +1380,8 @@ export async function createSubagentService(options: {
 					};
 				},
 
-				async logs(runId, logOptions = {}) {
-					if (
-						logOptions.cursor !== undefined &&
-						logOptions.tail !== undefined
-					) {
-						throw new Error("log cursor and tail are mutually exclusive");
-					}
-					const limit = logOptions.limit ?? logOptions.tail ?? 100;
-					if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
-						throw new Error("log limit must be an integer from 1 to 500");
-					}
-					const events = await ownedRun(runId).journal.readEvents();
-					let offset = 0;
-					if (logOptions.tail !== undefined) {
-						if (
-							!Number.isSafeInteger(logOptions.tail) ||
-							logOptions.tail < 1 ||
-							logOptions.tail > 500
-						) {
-							throw new Error("log tail must be an integer from 1 to 500");
-						}
-						offset = Math.max(0, events.length - logOptions.tail);
-					} else if (logOptions.cursor !== undefined) {
-						offset = Number(logOptions.cursor);
-						if (
-							!Number.isSafeInteger(offset) ||
-							offset < 0 ||
-							String(offset) !== logOptions.cursor
-						) {
-							throw new Error("invalid log cursor");
-						}
-					}
-					const page = events.slice(offset, offset + limit);
-					const nextOffset = offset + page.length;
-					return {
-						events: page,
-						...(nextOffset < events.length
-							? { nextCursor: String(nextOffset) }
-							: {}),
-						total: events.length,
-					};
+				logs(runId, logOptions) {
+					return readLogs(ownedRun(runId), logOptions);
 				},
 
 				async wait(runId) {

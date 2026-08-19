@@ -66,6 +66,13 @@ attributable to one attempt.
 No model-facing tool may bypass the service or use host-backed filesystem,
 process, or network operations.
 
+Operator inspection uses the same service. Metadata listing, retained-run
+recovery, lifecycle logs, pins, and retention initialize without model,
+Gondolin-asset, or capacity setup. Execution dependencies remain lazy until
+preflight or launch. The unified `/subagents` command uses operator-level bounded
+listing for current-project/all-project views; mutations still route through the
+recorded owner client and existing run fences.
+
 ## Resource isolation
 
 Child sessions disable ambient extensions, prompt templates, themes, and context
