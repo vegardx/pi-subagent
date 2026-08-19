@@ -14,6 +14,7 @@ import type { ExactModelRequest } from "./launch-contracts.js";
 import type { DiscoveredAgent } from "./preflight/agents.js";
 import { canonicalSha256 } from "./preflight/canonical.js";
 import type { RunSummary, SubagentService } from "./service.js";
+import { formatBytes } from "./ui/format.js";
 import {
 	attentionWidgetLines,
 	type InspectorAction,
@@ -32,6 +33,26 @@ const THINKING_LEVELS = [
 	"xhigh",
 ] as const;
 const MUTATING_TOOLS = new Set(["write", "edit", "bash"]);
+const OPERATOR_ACTIONS: Record<string, InspectorAction> = {
+	steer: "steer",
+	"follow-up": "follow-up",
+	stop: "stop",
+	retry: "retry",
+	resume: "resume",
+	reconcile: "reconcile",
+	release: "release",
+	pin: "pin",
+	unpin: "unpin",
+};
+const OPERATOR_SUBCOMMANDS = [
+	"list",
+	"show",
+	"status",
+	"logs",
+	"wait",
+	...Object.keys(OPERATOR_ACTIONS),
+	"prune",
+];
 
 const parameters = Type.Object({
 	agent: Type.String({ minLength: 1, maxLength: 128 }),
@@ -76,15 +97,6 @@ function resolveThinking(
 		throw new Error(`Unsupported thinking level: ${candidate}`);
 	}
 	return candidate as ExactModelRequest["thinking"];
-}
-
-function formatBytes(bytes: number): string {
-	if (bytes < 1024) return `${bytes} B`;
-	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
-	if (bytes < 1024 * 1024 * 1024) {
-		return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
-	}
-	return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GiB`;
 }
 
 function parseModel(
@@ -522,27 +534,10 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 	pi.registerCommand("subagents", {
 		description: "Inspect and control isolated subagent runs",
 		getArgumentCompletions(prefix) {
-			const commands = [
-				"list",
-				"show",
-				"status",
-				"logs",
-				"wait",
-				"steer",
-				"follow-up",
-				"stop",
-				"retry",
-				"resume",
-				"reconcile",
-				"release",
-				"pin",
-				"unpin",
-				"prune",
-			];
 			if (prefix.includes(" ")) return null;
-			const matches = commands
-				.filter((command) => command.startsWith(prefix))
-				.map((command) => ({ value: command, label: command }));
+			const matches = OPERATOR_SUBCOMMANDS.filter((command) =>
+				command.startsWith(prefix),
+			).map((command) => ({ value: command, label: command }));
 			return matches.length ? matches : null;
 		},
 		async handler(args, ctx) {
@@ -601,18 +596,7 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 				operatorOutput(ctx, `${run.runId}: ${result.result.status}`);
 				return;
 			}
-			const actions: Record<string, InspectorAction> = {
-				steer: "steer",
-				"follow-up": "follow-up",
-				stop: "stop",
-				retry: "retry",
-				resume: "resume",
-				reconcile: "reconcile",
-				release: "release",
-				pin: "pin",
-				unpin: "unpin",
-			};
-			const action = actions[subcommand];
+			const action = OPERATOR_ACTIONS[subcommand];
 			if (!action) throw new Error(`Unknown subagents command: ${subcommand}`);
 			if (rest.length > 0 && !["steer", "follow-up", "pin"].includes(action)) {
 				throw new Error(`Unexpected arguments for ${subcommand}.`);

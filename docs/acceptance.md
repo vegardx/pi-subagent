@@ -184,6 +184,8 @@ Using bounded disposable fixtures:
 - parallel writers receive distinct worktrees;
 - the VM does not receive unrestricted common Git metadata;
 - binary, mode, symlink, rename, and deletion changes survive handoff;
+- authoritative host Git runs with hooks/signing/fsmonitor disabled and a minimal
+  non-secret environment; repository pre-commit hooks cannot execute;
 - commit or artifact handoff is durable before cleanup;
 - uncertain worktrees are retained;
 - cleanup failure blocks successful terminal status;
@@ -217,6 +219,8 @@ Using bounded disposable fixtures:
   token, and cost bounds produce documented truncation or terminal outcomes;
 - retry/resume subtract each attempt's measured runtime before compiling the next
   immutable plan and reject less than one second remaining;
+- resumed sessions account only messages, tokens, cost, and output added after
+  the retained-session baseline; prior assistant usage is not charged twice;
 - retention never selects active, interrupted, cleanup-blocked, pinned, or
   unreleased-worktree runs;
 - ordinary terminal runs older than 30 days are selected;
@@ -227,6 +231,10 @@ Using bounded disposable fixtures:
 - pruning holds a cross-process retention lease and each run fence;
 - a live run lease prevents pruning without signaling the owner;
 - applied pruning and pin removal use recoverable trash rather than hard delete;
+- every distinct worktree referenced through `worktreeAttemptId` moves with its
+  run graph;
+- an incomplete trash manifest resumes under retention and run leases before new
+  prune selection, moving the run-record commit marker last;
 - incompatible persisted contract revisions are rejected with discard guidance;
   no migration or compatibility path is provided.
 

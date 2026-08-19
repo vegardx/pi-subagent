@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -66,6 +66,7 @@ function descriptor(
 		status: "completed",
 		terminalAt: old,
 		attemptIds: [attemptId],
+		worktreeAttemptIds: [attemptId],
 		retainedWorktree: false,
 		...overrides,
 	};
@@ -145,8 +146,25 @@ describe("retention and pruning", () => {
 	it("moves the complete linked run graph to recoverable trash", async () => {
 		const data = await fixture();
 		const attemptId = await addRun(data.root, "run_prune");
+		const sharedWorktreeAttemptId = "attempt_sharedworktree";
+		await mkdir(path.join(data.root, "workspace", "records"), {
+			recursive: true,
+		});
+		await writeFile(
+			path.join(
+				data.root,
+				"workspace",
+				"records",
+				`${sharedWorktreeAttemptId}.json`,
+			),
+			"shared worktree record",
+		);
 		const report = await data.manager.prune({
-			runs: [descriptor("run_prune", attemptId)],
+			runs: [
+				descriptor("run_prune", attemptId, {
+					worktreeAttemptIds: [sharedWorktreeAttemptId],
+				}),
+			],
 			dryRun: false,
 			now,
 		});
@@ -171,6 +189,17 @@ describe("retention and pruning", () => {
 				"utf8",
 			),
 		).toBe("s");
+		expect(
+			await readFile(
+				path.join(
+					pruned.trashPath,
+					"workspace",
+					"records",
+					`${sharedWorktreeAttemptId}.json`,
+				),
+				"utf8",
+			),
+		).toBe("shared worktree record");
 		expect(
 			await readFile(
 				path.join(pruned.trashPath, "operations", "run_prune.json"),
@@ -215,6 +244,7 @@ describe("retention and pruning", () => {
 						status: "completed",
 						terminalAt: old,
 						attemptIds: ["../../outside"],
+						worktreeAttemptIds: [],
 						retainedWorktree: false,
 					},
 				],
@@ -222,6 +252,49 @@ describe("retention and pruning", () => {
 				now,
 			}),
 		).rejects.toThrow("invalid retention run descriptor");
+	});
+
+	it("resumes an incomplete recoverable-trash move before pruning", async () => {
+		const data = await fixture();
+		const runId = "run_partial";
+		const attemptId = await addRun(data.root, runId);
+		const trashPath = path.join(data.manager.trashRoot, "partial-intent");
+		const relativePaths = [
+			path.join("runs", runId),
+			path.join("run-records", `${runId}.json`),
+			path.join("attempt-records", runId),
+			path.join("leases", `${runId}.lease.json`),
+			path.join("sessions", attemptId),
+			path.join("operations", `${runId}.json`),
+		];
+		await mkdir(path.join(trashPath, "runs"), { recursive: true });
+		await rename(
+			path.join(data.root, "runs", runId),
+			path.join(trashPath, "runs", runId),
+		);
+		await writeFile(
+			path.join(trashPath, "manifest.json"),
+			JSON.stringify({
+				schema: "pi-subagent-retention-trash",
+				contractRevision: CONTRACT_REVISION,
+				runId,
+				createdAt: old,
+				commitPath: path.join("run-records", `${runId}.json`),
+				paths: relativePaths,
+			}),
+		);
+		const report = await data.manager.prune({
+			runs: [descriptor(runId, attemptId)],
+			dryRun: false,
+			now,
+		});
+		expect(report.recoveredTrashIntents).toEqual([runId]);
+		expect(
+			await readFile(path.join(trashPath, "completed.json"), "utf8"),
+		).toContain(runId);
+		await expect(
+			stat(path.join(data.root, "run-records", `${runId}.json`)),
+		).rejects.toMatchObject({ code: "ENOENT" });
 	});
 
 	it("pins idempotently and moves removed pins to trash", async () => {

@@ -70,14 +70,43 @@ export class WorktreeError extends Error {
 	}
 }
 
+function gitEnvironment(): NodeJS.ProcessEnv {
+	const environment: NodeJS.ProcessEnv = {
+		GIT_AUTHOR_EMAIL: "pi-subagent@localhost",
+		GIT_AUTHOR_NAME: "pi-subagent",
+		GIT_COMMITTER_EMAIL: "pi-subagent@localhost",
+		GIT_COMMITTER_NAME: "pi-subagent",
+		GIT_CONFIG_GLOBAL: "/dev/null",
+		GIT_CONFIG_NOSYSTEM: "1",
+		GIT_TERMINAL_PROMPT: "0",
+	};
+	for (const key of ["LANG", "LC_ALL", "PATH", "TMPDIR"] as const) {
+		const value = process.env[key];
+		if (value) environment[key] = value;
+	}
+	return environment;
+}
+
 async function git(cwd: string, args: string[]): Promise<Buffer> {
 	try {
-		const result = await execFileAsync("git", args, {
-			cwd,
-			encoding: "buffer",
-			maxBuffer: MAX_GIT_OUTPUT,
-			env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-		});
+		const result = await execFileAsync(
+			"git",
+			[
+				"-c",
+				"commit.gpgSign=false",
+				"-c",
+				"core.fsmonitor=false",
+				"-c",
+				"core.hooksPath=/dev/null",
+				...args,
+			],
+			{
+				cwd,
+				encoding: "buffer",
+				maxBuffer: MAX_GIT_OUTPUT,
+				env: gitEnvironment(),
+			},
+		);
 		return result.stdout;
 	} catch (error) {
 		throw new WorktreeError(

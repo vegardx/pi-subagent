@@ -815,6 +815,7 @@ export async function createSubagentService(options: {
 			await attemptRecords.create({
 				ownerId: input.ownerId,
 				plan: input.plan,
+				lease,
 				ordinal: input.ordinal,
 				kind: input.kind,
 				...(input.parentAttemptId
@@ -1023,6 +1024,15 @@ export async function createSubagentService(options: {
 				status: run.status,
 				...(terminalEvent ? { terminalAt: terminalEvent.timestamp } : {}),
 				attemptIds: attempts.map((attempt) => attempt.attemptId),
+				worktreeAttemptIds: [
+					...new Set(
+						attempts
+							.map((attempt) => attempt.worktreeAttemptId)
+							.filter(
+								(attemptId): attemptId is string => attemptId !== undefined,
+							),
+					),
+				],
 				retainedWorktree: hasRetainedWorktree,
 			});
 		}
@@ -1201,13 +1211,13 @@ export async function createSubagentService(options: {
 						: { maxBytes: pruneOptions.maxBytes }),
 				});
 				if (!report.dryRun) {
-					for (const pruned of report.pruned) runs.delete(pruned.runId);
+					const removedRunIds = new Set([
+						...report.pruned.map((item) => item.runId),
+						...report.recoveredTrashIntents,
+					]);
+					for (const runId of removedRunIds) runs.delete(runId);
 					for (const [preflightId, prepared] of preflights) {
-						if (
-							report.pruned.some(
-								(item) => item.runId === prepared.launchPlan.runId,
-							)
-						) {
+						if (removedRunIds.has(prepared.launchPlan.runId)) {
 							preflights.delete(preflightId);
 						}
 					}

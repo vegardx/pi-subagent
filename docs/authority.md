@@ -77,6 +77,12 @@ configuration, and arbitrary extension environment are denied.
 
 ## Filesystem policy
 
+Host-owned Git commands run with a minimal environment, fixed non-secret commit
+identity, global/system config disabled, commit signing disabled, filesystem
+monitoring disabled, and hooks redirected to `/dev/null`. This prevents handoff
+commits from executing project hook code with host authority. Git metadata
+creation and release remain fenced runtime effects, not model-selected commands.
+
 The VM receives `/workspace` and only explicitly declared auxiliary mounts.
 Host home, Pi configuration, provider authentication, runtime state, and
 unrelated repositories are absent.

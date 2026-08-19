@@ -64,8 +64,12 @@ export type AttemptExecutionResult = {
 	error: string | undefined;
 };
 
-function assistantOutput(session: AgentSession): string {
-	for (let index = session.messages.length - 1; index >= 0; index--) {
+function assistantOutput(session: AgentSession, firstMessageIndex = 0): string {
+	for (
+		let index = session.messages.length - 1;
+		index >= firstMessageIndex;
+		index--
+	) {
 		const message = session.messages[index];
 		if (message?.role !== "assistant") continue;
 		return message.content
@@ -112,6 +116,17 @@ function usage(session: AgentSession): Usage {
 		total.cost += message.usage.cost.total;
 	}
 	return total;
+}
+
+export function subtractUsage(total: Usage, baseline: Usage): Usage {
+	return {
+		input: Math.max(0, total.input - baseline.input),
+		output: Math.max(0, total.output - baseline.output),
+		cacheRead: Math.max(0, total.cacheRead - baseline.cacheRead),
+		cacheWrite: Math.max(0, total.cacheWrite - baseline.cacheWrite),
+		totalTokens: Math.max(0, total.totalTokens - baseline.totalTokens),
+		cost: Math.max(0, total.cost - baseline.cost),
+	};
 }
 
 function delegatedPrompt(plan: AgentLaunchPlan): string {
@@ -244,6 +259,8 @@ export async function runNativeAttempt(options: {
 		totalTokens: 0,
 		cost: 0,
 	};
+	let baselineUsage: Usage = { ...collectedUsage };
+	let baselineMessageIndex = 0;
 	let output = "";
 	let outputRef: ArtifactRef | undefined;
 	let structuredOutput: unknown | undefined;
@@ -369,6 +386,8 @@ export async function runNativeAttempt(options: {
 			settingsManager,
 		});
 		session = created.session;
+		baselineUsage = usage(session);
+		baselineMessageIndex = session.messages.length;
 		options.registerControl?.({
 			steer: (text) =>
 				session?.steer(text) ??
@@ -403,10 +422,10 @@ export async function runNativeAttempt(options: {
 			}
 		}
 		await session.agent.waitForIdle();
-		collectedUsage = usage(session);
+		collectedUsage = subtractUsage(usage(session), baselineUsage);
 		const rawOutput =
 			structuredOutput === undefined
-				? assistantOutput(session)
+				? assistantOutput(session, baselineMessageIndex)
 				: canonicalJson(structuredOutput);
 		const mediaType =
 			structuredOutput === undefined ? "text/plain" : "application/json";
@@ -480,9 +499,9 @@ export async function runNativeAttempt(options: {
 		};
 	} catch (error) {
 		if (session) {
-			collectedUsage = usage(session);
+			collectedUsage = subtractUsage(usage(session), baselineUsage);
 			const bounded = boundAttemptOutput(
-				assistantOutput(session),
+				assistantOutput(session, baselineMessageIndex),
 				Math.min(options.plan.limits.outputBytes, MAX_INLINE_OUTPUT_BYTES),
 			);
 			output = bounded.output;

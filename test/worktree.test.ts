@@ -51,6 +51,12 @@ async function missing(filePath: string): Promise<boolean> {
 describe("worktree lifecycle", () => {
 	it("captures an immutable commit before clean removal", async () => {
 		const repositoryRoot = await repository("handoff");
+		const hookSentinel = path.join(repositoryRoot, "hook-fired");
+		await writeFile(
+			path.join(repositoryRoot, ".git", "hooks", "pre-commit"),
+			`#!/bin/sh\nprintf hook > ${JSON.stringify(hookSentinel)}\n`,
+			{ mode: 0o755 },
+		);
 		const sourceHead = await git(repositoryRoot, "rev-parse", "HEAD");
 		const workspace = await preflightWorkspace({
 			mode: "worktree",
@@ -78,6 +84,7 @@ describe("worktree lifecycle", () => {
 		);
 		expect(handoff.handoffCommit).toMatch(/^[a-f0-9]{40,64}$/);
 		expect(handoff.handoffCommit).not.toBe(sourceHead);
+		expect(await missing(hookSentinel)).toBe(true);
 		expect(await git(repositoryRoot, "rev-parse", "HEAD")).toBe(sourceHead);
 		expect(await readFile(path.join(repositoryRoot, "file.txt"), "utf8")).toBe(
 			"baseline\n",
