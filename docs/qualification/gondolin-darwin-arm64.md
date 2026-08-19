@@ -125,6 +125,14 @@ Result views lost handoff metadata. The accepted behavior is now:
 
 No qualified drive left a Pi-owned QEMU or runner process.
 
+Failure-policy dogfood used a 30-second attempt deadline inside a 90-second
+run-wide budget. The real attempt persisted `timeout/service/manual`, the stable
+message `Attempt runtime limit exceeded`, 30,201 measured milliseconds, and
+59,799 remaining milliseconds. Explicit Retry created attempt 2 with exactly
+that cumulative remainder while preserving the 30-second per-attempt deadline.
+The replacement seat then interrupted attempt 2 cleanly, and all qualification
+worktree/branch reservations were released.
+
 ## Important behavior
 
 `VM.create()` resolves assets and constructs the controller, but measurements
