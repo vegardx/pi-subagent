@@ -276,8 +276,9 @@ shape, cleanup invariants, and exhaustive run-status transition reducer. The
 persistence slice adds bounded sequenced JSONL events, fsync-backed atomic
 snapshots, private modes, JSON-roundtrip checks, conservative torn-tail and
 corruption handling, and an atomic owner-scoped operation idempotency index.
-Cross-process run fencing and the full launch/event contracts remain
-outstanding. Every unimplemented runtime feature
+Cross-process run fencing with monotonic generations is implemented and enforced
+by journal appends and snapshots. Session/worktree fencing and the full
+launch/event contracts remain outstanding. Every unimplemented runtime feature
 remains `false`.
 
 ### Build
