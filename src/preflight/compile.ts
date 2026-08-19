@@ -126,7 +126,12 @@ export async function compileLaunchPlan(input: {
 	resolveModel(model: ExactModelRequest): Promise<ExactModelRequest>;
 }): Promise<AgentLaunchPlan> {
 	if (!Value.Check(SubagentRequestSchema, input.request)) {
-		throw new PreflightError("request violates schema");
+		const details = [...Value.Errors(SubagentRequestSchema, input.request)]
+			.map((error) => `${error.instancePath || "/"}: ${error.message}`)
+			.join("; ");
+		throw new PreflightError(
+			`request violates schema${details ? `: ${details}` : ""}`,
+		);
 	}
 	if (input.request.agent !== input.agent.name) {
 		throw new PreflightError("agent resolution mismatch");

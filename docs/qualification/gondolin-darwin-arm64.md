@@ -46,6 +46,20 @@ requirements. Warm QEMU boots were approximately 0.5–1.0 seconds at 512 MB and
 one vCPU. Two concurrent native model sessions completed in approximately 4.9
 seconds.
 
+## Pi extension dogfood
+
+The production extension was loaded as the only explicit extension in normal Pi
+print mode with the `subagent` tool as the only parent tool. A real
+`github-copilot/gpt-5.6-luna:low` parent delegated a read-only README task through
+the public tool and received exactly:
+
+```text
+# pi-subagent
+```
+
+The child used the foreground service and Gondolin runtime, and no QEMU process
+remained afterward.
+
 ## Important behavior
 
 `VM.create()` resolves assets and constructs the controller, but measurements

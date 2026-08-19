@@ -517,6 +517,13 @@ fresh-VM recovery without the Pi extension adapter.
 
 ## Deliverable 7 — Pi extension and UI
 
+The package extension now lazily initializes one production service, synchronizes
+registered Pi providers into its host `ModelRuntime`, creates bounded ephemeral
+agent ceilings from the tool call, runs preflight/launch/wait, maps cancellation
+to interrupt, returns usage/artifact/handoff details, and shuts down active runs
+on session replacement or reload. Commands, persistent UI, and static named-agent
+selection remain outstanding.
+
 ### Build
 
 - model-facing `subagent` tool derived from service schemas;

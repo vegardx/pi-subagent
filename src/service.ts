@@ -117,6 +117,7 @@ export type SubagentClient = {
 
 export type SubagentService = {
 	forOwner(owner: OwnerRegistration): SubagentClient;
+	shutdown(): Promise<void>;
 };
 
 type PreparedPreflight = SubagentPreflight & {
@@ -571,6 +572,17 @@ export async function createSubagentService(options: {
 	};
 
 	return {
+		async shutdown() {
+			const pending: Promise<unknown>[] = [];
+			for (const run of runs.values()) {
+				if (run.status !== "active" && run.status !== "stopping") continue;
+				run.status = "stopping";
+				run.abort.abort();
+				pending.push(run.promise);
+			}
+			await Promise.allSettled(pending);
+		},
+
 		forOwner(owner) {
 			validateOwner(owner);
 
