@@ -100,6 +100,22 @@ export const SubagentRequestSchema = Type.Object(
 );
 export type SubagentRequest = Static<typeof SubagentRequestSchema>;
 
+export const ResourceGrantSchema = Type.Object(
+	{
+		kind: Type.Union([
+			Type.Literal("agent"),
+			Type.Literal("tool"),
+			Type.Literal("skill"),
+			Type.Literal("context"),
+		]),
+		name: ResourceNameSchema,
+		source: Type.String({ minLength: 1, maxLength: 4096 }),
+		sha256: Sha256Schema,
+	},
+	{ additionalProperties: false },
+);
+export type ResourceGrant = Static<typeof ResourceGrantSchema>;
+
 export const AgentLaunchPlanSchema = Type.Object(
 	{
 		schema: Type.Literal("pi-subagent-launch"),
@@ -117,6 +133,10 @@ export const AgentLaunchPlanSchema = Type.Object(
 		skills: Type.Array(ResourceNameSchema, {
 			maxItems: 64,
 			uniqueItems: true,
+		}),
+		resources: Type.Array(ResourceGrantSchema, {
+			minItems: 1,
+			maxItems: 256,
 		}),
 		workspace: Type.Object(
 			{

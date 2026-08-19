@@ -26,6 +26,8 @@ export {
 	DelegatedTaskSchema,
 	type ExactModelRequest,
 	ExactModelRequestSchema,
+	type ResourceGrant,
+	ResourceGrantSchema,
 	type RunLimits,
 	RunLimitsSchema,
 	type SubagentRequest,
@@ -62,6 +64,14 @@ export {
 	RunLeaseRecordSchema,
 	RunLeaseUnavailableError,
 } from "./persistence/run-lease.js";
+export { canonicalJson, canonicalSha256 } from "./preflight/canonical.js";
+export {
+	type AgentDefinition,
+	compileLaunchPlan,
+	PreflightError,
+	type ResolvedSandbox,
+	type ResolvedWorkspace,
+} from "./preflight/compile.js";
 export {
 	createVmCapacityManager,
 	VmCapacityExhaustedError,
