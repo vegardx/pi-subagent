@@ -73,6 +73,13 @@ export {
 	type ResolvedWorkspace,
 } from "./preflight/compile.js";
 export {
+	digestFileResource,
+	digestTreeResource,
+	type ResourceDigest,
+	ResourceDigestError,
+	type ResourceDigestLimits,
+} from "./preflight/resources.js";
+export {
 	createVmCapacityManager,
 	VmCapacityExhaustedError,
 	type VmCapacityLease,
