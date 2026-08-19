@@ -618,7 +618,7 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 		},
 	});
 
-	pi.registerShortcut("alt+shift+s", {
+	pi.registerShortcut("alt+s", {
 		description:
 			"Open the subagent inspector without interrupting active input",
 		handler: inspector,
