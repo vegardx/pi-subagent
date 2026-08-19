@@ -40,7 +40,8 @@
 		"typebox": "*"
 	},
 	"dependencies": {
-		"@earendil-works/gondolin": "0.12.0"
+		"@earendil-works/gondolin": "0.12.0",
+		"yaml": "2.9.0"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.5.8",

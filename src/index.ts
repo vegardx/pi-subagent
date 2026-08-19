@@ -64,6 +64,13 @@ export {
 	RunLeaseRecordSchema,
 	RunLeaseUnavailableError,
 } from "./persistence/run-lease.js";
+export {
+	AgentDiscoveryError,
+	type AgentSource,
+	type AgentSourceScope,
+	type DiscoveredAgent,
+	discoverAgents,
+} from "./preflight/agents.js";
 export { canonicalJson, canonicalSha256 } from "./preflight/canonical.js";
 export {
 	type AgentDefinition,
