@@ -127,7 +127,10 @@ export function attentionWidgetLines(runs: RunSummary[]): string[] | undefined {
 
 export function actionsForRun(run: RunSummary): InspectorAction[] {
 	const actions: InspectorAction[] = [];
-	if (run.status === "active") actions.push("steer", "follow-up", "stop");
+	if (run.status === "active") {
+		if (run.controllable) actions.push("steer", "follow-up");
+		actions.push("stop");
+	}
 	if (run.status === "failed") actions.push("retry");
 	if (run.status === "interrupted") actions.push("resume");
 	if (run.status === "cleanup-blocked") actions.push("reconcile");
@@ -259,6 +262,15 @@ function detailBody(
 		lines.push(
 			keyValue("Goal", summary.goalPreview, width),
 			keyValue("Status", summary.status, width),
+			keyValue(
+				"Controls",
+				summary.status === "active"
+					? summary.controllable
+						? "ready"
+						: "session starting"
+					: "unavailable",
+				width,
+			),
 			keyValue("Agent", summary.agentDisplayName, width),
 			keyValue("Owner", summary.ownerId, width),
 			keyValue(
