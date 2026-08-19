@@ -116,6 +116,8 @@ export type RunSummary = {
 	usage?: RunResult["usage"];
 	pinned: boolean;
 	controllable: boolean;
+	retryable: boolean;
+	resumable: boolean;
 	retainedWorktree: boolean;
 	requiresAttention: boolean;
 };
@@ -859,6 +861,14 @@ export async function createSubagentService(options: {
 			...(run.result ? { usage: run.result.result.usage } : {}),
 			pinned: pinnedRuns.has(run.plan.runId),
 			controllable: run.status === "active" && run.control !== undefined,
+			retryable:
+				run.status === "failed" &&
+				run.result !== undefined &&
+				run.plan.limits.retries > 0,
+			resumable:
+				run.status === "interrupted" &&
+				run.result?.sessionFile !== undefined &&
+				run.plan.limits.resumes > 0,
 			retainedWorktree: await retainedWorktree(run, attempts),
 			requiresAttention: [
 				"active",
