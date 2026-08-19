@@ -8,6 +8,10 @@ import {
 	type VirtualProvider,
 	VM,
 } from "@earendil-works/gondolin";
+import {
+	captureQemuProcessIdentity,
+	type ProcessIdentity,
+} from "../reconciliation/process.js";
 import type { VmCapacityLease, VmCapacityManager } from "./capacity.js";
 import { createGondolinTools } from "./tools.js";
 import { type WriteBudget, withWriteBudget } from "./write-budget.js";
@@ -19,6 +23,7 @@ export type GondolinSandboxRecord = {
 	packageVersion: typeof GONDOLIN_VERSION;
 	vmId: string;
 	hostPid: number;
+	hostProcessIdentity: ProcessIdentity;
 	capacityLeaseId: string;
 	capacitySlot: number;
 	workspace: string;
@@ -162,6 +167,7 @@ export async function createGondolinAttemptSandbox(options: {
 		if (hostPid === null) {
 			throw new GondolinSandboxError("started VM has no host PID");
 		}
+		const hostProcessIdentity = await captureQemuProcessIdentity(hostPid);
 		const tools = await createGondolinTools(vm, {
 			hostWorkspace: workspace,
 			hostAliases: options.workspaceAliases ?? [],
@@ -171,6 +177,7 @@ export async function createGondolinAttemptSandbox(options: {
 			packageVersion: GONDOLIN_VERSION,
 			vmId: vm.id,
 			hostPid,
+			hostProcessIdentity,
 			capacityLeaseId: capacityLease.record.leaseId,
 			capacitySlot: capacityLease.record.slot,
 			workspace,

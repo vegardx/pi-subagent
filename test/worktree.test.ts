@@ -10,6 +10,7 @@ import { preflightWorkspace } from "../src/preflight/workspace.js";
 import {
 	captureWorktreeHandoff,
 	createAttemptWorktree,
+	observeWorktree,
 	readWorktreeRecord,
 	releaseWorktreeBranch,
 	removeCleanWorktree,
@@ -67,7 +68,9 @@ describe("worktree lifecycle", () => {
 			workspace,
 			lease,
 		});
+		expect(await observeWorktree(record)).toMatchObject({ state: "clean" });
 		await writeFile(path.join(record.worktreePath, "file.txt"), "changed\n");
+		expect(await observeWorktree(record)).toMatchObject({ state: "dirty" });
 		const handoff = await captureWorktreeHandoff(
 			record,
 			"test: capture handoff",
@@ -92,6 +95,9 @@ describe("worktree lifecycle", () => {
 		});
 		await removeCleanWorktree(handoff, replacement);
 		expect(await missing(record.worktreePath)).toBe(true);
+		expect(await observeWorktree(handoff)).toMatchObject({
+			state: "branch-retained",
+		});
 		expect(await git(repositoryRoot, "rev-parse", handoff.branch)).toBe(
 			handoff.handoffCommit,
 		);
@@ -100,6 +106,7 @@ describe("worktree lifecycle", () => {
 		expect((await readWorktreeRecord(record.recordPath)).releasedAt).toBe(
 			released.releasedAt,
 		);
+		expect(await observeWorktree(released)).toMatchObject({ state: "absent" });
 		await expect(
 			execFileAsync("git", ["rev-parse", "--verify", handoff.branch], {
 				cwd: repositoryRoot,

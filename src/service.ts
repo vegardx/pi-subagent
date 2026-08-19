@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import {
 	getAgentDir,
 	type ModelRuntime,
+	SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import { type ArtifactExport, ArtifactStore } from "./artifacts/store.js";
 import {
@@ -63,6 +64,12 @@ import {
 	type WorkspacePreflight,
 } from "./preflight/workspace.js";
 import {
+	createHostProcessController,
+	type ProcessController,
+	type ProcessIdentity,
+	processIdentitiesEqual,
+} from "./reconciliation/process.js";
+import {
 	type AttemptControl,
 	type AttemptExecutionResult,
 	runNativeAttempt,
@@ -71,6 +78,7 @@ import { createFinalAnswerController } from "./runtime/structured-output.js";
 import type { VmCapacityManager } from "./sandbox/capacity.js";
 import {
 	createAttemptWorktree,
+	observeWorktree,
 	readWorktreeRecord,
 	releaseWorktreeBranch,
 	removeCleanWorktree,
@@ -287,16 +295,6 @@ function emptyUsage(): Usage {
 	};
 }
 
-function processState(pid: number): "absent" | "present" | "unknown" {
-	try {
-		process.kill(pid, 0);
-		return "present";
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ESRCH") return "absent";
-		return "unknown";
-	}
-}
-
 async function pathState(
 	filePath: string,
 ): Promise<"present" | "absent" | "unknown"> {
@@ -407,6 +405,43 @@ function resumePlan(
 		},
 	};
 	return { ...draft, identitySha256: canonicalSha256(draft) };
+}
+
+type SessionEvidence =
+	| { state: "absent" }
+	| { state: "valid"; file: string; sessionId: string }
+	| { state: "unknown" };
+
+async function observeSessionEvidence(
+	root: string,
+	events: JournalEvent[],
+	preferredFile?: string,
+): Promise<SessionEvidence> {
+	const event = [...events]
+		.reverse()
+		.find((candidate) => candidate.type === "session-started");
+	const data = event?.data as
+		| { sessionId?: unknown; sessionFile?: unknown }
+		| undefined;
+	const sessionId = data?.sessionId;
+	const candidateFile = preferredFile ?? data?.sessionFile;
+	if (typeof sessionId !== "string" || typeof candidateFile !== "string") {
+		return { state: "absent" };
+	}
+	try {
+		const sessionsRoot = await realpath(path.join(root, "sessions"));
+		const file = await realpath(candidateFile);
+		if (!isInsidePath(sessionsRoot, file)) return { state: "unknown" };
+		const manager = SessionManager.open(file);
+		return manager.getSessionId() === sessionId
+			? { state: "valid", file, sessionId }
+			: { state: "unknown" };
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+			return { state: "absent" };
+		}
+		return { state: "unknown" };
+	}
 }
 
 function isInsidePath(root: string, candidate: string): boolean {
@@ -522,6 +557,7 @@ export async function createSubagentService(options: {
 	isProjectTrusted?: (cwd: string) => boolean;
 	resolveModel?: (model: ExactModelRequest) => Promise<ExactModelRequest>;
 	executeAttempt?: AttemptExecutor;
+	processController?: ProcessController;
 }): Promise<SubagentService> {
 	await mkdir(options.root, { recursive: true, mode: 0o700 });
 	const toolImplementation = await digestFileResource(
@@ -566,6 +602,8 @@ export async function createSubagentService(options: {
 	const preflightTtlMs = options.preflightTtlMs ?? 5 * 60_000;
 	const agentDir = options.agentDir ?? getAgentDir();
 	const executeAttempt = options.executeAttempt ?? runNativeAttempt;
+	const processController =
+		options.processController ?? createHostProcessController();
 	let executionPromise: Promise<SubagentExecutionDependencies> | undefined;
 	const execution = () => {
 		if (!executionPromise) {
@@ -1616,13 +1654,15 @@ export async function createSubagentService(options: {
 							throw new Error("attempt history mismatch");
 						}
 						const rootRecord = await runRecords.read(runId);
-						const sessionsRoot = await realpath(
-							path.join(options.root, "sessions"),
+						const sessionEvidence = await observeSessionEvidence(
+							options.root,
+							await run.journal.readEvents(),
+							run.result.sessionFile,
 						);
-						const sessionFile = await realpath(run.result.sessionFile);
-						if (!isInsidePath(sessionsRoot, sessionFile)) {
-							throw new Error("retained session escapes session root");
+						if (sessionEvidence.state !== "valid") {
+							throw new Error("retained session identity is unproved");
 						}
+						const sessionFile = sessionEvidence.file;
 						const workspace = await preflightWorkspace({
 							mode: run.workspace.mode,
 							cwd: run.workspace.cwd,
@@ -1719,34 +1759,74 @@ export async function createSubagentService(options: {
 						const sandboxEvent = [...events]
 							.reverse()
 							.find((event) => event.type === "sandbox-started");
-						const hostPid = (
-							sandboxEvent?.data as { hostPid?: unknown } | undefined
-						)?.hostPid;
-						const sandboxProcess =
-							sandboxEvent === undefined
-								? "not-started"
-								: typeof hostPid === "number"
-									? processState(hostPid)
-									: "unknown";
+						const sandboxData = sandboxEvent?.data as
+							| {
+									hostPid?: unknown;
+									hostProcessIdentity?: unknown;
+							  }
+							| undefined;
+						const recordedIdentity = sandboxData?.hostProcessIdentity as
+							| Partial<ProcessIdentity>
+							| undefined;
+						let sandboxProcess: ReconcileResult["sandboxProcess"];
+						if (sandboxEvent === undefined) {
+							sandboxProcess = "not-started";
+						} else if (
+							typeof sandboxData?.hostPid !== "number" ||
+							recordedIdentity?.pid !== sandboxData.hostPid ||
+							typeof recordedIdentity.startedAtMs !== "number" ||
+							typeof recordedIdentity.commandSha256 !== "string" ||
+							!/^[a-f0-9]{64}$/.test(recordedIdentity.commandSha256)
+						) {
+							sandboxProcess = "unknown";
+						} else {
+							const identity = recordedIdentity as ProcessIdentity;
+							const observation = await processController.observe(identity.pid);
+							if (observation.state === "absent") {
+								sandboxProcess = "absent";
+							} else if (
+								observation.state === "present" &&
+								processIdentitiesEqual(observation.identity, identity)
+							) {
+								sandboxProcess = await processController.terminate(identity);
+							} else {
+								sandboxProcess = "unknown";
+							}
+						}
 						const latestAttempt = await attemptRecords.latest(runId);
-						const worktreePath = path.join(
-							options.root,
-							"workspace",
-							"worktrees",
-							latestAttempt?.worktreeAttemptId ?? run.plan.attemptId,
-						);
-						const observedWorktree =
-							run.plan.workspace.mode === "read-only"
-								? "absent"
-								: await pathState(worktreePath);
-						const workspace =
-							run.plan.workspace.mode === "read-only"
-								? "not-needed"
-								: observedWorktree === "present"
-									? "retained"
-									: observedWorktree === "absent"
-										? "absent"
-										: "unknown";
+						let workspace: ReconcileResult["workspace"];
+						if (run.plan.workspace.mode === "read-only") {
+							workspace = "not-needed";
+						} else if (!latestAttempt?.worktreeAttemptId) {
+							workspace = "unknown";
+						} else {
+							try {
+								const record = await readWorktreeRecord(
+									path.join(
+										options.root,
+										"workspace",
+										"records",
+										`${latestAttempt.worktreeAttemptId}.json`,
+									),
+								);
+								if (
+									record.runId !== runId ||
+									record.attemptId !== latestAttempt.worktreeAttemptId
+								) {
+									workspace = "unknown";
+								} else {
+									const observation = await observeWorktree(record);
+									workspace =
+										observation.state === "absent"
+											? "absent"
+											: observation.state === "unknown"
+												? "unknown"
+												: "retained";
+								}
+							} catch {
+								workspace = "unknown";
+							}
+						}
 						const sandboxCleanup =
 							sandboxProcess === "not-started"
 								? "not-needed"
@@ -1761,13 +1841,22 @@ export async function createSubagentService(options: {
 									: workspace === "absent"
 										? "proved"
 										: "unknown";
-						const sessionFile = run.result?.sessionFile;
+						const sessionEvidence = await observeSessionEvidence(
+							options.root,
+							events,
+							run.result?.sessionFile,
+						);
+						const sessionFile =
+							sessionEvidence.state === "valid"
+								? sessionEvidence.file
+								: undefined;
 						const canClassify =
 							(sandboxCleanup === "proved" ||
 								sandboxCleanup === "not-needed") &&
-							workspaceCleanup !== "unknown";
+							workspaceCleanup !== "unknown" &&
+							sessionEvidence.state !== "unknown";
 						const status: RunResult["status"] = canClassify
-							? sessionFile
+							? sessionEvidence.state === "valid"
 								? "interrupted"
 								: "failed"
 							: "cleanup-blocked";
