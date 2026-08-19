@@ -30,6 +30,7 @@ import {
 	type AttemptExecutionResult,
 	runNativeAttempt,
 } from "./runtime/attempt.js";
+import { createFinalAnswerController } from "./runtime/structured-output.js";
 import type { VmCapacityManager } from "./sandbox/capacity.js";
 import {
 	createAttemptWorktree,
@@ -215,6 +216,9 @@ export async function createSubagentService(options: {
 					}
 					if (request.skills.length > 0) {
 						throw new Error("explicit skills are not implemented");
+					}
+					if (request.outputSchema !== undefined) {
+						createFinalAnswerController(request.outputSchema);
 					}
 					const agent = options.agents.get(request.agent);
 					if (!agent) throw new Error(`agent not found: ${request.agent}`);

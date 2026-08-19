@@ -381,8 +381,9 @@ integration now has a production foreground attempt runner: it verifies launch
 identity and current ownership, resolves exact authenticated models, creates a
 persistent isolated native session, enforces runtime/output/token/cost bounds,
 closes the VM, captures worktree handoff, and persists terminal journal/snapshot
-receipts. Standalone service orchestration, explicit skills/context, structured
-output, and resume remain outstanding.
+receipts. Foreground service orchestration and structured output are integrated;
+explicit skills/context, cross-seat recovery, retry, and resume remain
+outstanding.
 
 ### Build
 
@@ -418,8 +419,11 @@ The artifact foundation now stores fenced immutable content-addressed blobs with
 per-artifact and per-store limits, private modes, deduplication, media types,
 SHA-256 verification, and bounded owner-scoped export. The runner stores bounded
 full text output as an artifact while returning a 32 KiB inline projection.
-Retention pins, garbage collection, binary task artifacts, and structured output
-remain outstanding.
+Structured output now compiles bounded strict JSON schemas before launch,
+exposes a terminating `final_answer` tool, validates and deep-copies one value,
+and allows two bounded repair turns before failing. Accepted values are persisted
+as `application/json` artifacts and terminal results. Retention pins, garbage
+collection, and binary task artifacts remain outstanding.
 
 ## Deliverable 5 — workspaces and network
 

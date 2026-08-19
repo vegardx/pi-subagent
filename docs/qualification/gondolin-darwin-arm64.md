@@ -39,7 +39,7 @@ provide. This is a qualification result, not production acceptance.
 | Global cross-process VM limit | Pass | A pi-subagent host-socket lease enforced capacity across worker processes and recovered automatically after a killed owner. |
 | Production sandbox adapter | Pass | The promoted adapter acquired capacity, booted QEMU, mounted a budgeted workspace, routed a guest write, closed the VM, proved its PID released, and returned capacity. |
 | Production native attempt runner | Pass | A validated launch plan drove exact model/auth resolution, a persistent native Pi session, isolated resources, VM-backed tools, fenced output artifact storage/export, bounded inline results, journal events, snapshot, and proved cleanup. |
-| Foreground `SubagentService` | Pass | Owner-bound preflight, concurrent duplicate launch adoption, status/log/wait observation, persistent operation identity, and the production runner completed through the public service surface. |
+| Foreground `SubagentService` | Pass | Owner-bound preflight, concurrent duplicate launch adoption, status/log/wait observation, persistent operation identity, schema-valid terminating structured output, JSON artifact export, and the production runner completed through the public service surface. |
 
 The final drive completed nine executable checks with no failures or blocked
 requirements. Warm QEMU boots were approximately 0.5–1.0 seconds at 512 MB and

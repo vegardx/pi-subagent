@@ -509,7 +509,7 @@ async function qualifyForegroundService(): Promise<string> {
 		workspaceModes: ["read-only" as const],
 		limitCeiling: limits,
 		prompt:
-			"Read task.txt with the read tool, then respond with exactly its single-line content and nothing else.",
+			"Read task.txt with the read tool, then call final_answer exactly once with an object whose marker is the single-line file content.",
 		scope: "builtin" as const,
 	};
 	const service = await createSubagentService({
@@ -535,15 +535,21 @@ async function qualifyForegroundService(): Promise<string> {
 		operationId: "qualification-service-operation",
 		agent: agent.name,
 		task: {
-			goal: "Read task.txt and return its exact content",
+			goal: "Read task.txt and submit its exact content",
 			context: [],
-			instructions: ["Use read", "Return only the marker"],
+			instructions: ["Use read", "Submit through final_answer"],
 		},
 		contextMode: "fresh",
 		model: agent.defaultModel,
 		tools: ["read"],
 		skills: [],
 		workspace: { mode: "read-only", cwd: workspace },
+		outputSchema: {
+			type: "object",
+			properties: { marker: { type: "string", const: "SERVICE_OK" } },
+			required: ["marker"],
+			additionalProperties: false,
+		},
 		limits,
 	});
 	const receipt = await client.launch(
@@ -563,7 +569,15 @@ async function qualifyForegroundService(): Promise<string> {
 		result.result.status === "completed",
 		result.error ?? "service failed",
 	);
-	assert(result.output.trim() === "SERVICE_OK", "service output mismatch");
+	assert(
+		JSON.stringify(result.structuredOutput) ===
+			JSON.stringify({ marker: "SERVICE_OK" }),
+		"service structured output mismatch",
+	);
+	assert(
+		result.result.output?.mediaType === "application/json",
+		"service structured artifact missing",
+	);
 	assert(
 		(await client.logs(receipt.runId)).length >= 4,
 		"service logs missing",
