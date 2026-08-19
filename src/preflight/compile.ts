@@ -168,11 +168,11 @@ export async function compileLaunchPlan(input: {
 		skills: [...input.request.skills].sort(),
 		resources: input.resources
 			.map((resource) => ({ ...resource }))
-			.sort((left, right) =>
-				`${left.kind}:${left.name}:${left.source}`.localeCompare(
-					`${right.kind}:${right.name}:${right.source}`,
-				),
-			),
+			.sort((left, right) => {
+				const leftKey = `${left.kind}:${left.name}:${left.source}`;
+				const rightKey = `${right.kind}:${right.name}:${right.source}`;
+				return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+			}),
 		workspace: { ...input.workspace },
 		sandbox: {
 			backend: "gondolin" as const,

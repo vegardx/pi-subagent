@@ -277,8 +277,10 @@ persistence slice adds bounded sequenced JSONL events, fsync-backed atomic
 snapshots, private modes, JSON-roundtrip checks, conservative torn-tail and
 corruption handling, and an atomic owner-scoped operation idempotency index.
 Cross-process run fencing with monotonic generations is implemented and enforced
-by journal appends and snapshots. Session/worktree fencing and host resource discovery remain outstanding. The
-semantic compiler enforces agent capability and limit ceilings, exact model
+by journal appends and snapshots. Session/worktree fencing and agent/source discovery remain outstanding.
+Canonical file and tree digesting now binds real paths, relative entry names,
+content, executable mode, and bounded file/byte counts while rejecting symlinks
+and unsupported entries. The semantic compiler enforces agent capability and limit ceilings, exact model
 resolution, required and unrequested resource provenance, workspace resolution,
 and deterministic canonical launch identity. Strict request and immutable
 launch-plan schemas bind task, model, tools, skills, workspace,
