@@ -1,6 +1,13 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import {
+	mkdir,
+	readdir,
+	readFile,
+	stat,
+	symlink,
+	writeFile,
+} from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -192,6 +199,10 @@ async function setupFixtures() {
 		await mkdir(path.join(root, name), { mode: 0o700 });
 	}
 	await writeFile(path.join(root, "outside-sentinel"), "HOST_SENTINEL\n");
+	await symlink(
+		path.join(root, "outside-sentinel"),
+		path.join(root, "adapter", "outside-link"),
+	);
 	await writeFile(path.join(root, "writer", "fixture.txt"), "alpha needle\n");
 	await writeFile(path.join(root, "writer", ".env"), "VISIBLE_FIXTURE=yes\n");
 	await writeFile(path.join(root, "reader", "fixture.txt"), "read only\n");
@@ -485,6 +496,54 @@ async function qualifyProductionAdapter(): Promise<string> {
 		"printf changed > /context/qualification/AGENTS.md",
 	);
 	assert(!contextWrite.ok, "read-only context mount accepted a write");
+	const symlinkEscape = await sandbox.vm.exec(
+		"test ! -e /workspace/outside-link",
+	);
+	assert(symlinkEscape.ok, "workspace symlink escaped its VFS provider");
+	process.env.PI_SUBAGENT_QUALIFICATION_SECRET = "HOST_ENV_SENTINEL";
+	try {
+		const environment = await sandbox.tools.bash.execute(
+			"qualification-environment",
+			{
+				command: `printf %s "\${PI_SUBAGENT_QUALIFICATION_SECRET-unset}"`,
+			},
+			undefined,
+			undefined,
+			undefined as never,
+		);
+		assert(
+			text(environment) === "unset",
+			"host environment variable reached the guest",
+		);
+	} finally {
+		delete process.env.PI_SUBAGENT_QUALIFICATION_SECRET;
+	}
+	let commandTimedOut = false;
+	try {
+		await sandbox.tools.bash.execute(
+			"qualification-timeout",
+			{
+				command: "sleep 3; printf late > /workspace/late.txt",
+				timeout: 1,
+			},
+			undefined,
+			undefined,
+			undefined as never,
+		);
+	} catch (error) {
+		commandTimedOut = String(error).includes("timed out");
+	}
+	assert(commandTimedOut, "bash tool timeout was not reported");
+	assert(sandbox.isClosed(), "bash timeout did not close the attempt VM");
+	await new Promise((resolve) => setTimeout(resolve, 3_500));
+	const lateWrite = await stat(path.join(workspace, "late.txt")).then(
+		() => true,
+		(error: NodeJS.ErrnoException) => {
+			if (error.code === "ENOENT") return false;
+			throw error;
+		},
+	);
+	assert(!lateWrite, "timed-out guest command completed after VM closure");
 	await sandbox.cancel();
 	assert(sandbox.isClosed(), "production adapter did not close");
 	assert(

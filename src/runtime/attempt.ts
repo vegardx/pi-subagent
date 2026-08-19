@@ -251,9 +251,13 @@ export async function runNativeAttempt(options: {
 	const timeoutSignal = AbortSignal.timeout(
 		options.plan.limits.attemptRuntimeMs,
 	);
-	const runSignal = options.signal
-		? AbortSignal.any([options.signal, timeoutSignal])
-		: timeoutSignal;
+	const fatalToolController = new AbortController();
+	let fatalToolAbort = false;
+	const runSignal = AbortSignal.any([
+		timeoutSignal,
+		fatalToolController.signal,
+		...(options.signal ? [options.signal] : []),
+	]);
 	const abort = () => {
 		void session?.abort();
 		void sandbox?.cancel();
@@ -288,6 +292,11 @@ export async function runNativeAttempt(options: {
 				guestFilePath: file.guestFilePath,
 				content: file.content,
 			})),
+			onFatalToolAbort() {
+				if (runSignal.aborted) return;
+				fatalToolAbort = true;
+				fatalToolController.abort("fatal-tool-abort");
+			},
 		});
 		if (sandbox.record.packageVersion !== options.plan.sandbox.packageVersion) {
 			throw new Error("Gondolin package version drift");
@@ -482,7 +491,9 @@ export async function runNativeAttempt(options: {
 			session.dispose();
 			session = undefined;
 		}
-		if (sandbox && !sandbox.isClosed()) {
+		if (sandbox?.isClosed()) {
+			sandboxCleanup = "proved";
+		} else if (sandbox) {
 			try {
 				await sandbox.cancel();
 				sandboxCleanup = "proved";
@@ -501,6 +512,7 @@ export async function runNativeAttempt(options: {
 		const failure = classifyAttemptFailure({
 			error,
 			timedOut: timeoutSignal.aborted && !options.signal?.aborted,
+			fatalToolAbort,
 			...(options.signal?.aborted
 				? { externalAbortReason: options.signal.reason }
 				: {}),

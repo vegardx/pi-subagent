@@ -396,13 +396,27 @@ async function executeGondolinGrep(
 	};
 }
 
-function sanitizeEnv(
+export function sanitizeGuestEnvironment(
 	environment: NodeJS.ProcessEnv | undefined,
-): Record<string, string> | undefined {
-	if (!environment) return undefined;
-	const result: Record<string, string> = {};
+): Record<string, string> {
+	const result: Record<string, string> = {
+		HOME: GUEST_WORKSPACE,
+		TMPDIR: "/tmp",
+	};
+	if (!environment) return result;
 	for (const [key, value] of Object.entries(environment)) {
-		if (typeof value === "string") result[key] = value;
+		if (
+			typeof value === "string" &&
+			value.length <= 4096 &&
+			(key === "LANG" ||
+				key === "TERM" ||
+				key === "COLORTERM" ||
+				key === "NO_COLOR" ||
+				key === "FORCE_COLOR" ||
+				key.startsWith("LC_"))
+		) {
+			result[key] = value;
+		}
 	}
 	return result;
 }
@@ -411,6 +425,7 @@ function createGondolinBashOps(
 	vm: VM,
 	hostWorkspace: WorkspacePathContext,
 	shellPath: string,
+	onCommandAbort?: () => Promise<void>,
 ): BashOperations {
 	return {
 		exec: async (command, cwd, { onData, signal, timeout, env }) => {
@@ -430,10 +445,10 @@ function createGondolinBashOps(
 					: undefined;
 
 			try {
-				const sanitizedEnvironment = sanitizeEnv(env);
+				const sanitizedEnvironment = sanitizeGuestEnvironment(env);
 				const process = vm.exec([shellPath, "-lc", command], {
 					cwd: guestCwd,
-					...(sanitizedEnvironment ? { env: sanitizedEnvironment } : {}),
+					env: sanitizedEnvironment,
 					signal: controller.signal,
 					stdout: "pipe",
 					stderr: "pipe",
@@ -442,6 +457,16 @@ function createGondolinBashOps(
 				const result = await process;
 				return { exitCode: result.exitCode };
 			} catch (error) {
+				if (signal?.aborted || timedOut) {
+					try {
+						await onCommandAbort?.();
+					} catch (cleanupError) {
+						throw new AggregateError(
+							[error, cleanupError],
+							"command abort did not prove VM cleanup",
+						);
+					}
+				}
 				if (signal?.aborted) throw new Error("aborted");
 				if (timedOut) throw new Error(`timeout:${timeout}`);
 				throw error;
@@ -466,6 +491,7 @@ type GondolinTools = {
 export async function createGondolinTools(
 	vm: VM,
 	hostWorkspace: WorkspacePathContext,
+	options: { onCommandAbort?: () => Promise<void> } = {},
 ): Promise<GondolinTools> {
 	const shellProbe = await vm.exec([
 		"/bin/sh",
@@ -483,7 +509,12 @@ export async function createGondolinTools(
 		operations: createGondolinEditOps(vm, hostWorkspace),
 	});
 	const bash = createBashToolDefinition(GUEST_WORKSPACE, {
-		operations: createGondolinBashOps(vm, hostWorkspace, shellPath),
+		operations: createGondolinBashOps(
+			vm,
+			hostWorkspace,
+			shellPath,
+			options.onCommandAbort,
+		),
 		exposeSessionEnvironment: false,
 	});
 	const ls = createLsToolDefinition(GUEST_WORKSPACE, {
