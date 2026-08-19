@@ -458,6 +458,12 @@ async function qualifyProductionAdapter(): Promise<string> {
 				guestBaseDir: "/skills/qualification-skill",
 			},
 		],
+		contextMounts: [
+			{
+				guestFilePath: "/context/qualification/AGENTS.md",
+				content: "CONTEXT_MOUNTED\n",
+			},
+		],
 	});
 	const result = await sandbox.vm.exec(
 		"printf production-adapter > /workspace/adapter.txt",
@@ -471,6 +477,14 @@ async function qualifyProductionAdapter(): Promise<string> {
 		"printf changed > /skills/qualification-skill/SKILL.md",
 	);
 	assert(!skillWrite.ok, "read-only skill mount accepted a write");
+	const contextRead = await sandbox.vm.exec(
+		"grep -q 'CONTEXT_MOUNTED' /context/qualification/AGENTS.md",
+	);
+	assert(contextRead.ok, "read-only context mount was not readable");
+	const contextWrite = await sandbox.vm.exec(
+		"printf changed > /context/qualification/AGENTS.md",
+	);
+	assert(!contextWrite.ok, "read-only context mount accepted a write");
 	await sandbox.cancel();
 	assert(sandbox.isClosed(), "production adapter did not close");
 	assert(
@@ -515,6 +529,10 @@ async function assertRejectsCapacity(
 async function qualifyForegroundService(): Promise<string> {
 	const workspace = path.join(root, "service");
 	await writeFile(path.join(workspace, "task.txt"), "SERVICE_OK\n");
+	await writeFile(
+		path.join(workspace, "AGENTS.md"),
+		"When calling final_answer, include contextProof with the exact value CONTEXT_PROJECTED.\n",
+	);
 	const modelRuntime = await ModelRuntime.create();
 	const agentHash = canonicalSha256("qualification-service-agent");
 	const limits = {
@@ -538,6 +556,7 @@ async function qualifyForegroundService(): Promise<string> {
 		allowedModels: ["github-copilot/gpt-5.6-luna:low"],
 		tools: ["read"],
 		preloadSkills: ["qualification-skill"],
+		contextScopes: ["project" as const],
 		workspaceModes: ["read-only" as const],
 		limitCeiling: limits,
 		prompt:
@@ -577,14 +596,16 @@ async function qualifyForegroundService(): Promise<string> {
 		model: agent.defaultModel,
 		tools: ["read"],
 		preloadSkills: [],
+		contextScopes: [],
 		workspace: { mode: "read-only", cwd: workspace },
 		outputSchema: {
 			type: "object",
 			properties: {
 				marker: { type: "string", const: "SERVICE_OK" },
 				preloadProof: { type: "string", const: "SKILL_PRELOADED" },
+				contextProof: { type: "string", const: "CONTEXT_PROJECTED" },
 			},
-			required: ["marker", "preloadProof"],
+			required: ["marker", "preloadProof", "contextProof"],
 			additionalProperties: false,
 		},
 		limits,
@@ -608,7 +629,11 @@ async function qualifyForegroundService(): Promise<string> {
 	);
 	assert(
 		JSON.stringify(result.structuredOutput) ===
-			JSON.stringify({ marker: "SERVICE_OK", preloadProof: "SKILL_PRELOADED" }),
+			JSON.stringify({
+				marker: "SERVICE_OK",
+				preloadProof: "SKILL_PRELOADED",
+				contextProof: "CONTEXT_PROJECTED",
+			}),
 		"service structured output mismatch",
 	);
 	assert(
@@ -674,6 +699,7 @@ async function qualifyAttemptRunner(): Promise<string> {
 		allowedModels: ["github-copilot/gpt-5.6-luna:low"],
 		tools: ["read"],
 		preloadSkills: [],
+		contextScopes: [],
 		workspaceModes: ["read-only" as const],
 		limitCeiling: {
 			runtimeMs: 60_000,
@@ -705,6 +731,7 @@ async function qualifyAttemptRunner(): Promise<string> {
 			model: agent.defaultModel,
 			tools: ["read"],
 			preloadSkills: [],
+			contextScopes: [],
 			workspace: { mode: "read-only", cwd: workspace },
 			limits: agent.limitCeiling,
 		},
@@ -723,6 +750,7 @@ async function qualifyAttemptRunner(): Promise<string> {
 				sha256: toolHash,
 			},
 		],
+		contextResources: [],
 		workspace: {
 			mode: "read-only",
 			hostPathSha256: workspaceIdentity,
@@ -768,6 +796,7 @@ async function qualifyAttemptRunner(): Promise<string> {
 		journal,
 		artifactStore,
 		skills: { catalog: [], preloadPrompt: "" },
+		contextFiles: { files: [] },
 		sessionRoot: path.join(root, "runner-sessions"),
 	});
 	await lease.release();
@@ -814,6 +843,7 @@ async function qualifyAttemptRunner(): Promise<string> {
 		journal: resumeJournal,
 		artifactStore: resumeArtifacts,
 		skills: { catalog: [], preloadPrompt: "" },
+		contextFiles: { files: [] },
 		sessionRoot: path.join(root, "runner-sessions"),
 		resumeSessionFile: result.sessionFile,
 	});

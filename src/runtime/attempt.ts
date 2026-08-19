@@ -27,6 +27,10 @@ import type { DiscoveredAgent } from "../preflight/agents.js";
 import { canonicalJson, canonicalSha256 } from "../preflight/canonical.js";
 import { verifyLaunchPlanIdentity } from "../preflight/compile.js";
 import type { ForkContextProjection } from "../preflight/context.js";
+import {
+	assertContextFileProjection,
+	type ContextFileProjection,
+} from "../preflight/context-files.js";
 import { resolveExactPiModel } from "../preflight/models.js";
 import type { SkillProjection } from "../preflight/skills.js";
 import type { VmCapacityManager } from "../sandbox/capacity.js";
@@ -161,6 +165,7 @@ export async function runNativeAttempt(options: {
 	journal: RunJournal;
 	artifactStore: ArtifactStore;
 	skills: SkillProjection;
+	contextFiles: ContextFileProjection;
 	forkContext?: ForkContextProjection;
 	sessionRoot: string;
 	resumeSessionFile?: string;
@@ -179,6 +184,7 @@ export async function runNativeAttempt(options: {
 	) {
 		throw new Error("attempt ownership mismatch");
 	}
+	assertContextFileProjection(options.plan, options.contextFiles);
 	if (
 		(options.plan.contextMode === "fork" && !options.forkContext) ||
 		(options.plan.contextMode === "fresh" && options.forkContext) ||
@@ -187,9 +193,6 @@ export async function runNativeAttempt(options: {
 				canonicalSha256(options.plan.forkContext))
 	) {
 		throw new Error("fork context projection mismatch");
-	}
-	if (options.plan.resources.some((resource) => resource.kind === "context")) {
-		throw new Error("explicit context resources are not implemented");
 	}
 	const finalAnswer =
 		options.plan.outputSchema === undefined
@@ -265,6 +268,10 @@ export async function runNativeAttempt(options: {
 				hostBaseDir: skill.hostBaseDir,
 				guestBaseDir: skill.guestBaseDir,
 			})),
+			contextMounts: options.contextFiles.files.map((file) => ({
+				guestFilePath: file.guestFilePath,
+				content: file.content,
+			})),
 		});
 		if (sandbox.record.packageVersion !== options.plan.sandbox.packageVersion) {
 			throw new Error("Gondolin package version drift");
@@ -287,6 +294,12 @@ export async function runNativeAttempt(options: {
 			noPromptTemplates: true,
 			noThemes: true,
 			noContextFiles: true,
+			agentsFilesOverride: () => ({
+				agentsFiles: options.contextFiles.files.map((file) => ({
+					path: file.guestFilePath,
+					content: file.content,
+				})),
+			}),
 			systemPrompt: [
 				options.agent.prompt,
 				`Current working directory: ${GUEST_WORKSPACE} (Gondolin VM).`,

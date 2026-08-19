@@ -32,6 +32,7 @@ function plan(): AgentLaunchPlan {
 		cwd: "/workspace" as const,
 		tools: ["read"],
 		preloadSkills: [],
+		contextScopes: [],
 		resources: [
 			{
 				kind: "agent" as const,

@@ -41,6 +41,11 @@ import {
 	type ForkContextProjection,
 	projectForkContext,
 } from "./preflight/context.js";
+import {
+	assertContextFileProjection,
+	type ContextFileProjection,
+	discoverAndProjectContextFiles,
+} from "./preflight/context-files.js";
 import { createExactModelResolver } from "./preflight/models.js";
 import { digestFileResource } from "./preflight/resources.js";
 import {
@@ -141,6 +146,7 @@ type PreparedPreflight = SubagentPreflight & {
 	agent: DiscoveredAgent;
 	workspace: WorkspacePreflight;
 	skills: SkillProjection;
+	contextFiles: ContextFileProjection;
 	forkContext?: ForkContextProjection;
 };
 
@@ -149,6 +155,7 @@ type ActiveRun = {
 	plan: AgentLaunchPlan;
 	workspace: WorkspacePreflight;
 	skills: SkillProjection;
+	contextFiles: ContextFileProjection;
 	forkContext?: ForkContextProjection;
 	journal: RunJournal;
 	artifacts: ArtifactStore;
@@ -316,6 +323,7 @@ function toolResources(
 	request: SubagentRequest,
 	implementation: { canonicalPath: string; sha256: string },
 	skills: SkillProjection,
+	contextFiles: ContextFileProjection,
 ) {
 	const resources: ResourceGrant[] = [
 		{
@@ -332,6 +340,9 @@ function toolResources(
 			source: skill.hostFilePath,
 			sha256: skill.sha256,
 		});
+	}
+	for (const contextFile of contextFiles.files) {
+		resources.push(contextFile.grant);
 	}
 	for (const tool of request.tools) {
 		if (!IMPLEMENTED_TOOLS.has(tool)) {
@@ -402,6 +413,7 @@ export async function createSubagentService(options: {
 			catalog: [],
 			preloadPrompt: "",
 		};
+		const recoveredContextFiles: ContextFileProjection = { files: [] };
 		const latestAttempt = await attemptRecords.latest(record.plan.runId);
 		const recoveredPlan = latestAttempt?.plan ?? record.plan;
 		let lease: RunLease;
@@ -479,6 +491,7 @@ export async function createSubagentService(options: {
 				plan: recoveredPlan,
 				workspace: record.workspace,
 				skills: recoveredSkills,
+				contextFiles: recoveredContextFiles,
 				journal,
 				artifacts,
 				abort,
@@ -500,6 +513,7 @@ export async function createSubagentService(options: {
 		agent: DiscoveredAgent;
 		workspace: WorkspacePreflight;
 		skills: SkillProjection;
+		contextFiles: ContextFileProjection;
 		forkContext?: ForkContextProjection;
 		kind: "initial" | "retry" | "resume";
 		ordinal: number;
@@ -571,6 +585,7 @@ export async function createSubagentService(options: {
 				journal,
 				artifactStore: artifacts,
 				skills: input.skills,
+				contextFiles: input.contextFiles,
 				...(input.forkContext ? { forkContext: input.forkContext } : {}),
 				sessionRoot: path.join(options.root, "sessions"),
 				...(input.resumeSessionFile
@@ -588,6 +603,7 @@ export async function createSubagentService(options: {
 				plan: input.plan,
 				workspace: input.workspace,
 				skills: input.skills,
+				contextFiles: input.contextFiles,
 				...(input.forkContext ? { forkContext: input.forkContext } : {}),
 				journal,
 				artifacts,
@@ -723,12 +739,23 @@ export async function createSubagentService(options: {
 					const agent = options.agents.get(request.agent);
 					if (!agent) throw new Error(`agent not found: ${request.agent}`);
 					const workspace = await preflightWorkspace(request.workspace);
+					const projectTrusted =
+						options.isProjectTrusted?.(workspace.cwd) ?? false;
 					const skills = await discoverAndProjectSkills({
 						cwd: workspace.cwd,
 						agentDir,
-						projectTrusted: options.isProjectTrusted?.(workspace.cwd) ?? false,
+						projectTrusted,
 						preloadSkills: [
 							...new Set([...agent.preloadSkills, ...request.preloadSkills]),
+						],
+					});
+					const contextFiles = await discoverAndProjectContextFiles({
+						cwd: workspace.cwd,
+						workspaceRoot: workspace.repositoryRoot,
+						agentDir,
+						projectTrusted,
+						scopes: [
+							...new Set([...agent.contextScopes, ...request.contextScopes]),
 						],
 					});
 					let forkContext: ForkContextProjection | undefined;
@@ -755,7 +782,9 @@ export async function createSubagentService(options: {
 							request,
 							toolImplementation,
 							skills,
+							contextFiles,
 						),
+						contextResources: contextFiles.files.map((file) => file.grant),
 						workspace,
 						sandbox: options.sandbox,
 						...(forkContext ? { forkContext: forkContext.grant } : {}),
@@ -772,6 +801,7 @@ export async function createSubagentService(options: {
 						agent,
 						workspace,
 						skills,
+						contextFiles,
 						...(forkContext ? { forkContext } : {}),
 					};
 					preflights.set(preflightId, prepared);
@@ -831,6 +861,16 @@ export async function createSubagentService(options: {
 					});
 					assertSkillProjection(prepared.launchPlan, currentSkills);
 					prepared.skills = currentSkills;
+					const currentContextFiles = await discoverAndProjectContextFiles({
+						cwd: currentWorkspace.cwd,
+						workspaceRoot: currentWorkspace.repositoryRoot,
+						agentDir,
+						projectTrusted:
+							options.isProjectTrusted?.(currentWorkspace.cwd) ?? false,
+						scopes: prepared.launchPlan.contextScopes,
+					});
+					assertContextFileProjection(prepared.launchPlan, currentContextFiles);
+					prepared.contextFiles = currentContextFiles;
 					if (prepared.launchPlan.contextMode === "fork") {
 						if (!owner.parentSessionId || !owner.parentSessionFile) {
 							throw new Error("fork context authorization was lost");
@@ -870,6 +910,7 @@ export async function createSubagentService(options: {
 							agent: prepared.agent,
 							workspace: prepared.workspace,
 							skills: prepared.skills,
+							contextFiles: prepared.contextFiles,
 							...(prepared.forkContext
 								? { forkContext: prepared.forkContext }
 								: {}),
@@ -956,6 +997,15 @@ export async function createSubagentService(options: {
 							preloadSkills: run.plan.preloadSkills,
 						});
 						assertSkillProjection(run.plan, skills);
+						const contextFiles = await discoverAndProjectContextFiles({
+							cwd: workspace.cwd,
+							workspaceRoot: workspace.repositoryRoot,
+							agentDir,
+							projectTrusted:
+								options.isProjectTrusted?.(workspace.cwd) ?? false,
+							scopes: run.plan.contextScopes,
+						});
+						assertContextFileProjection(run.plan, contextFiles);
 						let forkContext: ForkContextProjection | undefined;
 						if (run.plan.contextMode === "fork") {
 							if (!owner.parentSessionId || !owner.parentSessionFile) {
@@ -981,6 +1031,7 @@ export async function createSubagentService(options: {
 							agent,
 							workspace,
 							skills,
+							contextFiles,
 							...(forkContext ? { forkContext } : {}),
 							kind: "retry",
 							ordinal: latest.ordinal + 1,
@@ -1035,6 +1086,15 @@ export async function createSubagentService(options: {
 							preloadSkills: run.plan.preloadSkills,
 						});
 						assertSkillProjection(run.plan, skills);
+						const contextFiles = await discoverAndProjectContextFiles({
+							cwd: workspace.cwd,
+							workspaceRoot: workspace.repositoryRoot,
+							agentDir,
+							projectTrusted:
+								options.isProjectTrusted?.(workspace.cwd) ?? false,
+							scopes: run.plan.contextScopes,
+						});
+						assertContextFileProjection(run.plan, contextFiles);
 						const plan = resumePlan(run.plan, run.result, latest.ordinal + 1);
 						let existingWorktree: WorktreeRecord | undefined;
 						if (run.plan.workspace.mode === "worktree") {
@@ -1053,6 +1113,7 @@ export async function createSubagentService(options: {
 							agent,
 							workspace,
 							skills,
+							contextFiles,
 							kind: "resume",
 							ordinal: latest.ordinal + 1,
 							parentAttemptId: latest.attemptId,

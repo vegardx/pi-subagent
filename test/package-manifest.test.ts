@@ -18,6 +18,7 @@ name: worker
 model: { provider: github-copilot, id: gpt-5.6-luna, thinking: low }
 tools: [read]
 preloadSkills: []
+contextScopes: []
 workspaceModes: [read-only]
 limits:
   runtimeMs: 60000

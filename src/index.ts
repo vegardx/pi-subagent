@@ -29,6 +29,8 @@ export {
 export {
 	type AgentLaunchPlan,
 	AgentLaunchPlanSchema,
+	type ContextScope,
+	ContextScopeSchema,
 	type DelegatedTask,
 	DelegatedTaskSchema,
 	type ExactModelRequest,
@@ -103,6 +105,13 @@ export {
 	type ForkContextProjection,
 	projectForkContext,
 } from "./preflight/context.js";
+export {
+	assertContextFileProjection,
+	type ContextFileProjection,
+	ContextFileProjectionError,
+	discoverAndProjectContextFiles,
+	type ProjectedContextFile,
+} from "./preflight/context-files.js";
 export {
 	createExactModelResolver,
 	ModelPreflightError,

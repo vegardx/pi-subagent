@@ -62,7 +62,7 @@ a sufficient grant.
 | Skill catalog | Normal global/package skills plus trusted-project skills |
 | Preloaded skill instructions | None unless named by agent/request |
 | Prompt templates | None |
-| Context files | Explicit projection; project context requires trust |
+| Context files | Explicit `global`/`project` scopes; project requires trust; synthetic read-only `/context` projection |
 | Built-in tools | Explicit allowlist |
 | Recursive subagent tool | Denied |
 | Workspace | Read-only |

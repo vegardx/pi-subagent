@@ -393,8 +393,11 @@ normal skill discovery and forced startup preloads are integrated. Fork mode now
 authorizes an owner-bound parent session file, projects the active
 compaction-aware context under message/byte limits, binds source and projection
 digests plus message IDs into launch identity, persists parent provenance, and
-seeds only fresh child attempts. Explicit non-transcript context resources remain
-outstanding.
+seeds only fresh child attempts. Non-transcript context projection is also
+integrated: agent and request `global`/`project` scopes are unioned, project scope
+requires trust, Pi's normal context chain is bounded and digest-bound, and each
+file is injected through the native resource loader plus a synthetic read-only
+`/context` mount. Repository context symlinks cannot escape the checkout.
 
 ### Build
 

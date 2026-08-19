@@ -42,6 +42,12 @@ const parameters = Type.Object({
 			uniqueItems: true,
 		}),
 	),
+	contextScopes: Type.Optional(
+		Type.Array(StringEnum(["global", "project"] as const), {
+			maxItems: 2,
+			uniqueItems: true,
+		}),
+	),
 	timeoutMs: Type.Optional(
 		Type.Integer({ minimum: 1_000, maximum: 3_600_000 }),
 	),
@@ -187,6 +193,7 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 				thinking,
 				tools,
 				preloadSkills: params.preloadSkills ?? [],
+				contextScopes: params.contextScopes ?? [],
 				workspaceMode,
 				timeoutMs: params.timeoutMs ?? 600_000,
 			});
@@ -198,6 +205,7 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 				allowedModels: [`${model.provider}/${model.id}:${thinking}`],
 				tools: [...tools],
 				preloadSkills: [...(params.preloadSkills ?? [])],
+				contextScopes: [...(params.contextScopes ?? [])],
 				workspaceModes: [workspaceMode],
 				limitCeiling: {
 					runtimeMs: params.timeoutMs ?? 600_000,
@@ -233,6 +241,7 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 				model: agent.defaultModel,
 				tools,
 				preloadSkills: [...(params.preloadSkills ?? [])],
+				contextScopes: [...(params.contextScopes ?? [])],
 				workspace: { mode: workspaceMode, cwd: ctx.cwd },
 				limits: agent.limitCeiling,
 			});

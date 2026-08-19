@@ -3,6 +3,7 @@ import { type AttemptId, CONTRACT_REVISION, type RunId } from "../contracts.js";
 import {
 	type AgentLaunchPlan,
 	AgentLaunchPlanSchema,
+	type ContextScope,
 	type ExactModelRequest,
 	type ResourceGrant,
 	type RunLimits,
@@ -20,6 +21,7 @@ export type AgentDefinition = {
 	allowedModels: string[];
 	tools: string[];
 	preloadSkills: string[];
+	contextScopes: ContextScope[];
 	workspaceModes: Array<"read-only" | "worktree">;
 	limitCeiling: RunLimits;
 };
@@ -75,6 +77,7 @@ function validateResources(
 	agent: AgentDefinition,
 	request: SubagentRequest,
 	preloadSkills: string[],
+	contextResources: ResourceGrant[],
 	resources: ResourceGrant[],
 ): void {
 	const byIdentity = new Map<string, ResourceGrant>();
@@ -88,6 +91,7 @@ function validateResources(
 		`agent:${agent.name}`,
 		...request.tools.map((name) => `tool:${name}`),
 		...preloadSkills.map((name) => `skill:${name}`),
+		...contextResources.map((resource) => `context:${resource.name}`),
 	];
 	const requiredSet = new Set(required);
 	for (const key of required) {
@@ -120,6 +124,7 @@ export async function compileLaunchPlan(input: {
 	request: SubagentRequest;
 	agent: AgentDefinition;
 	resources: ResourceGrant[];
+	contextResources: ResourceGrant[];
 	workspace: ResolvedWorkspace;
 	sandbox: ResolvedSandbox;
 	forkContext?: ForkContextGrant;
@@ -153,7 +158,28 @@ export async function compileLaunchPlan(input: {
 		throw new PreflightError("workspace resolution mismatch");
 	}
 	assertLimits(input.request.limits, input.agent.limitCeiling);
-	validateResources(input.agent, input.request, preloadSkills, input.resources);
+	const contextScopes = [
+		...new Set([...input.agent.contextScopes, ...input.request.contextScopes]),
+	].sort() as ContextScope[];
+	if (input.contextResources.some((resource) => resource.kind !== "context")) {
+		throw new PreflightError("invalid context resource kind");
+	}
+	const resourceContexts = input.resources
+		.filter((resource) => resource.kind === "context")
+		.sort((left, right) => left.name.localeCompare(right.name));
+	const contextResources = [...input.contextResources].sort((left, right) =>
+		left.name.localeCompare(right.name),
+	);
+	if (canonicalSha256(resourceContexts) !== canonicalSha256(contextResources)) {
+		throw new PreflightError("context resource projection mismatch");
+	}
+	validateResources(
+		input.agent,
+		input.request,
+		preloadSkills,
+		contextResources,
+		input.resources,
+	);
 
 	const requestedModel = input.request.model ?? input.agent.defaultModel;
 	if (!input.agent.allowedModels.includes(modelKey(requestedModel))) {
@@ -185,6 +211,7 @@ export async function compileLaunchPlan(input: {
 		cwd: "/workspace" as const,
 		tools: [...input.request.tools].sort(),
 		preloadSkills,
+		contextScopes,
 		resources: input.resources
 			.map((resource) => ({ ...resource }))
 			.sort((left, right) => {
