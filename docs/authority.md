@@ -70,6 +70,11 @@ a sufficient grant.
 | Repository-local files | Visible, including `.env` and similar files |
 | Host credentials and home | Not mounted |
 
+Guest shell environments are reconstructed rather than copied. Only bounded
+locale/terminal variables are accepted from Pi; guest `HOME` and `TMPDIR` are
+fixed to `/workspace` and `/tmp`. Host `PATH`, tokens, provider variables, proxy
+configuration, and arbitrary extension environment are denied.
+
 ## Filesystem policy
 
 The VM receives `/workspace` and only explicitly declared auxiliary mounts.

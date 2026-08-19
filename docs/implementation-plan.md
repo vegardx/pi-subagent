@@ -398,6 +398,11 @@ integrated: agent and request `global`/`project` scopes are unioned, project sco
 requires trust, Pi's normal context chain is bounded and digest-bound, and each
 file is injected through the native resource loader plus a synthetic read-only
 `/context` mount. Repository context symlinks cannot escape the checkout.
+Focused tool-boundary qualification proved VFS symlink containment, prompt
+cancellation of `find` through VM closure, and bounded grep output without imposing
+arbitrary repository traversal limits. Guest shell environments now use an
+explicit safe allowlist, and a bash tool timeout closes the whole VM, prevents
+late writes/reuse, and returns a stable classified tool failure.
 
 ### Build
 
