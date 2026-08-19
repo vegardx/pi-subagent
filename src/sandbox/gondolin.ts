@@ -65,6 +65,8 @@ export async function createGondolinAttemptSandbox(options: {
 	memory?: string;
 	cpus?: number;
 	startTimeoutMs?: number;
+	workspaceAliases?: string[];
+	skillMounts?: Array<{ hostBaseDir: string; guestBaseDir: string }>;
 }): Promise<GondolinAttemptSandbox> {
 	let workspace: string;
 	try {
@@ -88,6 +90,25 @@ export async function createGondolinAttemptSandbox(options: {
 		workspaceProvider = budgeted.provider;
 		writeBudget = budgeted.budget;
 	}
+	const mounts: Record<string, VirtualProvider> = {
+		"/workspace": workspaceProvider,
+	};
+	for (const skill of options.skillMounts ?? []) {
+		if (mounts[skill.guestBaseDir]) {
+			throw new GondolinSandboxError(
+				`duplicate guest skill mount: ${skill.guestBaseDir}`,
+			);
+		}
+		const hostBaseDir = await realpath(skill.hostBaseDir);
+		if (!(await lstat(hostBaseDir)).isDirectory()) {
+			throw new GondolinSandboxError(
+				`skill mount is not a directory: ${skill.hostBaseDir}`,
+			);
+		}
+		mounts[skill.guestBaseDir] = new ReadonlyProvider(
+			new RealFSProvider(hostBaseDir),
+		);
+	}
 	const { httpHooks } = createHttpHooks({ blockInternalRanges: true });
 	const memory = options.memory ?? "512M";
 	const cpus = options.cpus ?? 1;
@@ -106,7 +127,7 @@ export async function createGondolinAttemptSandbox(options: {
 			httpHooks,
 			dns: { mode: "synthetic" },
 			sessionLabel: `pi-subagent ${options.owner}`,
-			vfs: { mounts: { "/workspace": workspaceProvider } },
+			vfs: { mounts },
 		});
 	} catch (error) {
 		await capacityLease.release();
@@ -120,7 +141,10 @@ export async function createGondolinAttemptSandbox(options: {
 		if (hostPid === null) {
 			throw new GondolinSandboxError("started VM has no host PID");
 		}
-		const tools = await createGondolinTools(vm, workspace);
+		const tools = await createGondolinTools(vm, {
+			hostWorkspace: workspace,
+			hostAliases: options.workspaceAliases ?? [],
+		});
 		const record: GondolinSandboxRecord = {
 			backend: "gondolin",
 			packageVersion: GONDOLIN_VERSION,

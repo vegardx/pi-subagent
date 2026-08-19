@@ -6,7 +6,7 @@ these definitions rather than redefine them.
 | Term | Definition |
 | --- | --- |
 | Pi seat | The interactive parent Pi process occupied by the user. It owns active native sessions and VMs. |
-| Agent definition | Declarative role configuration: prompt, model route, tools, skills, context, and authority ceiling. |
+| Agent definition | Declarative role configuration: prompt, model route, tools, forced skill preloads, context, and authority ceiling. |
 | Agent session | One Pi model conversation with independent messages, context, model, tools, and lifecycle. |
 | Parent agent | The session delegating work. Usually the seat or a workflow host. |
 | Subagent | An agent session created to execute one bounded delegated task. |
@@ -35,7 +35,7 @@ these definitions rather than redefine them.
 | Tool declaration | Single registry entry binding a tool's schema, grant, implementation, authority, and acceptance coverage. |
 | Capability | Stable semantic permission mapped to concrete tools and resources. |
 | Authority ceiling | Maximum capabilities an agent definition permits. Calls may narrow but not widen it. |
-| Resource projection | Immutable resolution of tools, skills, context, and prompts granted to an attempt. |
+| Resource projection | Immutable resolution of tools, normal skill catalog, forced skill preloads, context, and prompts granted to an attempt. |
 | Ambient resource | Resource discovered from normal global or project configuration. |
 | Explicit resource | Resource deliberately granted in an attempt's launch plan. |
 | Artifact | Durable bounded output associated with a run or attempt. |

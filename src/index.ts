@@ -119,6 +119,12 @@ export {
 	type ResourceDigestLimits,
 } from "./preflight/resources.js";
 export {
+	discoverAndProjectSkills,
+	type ProjectedSkill,
+	type SkillProjection,
+	SkillProjectionError,
+} from "./preflight/skills.js";
+export {
 	preflightWorkspace,
 	type WorkspacePreflight,
 	WorkspacePreflightError,
@@ -151,6 +157,7 @@ export {
 	createGondolinTools,
 	GUEST_WORKSPACE,
 	toGuestPath,
+	type WorkspacePathMap,
 } from "./sandbox/tools.js";
 export {
 	type WriteBudget,

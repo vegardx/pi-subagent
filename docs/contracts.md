@@ -62,7 +62,7 @@ interface SubagentRequest {
 	contextMode: "fresh" | "fork";
 	model?: ExactModelRequest;
 	tools?: string[];
-	skills?: string[];
+	preloadSkills?: string[];
 	workspace: WorkspaceRequest;
 	outputSchema?: JsonSchema;
 	limits: RunLimits;
@@ -116,7 +116,8 @@ interface AgentLaunchPlan {
 	model: { provider: string; id: string; thinking: string };
 	cwd: "/workspace";
 	tools: ToolGrant[];
-	skills: SkillGrant[];
+	preloadSkills: string[];
+	skillCatalog: SkillGrant[];
 	workspace: WorkspaceGrant;
 	sandbox: GondolinGrant;
 	network: NetworkGrant;

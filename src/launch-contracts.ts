@@ -88,7 +88,7 @@ export const SubagentRequestSchema = Type.Object(
 		contextMode: Type.Union([Type.Literal("fresh"), Type.Literal("fork")]),
 		model: Type.Optional(ExactModelRequestSchema),
 		tools: Type.Array(ResourceNameSchema, { maxItems: 64, uniqueItems: true }),
-		skills: Type.Array(ResourceNameSchema, {
+		preloadSkills: Type.Array(ResourceNameSchema, {
 			maxItems: 64,
 			uniqueItems: true,
 		}),
@@ -130,7 +130,7 @@ export const AgentLaunchPlanSchema = Type.Object(
 		model: ExactModelRequestSchema,
 		cwd: Type.Literal("/workspace"),
 		tools: Type.Array(ResourceNameSchema, { maxItems: 64, uniqueItems: true }),
-		skills: Type.Array(ResourceNameSchema, {
+		preloadSkills: Type.Array(ResourceNameSchema, {
 			maxItems: 64,
 			uniqueItems: true,
 		}),

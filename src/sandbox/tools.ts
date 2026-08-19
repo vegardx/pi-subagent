@@ -48,6 +48,13 @@ function isInsideHostPath(root: string, value: string): boolean {
 	);
 }
 
+export type WorkspacePathMap = {
+	hostWorkspace: string;
+	hostAliases: string[];
+};
+
+type WorkspacePathContext = string | WorkspacePathMap;
+
 function hostPathToGuest(hostWorkspace: string, hostPath: string): string {
 	const relativePath = path.relative(hostWorkspace, hostPath);
 	if (!isInsideHostPath(hostWorkspace, hostPath)) return toPosix(hostPath);
@@ -56,19 +63,39 @@ function hostPathToGuest(hostWorkspace: string, hostPath: string): string {
 		: GUEST_WORKSPACE;
 }
 
-export function toGuestPath(hostWorkspace: string, inputPath: string): string {
+export function toGuestPath(
+	context: WorkspacePathContext,
+	inputPath: string,
+): string {
 	const trimmed = stripAtPrefix(inputPath.trim());
 	if (!trimmed) return GUEST_WORKSPACE;
 	if (path.isAbsolute(trimmed)) {
-		if (isInsideHostPath(hostWorkspace, trimmed)) {
-			return hostPathToGuest(hostWorkspace, trimmed);
+		const posixPath = toPosix(trimmed);
+		if (
+			posixPath === GUEST_WORKSPACE ||
+			posixPath.startsWith(`${GUEST_WORKSPACE}/`)
+		) {
+			return path.posix.resolve("/", posixPath);
 		}
-		return path.posix.resolve("/", toPosix(trimmed));
+		const roots =
+			typeof context === "string"
+				? [context]
+				: [context.hostWorkspace, ...context.hostAliases];
+		for (const root of [...new Set(roots)].sort(
+			(left, right) => right.length - left.length,
+		)) {
+			if (isInsideHostPath(root, trimmed))
+				return hostPathToGuest(root, trimmed);
+		}
+		return path.posix.resolve("/", posixPath);
 	}
 	return path.posix.resolve(GUEST_WORKSPACE, toPosix(trimmed));
 }
 
-function createGondolinReadOps(vm: VM, hostWorkspace: string): ReadOperations {
+function createGondolinReadOps(
+	vm: VM,
+	hostWorkspace: WorkspacePathContext,
+): ReadOperations {
 	return {
 		readFile: async (filePath) =>
 			vm.fs.readFile(toGuestPath(hostWorkspace, filePath)),
@@ -92,7 +119,7 @@ function createGondolinReadOps(vm: VM, hostWorkspace: string): ReadOperations {
 
 function createGondolinWriteOps(
 	vm: VM,
-	hostWorkspace: string,
+	hostWorkspace: WorkspacePathContext,
 ): WriteOperations {
 	return {
 		writeFile: async (filePath, content) => {
@@ -108,7 +135,10 @@ function createGondolinWriteOps(
 	};
 }
 
-function createGondolinEditOps(vm: VM, hostWorkspace: string): EditOperations {
+function createGondolinEditOps(
+	vm: VM,
+	hostWorkspace: WorkspacePathContext,
+): EditOperations {
 	const read = createGondolinReadOps(vm, hostWorkspace);
 	const write = createGondolinWriteOps(vm, hostWorkspace);
 	return {
@@ -118,7 +148,10 @@ function createGondolinEditOps(vm: VM, hostWorkspace: string): EditOperations {
 	};
 }
 
-function createGondolinLsOps(vm: VM, hostWorkspace: string): LsOperations {
+function createGondolinLsOps(
+	vm: VM,
+	hostWorkspace: WorkspacePathContext,
+): LsOperations {
 	return {
 		exists: async (filePath) => {
 			try {
@@ -188,7 +221,10 @@ function matchesToolGlob(relativePath: string, pattern: string): boolean {
 	);
 }
 
-function createGondolinFindOps(vm: VM, hostWorkspace: string): FindOperations {
+function createGondolinFindOps(
+	vm: VM,
+	hostWorkspace: WorkspacePathContext,
+): FindOperations {
 	return {
 		exists: async (filePath) => {
 			try {
@@ -258,7 +294,7 @@ function appendGrepBlock(parameters: {
 
 async function executeGondolinGrep(
 	vm: VM,
-	hostWorkspace: string,
+	hostWorkspace: WorkspacePathContext,
 	parameters: GrepToolInput,
 	signal?: AbortSignal,
 ): Promise<TextToolResult<GrepToolDetails>> {
@@ -373,7 +409,7 @@ function sanitizeEnv(
 
 function createGondolinBashOps(
 	vm: VM,
-	hostWorkspace: string,
+	hostWorkspace: WorkspacePathContext,
 	shellPath: string,
 ): BashOperations {
 	return {
@@ -429,7 +465,7 @@ type GondolinTools = {
 
 export async function createGondolinTools(
 	vm: VM,
-	hostWorkspace: string,
+	hostWorkspace: WorkspacePathContext,
 ): Promise<GondolinTools> {
 	const shellProbe = await vm.exec([
 		"/bin/sh",

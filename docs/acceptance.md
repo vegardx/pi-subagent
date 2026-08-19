@@ -31,8 +31,13 @@ weakened and host execution must not be used as fallback.
 
 - a native `AgentSession` reaches authoritative settlement;
 - one attempt creates exactly one VM and no child Pi process;
-- ambient extensions, skills, prompts, themes, and context files are absent;
-- only explicit tools, skills, and context are projected;
+- ambient extensions, prompts, themes, and context files are absent;
+- normal global/package and trusted-project skill metadata is discoverable;
+- untrusted project skills are absent;
+- skill trees are mounted read-only under guest `/skills` paths;
+- `preloadSkills` content is present before the first model turn;
+- only explicit tools, preloads, and context are projected beyond the normal
+  skill catalog;
 - effective model, thinking, session, tools, resource identities, workspace,
   image, mount policy, and network policy match preflight;
 - resource or policy changes between preflight and launch are rejected;

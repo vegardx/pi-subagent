@@ -59,7 +59,8 @@ a sufficient grant.
 | Resource | Default |
 | --- | --- |
 | Extensions | None |
-| Skills | None unless explicitly granted |
+| Skill catalog | Normal global/package skills plus trusted-project skills |
+| Preloaded skill instructions | None unless named by agent/request |
 | Prompt templates | None |
 | Context files | Explicit projection; project context requires trust |
 | Built-in tools | Explicit allowlist |

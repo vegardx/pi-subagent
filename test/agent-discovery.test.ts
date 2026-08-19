@@ -19,7 +19,7 @@ model:
   id: gpt-5.6-luna
   thinking: low
 tools: [${tools.join(", ")}]
-skills: []
+preloadSkills: []
 workspaceModes: [read-only]
 limits:
   runtimeMs: 60000

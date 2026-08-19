@@ -34,7 +34,7 @@ const request: SubagentRequest = {
 	contextMode: "fresh",
 	model,
 	tools: ["write", "read"],
-	skills: ["typescript"],
+	preloadSkills: ["typescript"],
 	workspace: { mode: "worktree", cwd: "/repo" },
 	limits,
 };
@@ -45,7 +45,7 @@ const agent: AgentDefinition = {
 	defaultModel: model,
 	allowedModels: ["github-copilot/gpt-5.6-luna:low"],
 	tools: ["read", "write", "bash"],
-	skills: ["typescript"],
+	preloadSkills: ["typescript"],
 	workspaceModes: ["worktree"],
 	limitCeiling: { ...limits },
 };

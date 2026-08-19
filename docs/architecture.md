@@ -68,9 +68,12 @@ process, or network operations.
 
 ## Resource isolation
 
-Child sessions use `DefaultResourceLoader` with ambient extensions, skills,
-prompt templates, themes, and context files disabled. Only preflighted resources
-are projected into the session. Arbitrary extension code is not loaded into a
+Child sessions disable ambient extensions, prompt templates, themes, and context
+files. Normal Pi global/package skills and trusted-project skills are discovered
+on the host, bound into the launch identity, advertised through the standard
+progressive-disclosure catalog, and mounted read-only under `/skills` in the VM.
+`preloadSkills` injects selected full instructions before the first turn. Only
+preflighted resources are projected into the session. Arbitrary extension code is not loaded into a
 child session in the initial release; trusted capabilities must have a
 pi-subagent-owned adapter whose authority is part of the launch plan.
 

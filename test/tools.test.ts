@@ -17,6 +17,22 @@ describe("Gondolin tool paths", () => {
 		);
 	});
 
+	it("maps source-checkout aliases into a private worktree namespace", () => {
+		const mapping = {
+			hostWorkspace: "/private/worktrees/attempt",
+			hostAliases: ["/Users/example/src/project"],
+		};
+		expect(
+			toGuestPath(mapping, "/Users/example/src/project/src/index.ts"),
+		).toBe(`${GUEST_WORKSPACE}/src/index.ts`);
+		expect(
+			toGuestPath(mapping, "/private/worktrees/attempt/src/index.ts"),
+		).toBe(`${GUEST_WORKSPACE}/src/index.ts`);
+		expect(toGuestPath(mapping, "/workspace/src/index.ts")).toBe(
+			`${GUEST_WORKSPACE}/src/index.ts`,
+		);
+	});
+
 	it("does not disguise absolute paths outside the workspace", () => {
 		expect(toGuestPath(workspace, "/etc/passwd")).toBe("/etc/passwd");
 	});
