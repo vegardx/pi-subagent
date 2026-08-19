@@ -482,7 +482,9 @@ export async function runNativeAttempt(options: {
 			sandboxCleanup === "blocked"
 				? "cleanup-blocked"
 				: options.signal?.aborted
-					? "cancelled"
+					? options.signal.reason === "seat-shutdown"
+						? "interrupted"
+						: "cancelled"
 					: "failed";
 		const result = terminalResult({
 			plan: options.plan,

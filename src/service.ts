@@ -1087,7 +1087,7 @@ export async function createSubagentService(options: {
 				if (run.status !== "active" && run.status !== "stopping") continue;
 				run.status = "stopping";
 				emit(run.plan.runId, run.status);
-				run.abort.abort();
+				run.abort.abort("seat-shutdown");
 				pending.push(run.promise);
 			}
 			await Promise.allSettled(pending);
@@ -1808,7 +1808,7 @@ export async function createSubagentService(options: {
 					if (run.status === "active") {
 						run.status = "stopping";
 						emit(runId, run.status);
-						run.abort.abort();
+						run.abort.abort("caller-interrupt");
 					}
 					return {
 						runId,
