@@ -622,6 +622,21 @@ export async function createSubagentService(options: {
 					error: "terminal state was not proved before seat loss",
 				});
 			}
+			let recoveredHandoff: WorktreeRecord | undefined;
+			if (latestAttempt?.worktreeAttemptId) {
+				try {
+					recoveredHandoff = await readWorktreeRecord(
+						path.join(
+							options.root,
+							"workspace",
+							"records",
+							`${latestAttempt.worktreeAttemptId}.json`,
+						),
+					);
+				} catch (error) {
+					if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+				}
+			}
 			const execution: AttemptExecutionResult = {
 				result,
 				output: typeof state?.output === "string" ? state.output : "",
@@ -629,7 +644,7 @@ export async function createSubagentService(options: {
 					typeof state?.sessionFile === "string"
 						? state.sessionFile
 						: undefined,
-				handoff: undefined,
+				handoff: recoveredHandoff,
 				structuredOutput: result.structuredOutput,
 				error: typeof state?.error === "string" ? state.error : undefined,
 			};
