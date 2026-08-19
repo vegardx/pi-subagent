@@ -65,7 +65,7 @@ async function fixture(name: string) {
 		defaultModel: model,
 		allowedModels: ["github-copilot/gpt-5.6-luna:low"],
 		tools: ["read"],
-		skills: [],
+		preloadSkills: [],
 		workspaceModes: ["read-only" as const],
 		limitCeiling: limits,
 		prompt: "worker prompt",
@@ -78,7 +78,7 @@ async function fixture(name: string) {
 		contextMode: "fresh",
 		model,
 		tools: ["read"],
-		skills: [],
+		preloadSkills: [],
 		workspace: { mode: "read-only", cwd: repository },
 		limits,
 	};
@@ -111,8 +111,11 @@ async function serviceFor(
 	>[0]["executeAttempt"],
 ) {
 	const data = await fixture(name);
+	const agentDir = path.join(data.root, "agent");
+	await mkdir(agentDir, { recursive: true });
 	const service = await createSubagentService({
 		root: path.join(data.root, "state"),
+		agentDir,
 		agents: new Map([[data.agent.name, data.agent]]),
 		modelRuntime: {} as ModelRuntime,
 		capacity: await createVmCapacityManager({
@@ -182,6 +185,7 @@ describe("foreground subagent service", () => {
 
 		const restarted = await createSubagentService({
 			root: path.join(data.root, "state"),
+			agentDir: path.join(data.root, "agent"),
 			agents: new Map([[data.agent.name, data.agent]]),
 			modelRuntime: {} as ModelRuntime,
 			capacity: await createVmCapacityManager({
@@ -408,6 +412,7 @@ describe("foreground subagent service", () => {
 
 		const restarted = await createSubagentService({
 			root: stateRoot,
+			agentDir: path.join(data.root, "agent"),
 			agents: new Map([[data.agent.name, data.agent]]),
 			modelRuntime: {} as ModelRuntime,
 			capacity: await createVmCapacityManager({

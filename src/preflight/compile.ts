@@ -18,7 +18,7 @@ export type AgentDefinition = {
 	defaultModel: ExactModelRequest;
 	allowedModels: string[];
 	tools: string[];
-	skills: string[];
+	preloadSkills: string[];
 	workspaceModes: Array<"read-only" | "worktree">;
 	limitCeiling: RunLimits;
 };
@@ -73,6 +73,7 @@ function assertLimits(requested: RunLimits, ceiling: RunLimits): void {
 function validateResources(
 	agent: AgentDefinition,
 	request: SubagentRequest,
+	preloadSkills: string[],
 	resources: ResourceGrant[],
 ): void {
 	const byIdentity = new Map<string, ResourceGrant>();
@@ -85,7 +86,7 @@ function validateResources(
 	const required = [
 		`agent:${agent.name}`,
 		...request.tools.map((name) => `tool:${name}`),
-		...request.skills.map((name) => `skill:${name}`),
+		...preloadSkills.map((name) => `skill:${name}`),
 	];
 	const requiredSet = new Set(required);
 	for (const key of required) {
@@ -93,10 +94,7 @@ function validateResources(
 			throw new PreflightError(`missing resource: ${key}`);
 	}
 	for (const [key, resource] of byIdentity) {
-		if (
-			(resource.kind === "tool" || resource.kind === "skill") &&
-			!requiredSet.has(key)
-		) {
+		if (resource.kind === "tool" && !requiredSet.has(key)) {
 			throw new PreflightError(`unrequested resource: ${key}`);
 		}
 	}
@@ -137,7 +135,9 @@ export async function compileLaunchPlan(input: {
 		throw new PreflightError("agent resolution mismatch");
 	}
 	assertSubset("tool", input.request.tools, input.agent.tools);
-	assertSubset("skill", input.request.skills, input.agent.skills);
+	const preloadSkills = [
+		...new Set([...input.agent.preloadSkills, ...input.request.preloadSkills]),
+	].sort();
 	if (!input.agent.workspaceModes.includes(input.request.workspace.mode)) {
 		throw new PreflightError("workspace mode exceeds ceiling");
 	}
@@ -145,7 +145,7 @@ export async function compileLaunchPlan(input: {
 		throw new PreflightError("workspace resolution mismatch");
 	}
 	assertLimits(input.request.limits, input.agent.limitCeiling);
-	validateResources(input.agent, input.request, input.resources);
+	validateResources(input.agent, input.request, preloadSkills, input.resources);
 
 	const requestedModel = input.request.model ?? input.agent.defaultModel;
 	if (!input.agent.allowedModels.includes(modelKey(requestedModel))) {
@@ -175,7 +175,7 @@ export async function compileLaunchPlan(input: {
 		model,
 		cwd: "/workspace" as const,
 		tools: [...input.request.tools].sort(),
-		skills: [...input.request.skills].sort(),
+		preloadSkills,
 		resources: input.resources
 			.map((resource) => ({ ...resource }))
 			.sort((left, right) => {

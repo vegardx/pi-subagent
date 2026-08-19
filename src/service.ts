@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 import { mkdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import {
+	getAgentDir,
+	type ModelRuntime,
+} from "@earendil-works/pi-coding-agent";
 import { type ArtifactExport, ArtifactStore } from "./artifacts/store.js";
 import {
 	type ArtifactRef,
@@ -36,6 +39,10 @@ import {
 } from "./preflight/compile.js";
 import { createExactModelResolver } from "./preflight/models.js";
 import { digestFileResource } from "./preflight/resources.js";
+import {
+	discoverAndProjectSkills,
+	type SkillProjection,
+} from "./preflight/skills.js";
 import {
 	preflightWorkspace,
 	type WorkspacePreflight,
@@ -128,12 +135,14 @@ type PreparedPreflight = SubagentPreflight & {
 	requestSha256: string;
 	agent: DiscoveredAgent;
 	workspace: WorkspacePreflight;
+	skills: SkillProjection;
 };
 
 type ActiveRun = {
 	ownerId: string;
 	plan: AgentLaunchPlan;
 	workspace: WorkspacePreflight;
+	skills: SkillProjection;
 	journal: RunJournal;
 	artifacts: ArtifactStore;
 	abort: AbortController;
@@ -273,6 +282,22 @@ function isInsidePath(root: string, candidate: string): boolean {
 	);
 }
 
+function assertSkillProjection(
+	plan: AgentLaunchPlan,
+	skills: SkillProjection,
+): void {
+	const planned = plan.resources
+		.filter((resource) => resource.kind === "skill")
+		.map((resource) => `${resource.name}:${resource.source}:${resource.sha256}`)
+		.sort();
+	const current = skills.catalog
+		.map((skill) => `${skill.name}:${skill.hostFilePath}:${skill.sha256}`)
+		.sort();
+	if (canonicalSha256(planned) !== canonicalSha256(current)) {
+		throw new Error("skill catalog changed after preflight");
+	}
+}
+
 function validateOwner(owner: OwnerRegistration): void {
 	if (!owner.id.trim() || Buffer.byteLength(owner.id, "utf8") > 256) {
 		throw new Error("owner ID must contain 1-256 UTF-8 bytes");
@@ -283,6 +308,7 @@ function toolResources(
 	agent: DiscoveredAgent,
 	request: SubagentRequest,
 	implementation: { canonicalPath: string; sha256: string },
+	skills: SkillProjection,
 ) {
 	const resources: ResourceGrant[] = [
 		{
@@ -292,6 +318,14 @@ function toolResources(
 			sha256: agent.sha256,
 		},
 	];
+	for (const skill of skills.catalog) {
+		resources.push({
+			kind: "skill",
+			name: skill.name,
+			source: skill.hostFilePath,
+			sha256: skill.sha256,
+		});
+	}
 	for (const tool of request.tools) {
 		if (!IMPLEMENTED_TOOLS.has(tool)) {
 			throw new Error(`tool implementation unavailable: ${tool}`);
@@ -316,6 +350,8 @@ export async function createSubagentService(options: {
 	capacity: VmCapacityManager;
 	sandbox: ResolvedSandbox;
 	preflightTtlMs?: number;
+	agentDir?: string;
+	isProjectTrusted?: (cwd: string) => boolean;
 	resolveModel?: (model: ExactModelRequest) => Promise<ExactModelRequest>;
 	executeAttempt?: AttemptExecutor;
 }): Promise<SubagentService> {
@@ -349,11 +385,18 @@ export async function createSubagentService(options: {
 		}
 	};
 	const preflightTtlMs = options.preflightTtlMs ?? 5 * 60_000;
+	const agentDir = options.agentDir ?? getAgentDir();
 	const executeAttempt = options.executeAttempt ?? runNativeAttempt;
 	const resolveModel =
 		options.resolveModel ?? createExactModelResolver(options.modelRuntime);
 
 	for (const record of await runRecords.list()) {
+		const recoveredSkills = await discoverAndProjectSkills({
+			cwd: record.workspace.cwd,
+			agentDir,
+			projectTrusted: options.isProjectTrusted?.(record.workspace.cwd) ?? false,
+			preloadSkills: record.plan.preloadSkills,
+		});
 		const latestAttempt = await attemptRecords.latest(record.plan.runId);
 		const recoveredPlan = latestAttempt?.plan ?? record.plan;
 		let lease: RunLease;
@@ -430,6 +473,7 @@ export async function createSubagentService(options: {
 				ownerId: record.ownerId,
 				plan: recoveredPlan,
 				workspace: record.workspace,
+				skills: recoveredSkills,
 				journal,
 				artifacts,
 				abort,
@@ -450,6 +494,7 @@ export async function createSubagentService(options: {
 		plan: AgentLaunchPlan;
 		agent: DiscoveredAgent;
 		workspace: WorkspacePreflight;
+		skills: SkillProjection;
 		kind: "initial" | "retry" | "resume";
 		ordinal: number;
 		parentAttemptId?: AttemptId;
@@ -512,12 +557,14 @@ export async function createSubagentService(options: {
 				plan: input.plan,
 				agent: input.agent,
 				workspacePath,
+				workspaceAliases: [input.workspace.cwd],
 				...(worktree ? { worktree } : {}),
 				modelRuntime: options.modelRuntime,
 				capacity: options.capacity,
 				lease,
 				journal,
 				artifactStore: artifacts,
+				skills: input.skills,
 				sessionRoot: path.join(options.root, "sessions"),
 				...(input.resumeSessionFile
 					? { resumeSessionFile: input.resumeSessionFile }
@@ -533,6 +580,7 @@ export async function createSubagentService(options: {
 				ownerId: input.ownerId,
 				plan: input.plan,
 				workspace: input.workspace,
+				skills: input.skills,
 				journal,
 				artifacts,
 				abort,
@@ -661,15 +709,20 @@ export async function createSubagentService(options: {
 					if (preflights.size >= 256) {
 						throw new Error("preflight capacity exhausted");
 					}
-					if (request.skills.length > 0) {
-						throw new Error("explicit skills are not implemented");
-					}
 					if (request.outputSchema !== undefined) {
 						createFinalAnswerController(request.outputSchema);
 					}
 					const agent = options.agents.get(request.agent);
 					if (!agent) throw new Error(`agent not found: ${request.agent}`);
 					const workspace = await preflightWorkspace(request.workspace);
+					const skills = await discoverAndProjectSkills({
+						cwd: workspace.cwd,
+						agentDir,
+						projectTrusted: options.isProjectTrusted?.(workspace.cwd) ?? false,
+						preloadSkills: [
+							...new Set([...agent.preloadSkills, ...request.preloadSkills]),
+						],
+					});
 					const ids = deterministicIds(owner.id, request);
 					const launchPlan = await compileLaunchPlan({
 						ownerId: owner.id,
@@ -677,7 +730,12 @@ export async function createSubagentService(options: {
 						attemptId: ids.attemptId,
 						request,
 						agent,
-						resources: toolResources(agent, request, toolImplementation),
+						resources: toolResources(
+							agent,
+							request,
+							toolImplementation,
+							skills,
+						),
 						workspace,
 						sandbox: options.sandbox,
 						resolveModel,
@@ -692,6 +750,7 @@ export async function createSubagentService(options: {
 						requestSha256: ids.requestSha256,
 						agent,
 						workspace,
+						skills,
 					};
 					preflights.set(preflightId, prepared);
 					return {
@@ -741,6 +800,15 @@ export async function createSubagentService(options: {
 					) {
 						throw new Error("workspace changed after preflight");
 					}
+					const currentSkills = await discoverAndProjectSkills({
+						cwd: currentWorkspace.cwd,
+						agentDir,
+						projectTrusted:
+							options.isProjectTrusted?.(currentWorkspace.cwd) ?? false,
+						preloadSkills: prepared.launchPlan.preloadSkills,
+					});
+					assertSkillProjection(prepared.launchPlan, currentSkills);
+					prepared.skills = currentSkills;
 					return runExclusive(async () => {
 						const existing = runs.get(prepared.launchPlan.runId);
 						if (existing) {
@@ -763,6 +831,7 @@ export async function createSubagentService(options: {
 							plan: prepared.launchPlan,
 							agent: prepared.agent,
 							workspace: prepared.workspace,
+							skills: prepared.skills,
 							kind: "initial",
 							ordinal: 0,
 							rootPlan: prepared.launchPlan,
@@ -838,12 +907,21 @@ export async function createSubagentService(options: {
 							}
 						}
 						await resolveModel(run.plan.model);
+						const skills = await discoverAndProjectSkills({
+							cwd: workspace.cwd,
+							agentDir,
+							projectTrusted:
+								options.isProjectTrusted?.(workspace.cwd) ?? false,
+							preloadSkills: run.plan.preloadSkills,
+						});
+						assertSkillProjection(run.plan, skills);
 						const plan = retryPlan(run.plan, run.result, latest.ordinal + 1);
 						return startAttempt({
 							ownerId: owner.id,
 							plan,
 							agent,
 							workspace,
+							skills,
 							kind: "retry",
 							ordinal: latest.ordinal + 1,
 							parentAttemptId: latest.attemptId,
@@ -889,6 +967,14 @@ export async function createSubagentService(options: {
 							}
 						}
 						await resolveModel(run.plan.model);
+						const skills = await discoverAndProjectSkills({
+							cwd: workspace.cwd,
+							agentDir,
+							projectTrusted:
+								options.isProjectTrusted?.(workspace.cwd) ?? false,
+							preloadSkills: run.plan.preloadSkills,
+						});
+						assertSkillProjection(run.plan, skills);
 						const plan = resumePlan(run.plan, run.result, latest.ordinal + 1);
 						let existingWorktree: WorktreeRecord | undefined;
 						if (run.plan.workspace.mode === "worktree") {
@@ -906,6 +992,7 @@ export async function createSubagentService(options: {
 							plan,
 							agent,
 							workspace,
+							skills,
 							kind: "resume",
 							ordinal: latest.ordinal + 1,
 							parentAttemptId: latest.attemptId,

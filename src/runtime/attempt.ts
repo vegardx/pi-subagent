@@ -27,6 +27,7 @@ import type { DiscoveredAgent } from "../preflight/agents.js";
 import { canonicalJson } from "../preflight/canonical.js";
 import { verifyLaunchPlanIdentity } from "../preflight/compile.js";
 import { resolveExactPiModel } from "../preflight/models.js";
+import type { SkillProjection } from "../preflight/skills.js";
 import type { VmCapacityManager } from "../sandbox/capacity.js";
 import {
 	createGondolinAttemptSandbox,
@@ -151,12 +152,14 @@ export async function runNativeAttempt(options: {
 	plan: AgentLaunchPlan;
 	agent: DiscoveredAgent;
 	workspacePath: string;
+	workspaceAliases?: string[];
 	worktree?: WorktreeRecord;
 	modelRuntime: ModelRuntime;
 	capacity: VmCapacityManager;
 	lease: RunLease;
 	journal: RunJournal;
 	artifactStore: ArtifactStore;
+	skills: SkillProjection;
 	sessionRoot: string;
 	resumeSessionFile?: string;
 	registerControl?: (control: AttemptControl | undefined) => void;
@@ -176,9 +179,6 @@ export async function runNativeAttempt(options: {
 	}
 	if (options.plan.contextMode !== "fresh") {
 		throw new Error("fork context is not implemented");
-	}
-	if (options.plan.skills.length > 0) {
-		throw new Error("explicit skills are not implemented");
 	}
 	if (options.plan.resources.some((resource) => resource.kind === "context")) {
 		throw new Error("explicit context resources are not implemented");
@@ -250,6 +250,13 @@ export async function runNativeAttempt(options: {
 			workspaceWriteBytes: options.plan.limits.workspaceWriteBytes,
 			capacity: options.capacity,
 			memory: `${options.plan.sandbox.memoryBytes / (1024 * 1024)}M`,
+			...(options.workspaceAliases
+				? { workspaceAliases: options.workspaceAliases }
+				: {}),
+			skillMounts: options.skills.catalog.map((skill) => ({
+				hostBaseDir: skill.hostBaseDir,
+				guestBaseDir: skill.guestBaseDir,
+			})),
 		});
 		if (sandbox.record.packageVersion !== options.plan.sandbox.packageVersion) {
 			throw new Error("Gondolin package version drift");
@@ -265,10 +272,20 @@ export async function runNativeAttempt(options: {
 			settingsManager,
 			noExtensions: true,
 			noSkills: true,
+			skillsOverride: (base) => ({
+				skills: options.skills.catalog.map((skill) => skill.skill),
+				diagnostics: base.diagnostics,
+			}),
 			noPromptTemplates: true,
 			noThemes: true,
 			noContextFiles: true,
-			systemPrompt: `${options.agent.prompt}\n\nCurrent working directory: ${GUEST_WORKSPACE} (Gondolin VM).`,
+			systemPrompt: [
+				options.agent.prompt,
+				`Current working directory: ${GUEST_WORKSPACE} (Gondolin VM).`,
+				options.skills.preloadPrompt || undefined,
+			]
+				.filter((section): section is string => section !== undefined)
+				.join("\n\n"),
 		});
 		await loader.reload();
 		const customTools = Object.values(sandbox.tools).map(

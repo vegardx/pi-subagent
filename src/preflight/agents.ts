@@ -47,7 +47,7 @@ const FrontmatterSchema = Type.Object(
 			maxItems: 64,
 			uniqueItems: true,
 		}),
-		skills: Type.Array(ResourceNameSchema, {
+		preloadSkills: Type.Array(ResourceNameSchema, {
 			maxItems: 64,
 			uniqueItems: true,
 		}),
@@ -113,7 +113,7 @@ async function loadAgent(
 		model: DiscoveredAgent["defaultModel"];
 		allowedModels?: string[];
 		tools: string[];
-		skills: string[];
+		preloadSkills: string[];
 		workspaceModes: DiscoveredAgent["workspaceModes"];
 		limits: DiscoveredAgent["limitCeiling"];
 	};
@@ -135,7 +135,7 @@ async function loadAgent(
 		defaultModel: frontmatter.model,
 		allowedModels,
 		tools: [...frontmatter.tools],
-		skills: [...frontmatter.skills],
+		preloadSkills: [...frontmatter.preloadSkills],
 		workspaceModes: [...frontmatter.workspaceModes],
 		limitCeiling: frontmatter.limits,
 		prompt,

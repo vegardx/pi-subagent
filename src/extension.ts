@@ -35,6 +35,12 @@ const parameters = Type.Object({
 			uniqueItems: true,
 		}),
 	),
+	preloadSkills: Type.Optional(
+		Type.Array(Type.String({ minLength: 1, maxLength: 64 }), {
+			maxItems: 16,
+			uniqueItems: true,
+		}),
+	),
 	timeoutMs: Type.Optional(
 		Type.Integer({ minimum: 1_000, maximum: 3_600_000 }),
 	),
@@ -114,6 +120,8 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 			service = await serviceModule.createSubagentService({
 				root: path.join(getAgentDir(), "subagents", "service"),
 				agents,
+				agentDir: getAgentDir(),
+				isProjectTrusted: (cwd) => cwd === ctx.cwd && ctx.isProjectTrusted(),
 				modelRuntime,
 				capacity,
 				sandbox: {
@@ -177,6 +185,7 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 				model,
 				thinking,
 				tools,
+				preloadSkills: params.preloadSkills ?? [],
 				workspaceMode,
 				timeoutMs: params.timeoutMs ?? 600_000,
 			});
@@ -187,7 +196,7 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 				defaultModel: { ...model, thinking },
 				allowedModels: [`${model.provider}/${model.id}:${thinking}`],
 				tools: [...tools],
-				skills: [],
+				preloadSkills: [...(params.preloadSkills ?? [])],
 				workspaceModes: [workspaceMode],
 				limitCeiling: {
 					runtimeMs: params.timeoutMs ?? 600_000,
@@ -220,7 +229,7 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 				contextMode: "fresh",
 				model: agent.defaultModel,
 				tools,
-				skills: [],
+				preloadSkills: [...(params.preloadSkills ?? [])],
 				workspace: { mode: workspaceMode, cwd: ctx.cwd },
 				limits: agent.limitCeiling,
 			});

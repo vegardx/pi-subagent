@@ -17,7 +17,7 @@ function agent(): string {
 name: worker
 model: { provider: github-copilot, id: gpt-5.6-luna, thinking: low }
 tools: [read]
-skills: []
+preloadSkills: []
 workspaceModes: [read-only]
 limits:
   runtimeMs: 60000

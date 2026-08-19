@@ -298,12 +298,16 @@ sources, validates default-model ceilings, rejects same-scope collisions, and
 applies deterministic builtin → package → global → project precedence. Exact Pi
 model preflight now checks catalog identity, supported thinking levels, and
 provider authentication through `ModelRuntime` without clamping or fallback.
+Normal Pi global/package and trusted-project skills are discovered on the host,
+tree-digested into launch identity, exposed through the standard child catalog,
+and mounted read-only under guest `/skills` paths. Agent/request
+`preloadSkills` content is bounded and injected before the first turn.
 Canonical file and tree digesting now binds real paths, relative entry names,
 content, executable mode, and bounded file/byte counts while rejecting symlinks
 and unsupported entries. The semantic compiler enforces agent capability and limit ceilings, exact model
 resolution, required and unrequested resource provenance, workspace resolution,
 and deterministic canonical launch identity. Strict request and immutable
-launch-plan schemas bind task, model, tools, skills, workspace,
+launch-plan schemas bind task, model, tools, skill catalog/preloads, workspace,
 Gondolin/image/policy identities, public-egress policy, and limits. Every unimplemented runtime feature
 remains `false`.
 
@@ -385,8 +389,8 @@ identity and current ownership, resolves exact authenticated models, creates a
 persistent isolated native session, enforces runtime/output/token/cost bounds,
 closes the VM, captures worktree handoff, and persists terminal journal/snapshot
 receipts. Foreground service orchestration and structured output are integrated;
-explicit skills/context, cross-seat recovery, retry, and resume remain
-outstanding.
+normal skill discovery and forced startup preloads are integrated; explicit
+context and fork projection remain outstanding.
 
 ### Build
 

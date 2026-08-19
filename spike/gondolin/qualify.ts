@@ -186,6 +186,8 @@ async function setupFixtures() {
 		"adapter",
 		"runner",
 		"service",
+		"service-agent-dir",
+		"skill-source",
 	]) {
 		await mkdir(path.join(root, name), { mode: 0o700 });
 	}
@@ -193,6 +195,22 @@ async function setupFixtures() {
 	await writeFile(path.join(root, "writer", "fixture.txt"), "alpha needle\n");
 	await writeFile(path.join(root, "writer", ".env"), "VISIBLE_FIXTURE=yes\n");
 	await writeFile(path.join(root, "reader", "fixture.txt"), "read only\n");
+	await writeFile(
+		path.join(root, "skill-source", "SKILL.md"),
+		"---\nname: qualification-skill\ndescription: Qualification skill.\n---\n\n# Skill instructions\n",
+	);
+	const serviceSkill = path.join(
+		root,
+		"service",
+		".pi",
+		"skills",
+		"qualification-skill",
+	);
+	await mkdir(serviceSkill, { recursive: true, mode: 0o700 });
+	await writeFile(
+		path.join(serviceSkill, "SKILL.md"),
+		"---\nname: qualification-skill\ndescription: Use for the service qualification.\n---\n\nWhen calling final_answer, include preloadProof with the exact value SKILL_PRELOADED.\n",
+	);
 }
 
 async function qualifyReadOnly() {
@@ -434,11 +452,25 @@ async function qualifyProductionAdapter(): Promise<string> {
 		readOnly: false,
 		workspaceWriteBytes: 64 * 1024,
 		capacity,
+		skillMounts: [
+			{
+				hostBaseDir: path.join(root, "skill-source"),
+				guestBaseDir: "/skills/qualification-skill",
+			},
+		],
 	});
 	const result = await sandbox.vm.exec(
 		"printf production-adapter > /workspace/adapter.txt",
 	);
 	assert(result.ok, "production adapter guest write failed");
+	const skillRead = await sandbox.vm.exec(
+		"grep -q 'Skill instructions' /skills/qualification-skill/SKILL.md",
+	);
+	assert(skillRead.ok, "read-only skill mount was not readable");
+	const skillWrite = await sandbox.vm.exec(
+		"printf changed > /skills/qualification-skill/SKILL.md",
+	);
+	assert(!skillWrite.ok, "read-only skill mount accepted a write");
 	await sandbox.cancel();
 	assert(sandbox.isClosed(), "production adapter did not close");
 	assert(
@@ -446,7 +478,7 @@ async function qualifyProductionAdapter(): Promise<string> {
 			"production-adapter",
 		"production adapter write did not reach its workspace",
 	);
-	return `Production adapter routed a write through VM ${sandbox.record.vmId}, proved close, and released capacity slot ${sandbox.record.capacitySlot}.`;
+	return `Production adapter routed a workspace write, exposed a read-only skill namespace through VM ${sandbox.record.vmId}, proved close, and released capacity slot ${sandbox.record.capacitySlot}.`;
 }
 
 async function qualifyGlobalCapacity(): Promise<string> {
@@ -505,7 +537,7 @@ async function qualifyForegroundService(): Promise<string> {
 		},
 		allowedModels: ["github-copilot/gpt-5.6-luna:low"],
 		tools: ["read"],
-		skills: [],
+		preloadSkills: ["qualification-skill"],
 		workspaceModes: ["read-only" as const],
 		limitCeiling: limits,
 		prompt:
@@ -514,6 +546,8 @@ async function qualifyForegroundService(): Promise<string> {
 	};
 	const service = await createSubagentService({
 		root: path.join(root, "service-state"),
+		agentDir: path.join(root, "service-agent-dir"),
+		isProjectTrusted: (cwd) => cwd === workspace,
 		agents: new Map([[agent.name, agent]]),
 		modelRuntime,
 		capacity: await createVmCapacityManager({
@@ -542,12 +576,15 @@ async function qualifyForegroundService(): Promise<string> {
 		contextMode: "fresh",
 		model: agent.defaultModel,
 		tools: ["read"],
-		skills: [],
+		preloadSkills: [],
 		workspace: { mode: "read-only", cwd: workspace },
 		outputSchema: {
 			type: "object",
-			properties: { marker: { type: "string", const: "SERVICE_OK" } },
-			required: ["marker"],
+			properties: {
+				marker: { type: "string", const: "SERVICE_OK" },
+				preloadProof: { type: "string", const: "SKILL_PRELOADED" },
+			},
+			required: ["marker", "preloadProof"],
 			additionalProperties: false,
 		},
 		limits,
@@ -571,7 +608,7 @@ async function qualifyForegroundService(): Promise<string> {
 	);
 	assert(
 		JSON.stringify(result.structuredOutput) ===
-			JSON.stringify({ marker: "SERVICE_OK" }),
+			JSON.stringify({ marker: "SERVICE_OK", preloadProof: "SKILL_PRELOADED" }),
 		"service structured output mismatch",
 	);
 	assert(
@@ -584,6 +621,8 @@ async function qualifyForegroundService(): Promise<string> {
 	);
 	const restartedService = await createSubagentService({
 		root: path.join(root, "service-state"),
+		agentDir: path.join(root, "service-agent-dir"),
+		isProjectTrusted: (cwd) => cwd === workspace,
 		agents: new Map([[agent.name, agent]]),
 		modelRuntime,
 		capacity: await createVmCapacityManager({
@@ -634,7 +673,7 @@ async function qualifyAttemptRunner(): Promise<string> {
 		},
 		allowedModels: ["github-copilot/gpt-5.6-luna:low"],
 		tools: ["read"],
-		skills: [],
+		preloadSkills: [],
 		workspaceModes: ["read-only" as const],
 		limitCeiling: {
 			runtimeMs: 60_000,
@@ -665,7 +704,7 @@ async function qualifyAttemptRunner(): Promise<string> {
 			contextMode: "fresh",
 			model: agent.defaultModel,
 			tools: ["read"],
-			skills: [],
+			preloadSkills: [],
 			workspace: { mode: "read-only", cwd: workspace },
 			limits: agent.limitCeiling,
 		},
@@ -728,6 +767,7 @@ async function qualifyAttemptRunner(): Promise<string> {
 		lease,
 		journal,
 		artifactStore,
+		skills: { catalog: [], preloadPrompt: "" },
 		sessionRoot: path.join(root, "runner-sessions"),
 	});
 	await lease.release();
@@ -773,6 +813,7 @@ async function qualifyAttemptRunner(): Promise<string> {
 		lease: resumeLease,
 		journal: resumeJournal,
 		artifactStore: resumeArtifacts,
+		skills: { catalog: [], preloadPrompt: "" },
 		sessionRoot: path.join(root, "runner-sessions"),
 		resumeSessionFile: result.sessionFile,
 	});

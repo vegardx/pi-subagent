@@ -31,7 +31,7 @@ function plan(): AgentLaunchPlan {
 		},
 		cwd: "/workspace" as const,
 		tools: ["read"],
-		skills: [],
+		preloadSkills: [],
 		resources: [
 			{
 				kind: "agent" as const,
