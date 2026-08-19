@@ -1,6 +1,10 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { GUEST_WORKSPACE, toGuestPath } from "../spike/gondolin/tools.js";
+import {
+	GUEST_WORKSPACE,
+	sanitizeGuestEnvironment,
+	toGuestPath,
+} from "../src/sandbox/tools.js";
 
 describe("Gondolin tool paths", () => {
 	const workspace = path.resolve("/tmp/pi-subagent-workspace");
@@ -35,6 +39,24 @@ describe("Gondolin tool paths", () => {
 
 	it("does not disguise absolute paths outside the workspace", () => {
 		expect(toGuestPath(workspace, "/etc/passwd")).toBe("/etc/passwd");
+	});
+
+	it("projects only bounded non-secret guest environment values", () => {
+		expect(
+			sanitizeGuestEnvironment({
+				PATH: "/host/bin",
+				API_TOKEN: "secret",
+				LANG: "en_US.UTF-8",
+				LC_ALL: "C",
+				TERM: "xterm-256color",
+			}),
+		).toEqual({
+			HOME: "/workspace",
+			TMPDIR: "/tmp",
+			LANG: "en_US.UTF-8",
+			LC_ALL: "C",
+			TERM: "xterm-256color",
+		});
 	});
 
 	it("normalizes leading at signs used by model tool calls", () => {

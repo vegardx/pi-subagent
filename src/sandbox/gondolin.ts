@@ -75,6 +75,7 @@ export async function createGondolinAttemptSandbox(options: {
 	workspaceAliases?: string[];
 	skillMounts?: Array<{ hostBaseDir: string; guestBaseDir: string }>;
 	contextMounts?: Array<{ guestFilePath: string; content: string }>;
+	onFatalToolAbort?: () => void;
 }): Promise<GondolinAttemptSandbox> {
 	let workspace: string;
 	try {
@@ -168,24 +169,6 @@ export async function createGondolinAttemptSandbox(options: {
 			throw new GondolinSandboxError("started VM has no host PID");
 		}
 		const hostProcessIdentity = await captureQemuProcessIdentity(hostPid);
-		const tools = await createGondolinTools(vm, {
-			hostWorkspace: workspace,
-			hostAliases: options.workspaceAliases ?? [],
-		});
-		const record: GondolinSandboxRecord = {
-			backend: "gondolin",
-			packageVersion: GONDOLIN_VERSION,
-			vmId: vm.id,
-			hostPid,
-			hostProcessIdentity,
-			capacityLeaseId: capacityLease.record.leaseId,
-			capacitySlot: capacityLease.record.slot,
-			workspace,
-			readOnly: options.readOnly,
-			memory,
-			cpus,
-			startedAt: new Date().toISOString(),
-		};
 		let closed = false;
 		let closePromise: Promise<void> | undefined;
 		const close = () => {
@@ -199,6 +182,36 @@ export async function createGondolinAttemptSandbox(options: {
 					throw error;
 				});
 			return closePromise;
+		};
+		const tools = await createGondolinTools(
+			vm,
+			{
+				hostWorkspace: workspace,
+				hostAliases: options.workspaceAliases ?? [],
+			},
+			{
+				onCommandAbort: async () => {
+					try {
+						await close();
+					} finally {
+						options.onFatalToolAbort?.();
+					}
+				},
+			},
+		);
+		const record: GondolinSandboxRecord = {
+			backend: "gondolin",
+			packageVersion: GONDOLIN_VERSION,
+			vmId: vm.id,
+			hostPid,
+			hostProcessIdentity,
+			capacityLeaseId: capacityLease.record.leaseId,
+			capacitySlot: capacityLease.record.slot,
+			workspace,
+			readOnly: options.readOnly,
+			memory,
+			cpus,
+			startedAt: new Date().toISOString(),
 		};
 		return {
 			record,

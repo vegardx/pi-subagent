@@ -34,6 +34,7 @@ function failure(
 export function classifyAttemptFailure(options: {
 	error: unknown;
 	timedOut: boolean;
+	fatalToolAbort?: boolean;
 	externalAbortReason?: unknown;
 	sandboxCleanup: CleanupOutcome;
 	workspaceCleanup: CleanupOutcome;
@@ -83,6 +84,15 @@ export function classifyAttemptFailure(options: {
 			"never",
 			"The operator cancelled the active attempt",
 			"Start a new run if the cancelled task is still required.",
+		);
+	}
+	if (options.fatalToolAbort) {
+		return failure(
+			"tool",
+			"tool",
+			"manual",
+			"Guest command timeout closed the attempt VM",
+			"Inspect partial output and retry only if repeating the command is safe.",
 		);
 	}
 	if (options.timedOut) {
