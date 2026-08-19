@@ -4,6 +4,7 @@ import path from "node:path";
 import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
 import { CONTRACT_REVISION, type RunId, RunIdSchema } from "../contracts.js";
+import type { RunLease } from "./run-lease.js";
 
 const MAX_EVENT_BYTES = 64 * 1024;
 const MAX_JOURNAL_BYTES = 16 * 1024 * 1024;
@@ -127,17 +128,32 @@ export class RunJournal {
 	readonly snapshotPath: string;
 	private sequence: number;
 	private appendTail = Promise.resolve();
+	private readonly lease: RunLease;
 
-	private constructor(directory: string, runId: RunId, sequence: number) {
+	private constructor(
+		directory: string,
+		runId: RunId,
+		sequence: number,
+		lease: RunLease,
+	) {
 		this.directory = directory;
 		this.runId = runId;
 		this.journalPath = path.join(directory, "events.jsonl");
 		this.snapshotPath = path.join(directory, "run.json");
 		this.sequence = sequence;
+		this.lease = lease;
 	}
 
-	static async open(root: string, runId: RunId): Promise<RunJournal> {
+	static async open(
+		root: string,
+		runId: RunId,
+		lease: RunLease,
+	): Promise<RunJournal> {
 		if (!Value.Check(RunIdSchema, runId)) throw new Error("invalid run ID");
+		if (lease.record.runId !== runId) {
+			throw new Error("run lease identity mismatch");
+		}
+		await lease.assertCurrent();
 		await mkdir(root, { recursive: true, mode: 0o700 });
 		await chmod(root, 0o700);
 		const directory = path.join(root, runId);
@@ -157,11 +173,12 @@ export class RunJournal {
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 		}
-		return new RunJournal(directory, runId, events.length);
+		return new RunJournal(directory, runId, events.length, lease);
 	}
 
 	append(type: string, data: unknown): Promise<JournalEvent> {
 		const operation = this.appendTail.then(async () => {
+			await this.lease.assertCurrent();
 			const event: JournalEvent = {
 				schema: "pi-subagent-event",
 				contractRevision: CONTRACT_REVISION,
@@ -229,6 +246,7 @@ export class RunJournal {
 
 	async writeSnapshot(state: unknown): Promise<RunSnapshot> {
 		await this.appendTail;
+		await this.lease.assertCurrent();
 		const snapshot: RunSnapshot = {
 			schema: "pi-subagent-snapshot",
 			contractRevision: CONTRACT_REVISION,

@@ -6,15 +6,31 @@ import {
 	PersistenceCorruptionError,
 	RunJournal,
 } from "../src/persistence/journal.js";
+import { acquireRunLease } from "../src/persistence/run-lease.js";
 
 function fixtureRoot(name: string): string {
 	return path.resolve(".pi", "test-journal", `${name}-${randomUUID()}`);
 }
 
+const leases = new Map<string, Awaited<ReturnType<typeof acquireRunLease>>>();
+
+async function openJournal(root: string, runId: `run_${string}`) {
+	const key = `${root}\0${runId}`;
+	let lease = leases.get(key);
+	if (!lease) {
+		lease = await acquireRunLease({
+			root: path.join(root, "leases"),
+			runId,
+		});
+		leases.set(key, lease);
+	}
+	return RunJournal.open(path.join(root, "runs"), runId, lease);
+}
+
 describe("run journal", () => {
 	it("serializes concurrent appends with durable sequence numbers", async () => {
 		const root = fixtureRoot("append");
-		const journal = await RunJournal.open(root, "run_abc123");
+		const journal = await openJournal(root, "run_abc123");
 		const events = await Promise.all(
 			Array.from({ length: 10 }, (_, index) =>
 				journal.append("observed", { index }),
@@ -23,7 +39,7 @@ describe("run journal", () => {
 		expect(events.map((event) => event.sequence)).toEqual([
 			1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
 		]);
-		const reopened = await RunJournal.open(root, "run_abc123");
+		const reopened = await openJournal(root, "run_abc123");
 		expect(
 			(await reopened.readEvents()).map((event) => event.sequence),
 		).toEqual(events.map((event) => event.sequence));
@@ -33,23 +49,23 @@ describe("run journal", () => {
 
 	it("ignores one unterminated tail and rejects interior corruption", async () => {
 		const root = fixtureRoot("torn");
-		const journal = await RunJournal.open(root, "run_torn");
+		const journal = await openJournal(root, "run_torn");
 		await journal.append("created", {});
 		await appendFile(journal.journalPath, '{"schema":"partial"');
-		const recovered = await RunJournal.open(root, "run_torn");
+		const recovered = await openJournal(root, "run_torn");
 		expect(await recovered.readEvents()).toHaveLength(1);
 		const continued = await recovered.append("continued", {});
 		expect(continued.sequence).toBe(2);
 
 		await appendFile(journal.journalPath, "{broken}\n");
-		await expect(RunJournal.open(root, "run_torn")).rejects.toBeInstanceOf(
+		await expect(openJournal(root, "run_torn")).rejects.toBeInstanceOf(
 			PersistenceCorruptionError,
 		);
 	});
 
 	it("writes and validates atomic snapshots", async () => {
 		const root = fixtureRoot("snapshot");
-		const journal = await RunJournal.open(root, "run_snapshot");
+		const journal = await openJournal(root, "run_snapshot");
 		await journal.append("created", {});
 		await journal.writeSnapshot({ status: "active" });
 		expect(await journal.readSnapshot()).toMatchObject({
@@ -72,7 +88,7 @@ describe("run journal", () => {
 
 	it("rejects non-serializable data before writing", async () => {
 		const root = fixtureRoot("serialization");
-		const journal = await RunJournal.open(root, "run_serialization");
+		const journal = await openJournal(root, "run_serialization");
 		await expect(journal.append("undefined", undefined)).rejects.toThrow(
 			"not serializable",
 		);
@@ -84,7 +100,7 @@ describe("run journal", () => {
 	it("rejects oversized events before writing", async () => {
 		const root = fixtureRoot("bounds");
 		await mkdir(root, { recursive: true });
-		const journal = await RunJournal.open(root, "run_bounds");
+		const journal = await openJournal(root, "run_bounds");
 		await expect(
 			journal.append("large", { value: "x".repeat(70 * 1024) }),
 		).rejects.toThrow("journal event exceeds size limit");

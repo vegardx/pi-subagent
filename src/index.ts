@@ -41,6 +41,14 @@ export {
 	OperationRecordSchema,
 } from "./persistence/operation-index.js";
 export {
+	acquireRunLease,
+	type RunLease,
+	RunLeaseFencedError,
+	type RunLeaseRecord,
+	RunLeaseRecordSchema,
+	RunLeaseUnavailableError,
+} from "./persistence/run-lease.js";
+export {
 	createVmCapacityManager,
 	VmCapacityExhaustedError,
 	type VmCapacityLease,
