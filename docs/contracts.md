@@ -23,7 +23,7 @@ Owner
   Run
     Attempt
       Pi session
-      OS process
+      Gondolin VM
       Workspace
 ```
 
@@ -33,17 +33,21 @@ type OperationId = string;
 type RunId = string;
 type AttemptId = string;
 type SessionId = string;
+type SandboxId = string;
 type WorkspaceId = string;
 
-interface ProcessIdentity {
-	pid: number;
-	processGroupId?: number;
-	birthIdentity: string;
+interface SandboxIdentity {
+	id: SandboxId;
+	backend: "gondolin";
+	gondolinVersion: string;
+	imageIdentity: string;
+	policySha256: string;
 }
 ```
 
-`OperationId` is chosen by the caller and makes launch idempotent across a crash
-between child startup and receipt persistence.
+A VM belongs to one attempt and is never adopted by another attempt.
+`OperationId` is chosen by the caller and makes launch idempotent inside the
+current seat lifecycle.
 
 ## Request and preflight
 
@@ -55,12 +59,15 @@ interface SubagentRequest {
 	contextMode: "fresh" | "fork";
 	model?: ExactModelRequest;
 	tools?: string[];
-	extensions?: string[];
 	skills?: string[];
 	workspace: WorkspaceRequest;
 	outputSchema?: JsonSchema;
 	limits: RunLimits;
 }
+
+type WorkspaceRequest =
+	| { mode: "read-only"; cwd: string }
+	| { mode: "worktree"; cwd: string };
 
 interface SubagentPreflight {
 	preflightId: string;
@@ -81,15 +88,21 @@ interface OwnerRegistration {
 }
 ```
 
-Preflight resolves and hashes all effective resources without starting a child.
-Project trust, provenance, content digests, canonical paths, symlink policy, and
-the caller's operation identity are part of the plan.
+Preflight resolves and hashes all effective resources without starting a model
+session or VM. Project trust, provenance, canonical paths, symlink policy,
+public-egress policy, sandbox image, and caller operation identity are part of
+the plan.
+
+The initial release does not accept arbitrary child extensions. A capability
+implemented by trusted host code must be declared through a pi-subagent-owned
+adapter and represented in the launch identity.
 
 ## Effective launch plan
 
 ```ts
 interface AgentLaunchPlan {
-	schema: "pi-subagent-launch-v1";
+	schema: "pi-subagent-launch";
+	contractRevision: number;
 	operationId: OperationId;
 	owner: OwnerGrant;
 	runId: RunId;
@@ -98,62 +111,110 @@ interface AgentLaunchPlan {
 	task: DelegatedTask;
 	context: ResolvedContextProjection;
 	model: { provider: string; id: string; thinking: string };
-	cwd: string;
+	cwd: "/workspace";
 	tools: ToolGrant[];
-	extensions: ExtensionGrant[];
 	skills: SkillGrant[];
 	workspace: WorkspaceGrant;
+	sandbox: GondolinGrant;
+	network: NetworkGrant;
 	outputSchema?: JsonSchema;
 	limits: RunLimits;
 	projectTrust?: ProjectTrustReceipt;
 	identitySha256: string;
 }
+
+interface GondolinGrant {
+	backend: "gondolin";
+	packageVersion: string;
+	imageIdentity: string;
+	mountPolicySha256: string;
+	networkPolicySha256: string;
+	memoryBytes: number;
+	guestDiskBytes: number;
+	workspaceWriteBytes: number;
+}
+
+interface NetworkGrant {
+	mode: "public-egress";
+	blockInternalRanges: true;
+}
 ```
 
 Resource grants include canonical path, source provenance, content/tree digest,
-and classification. Referenced resources are revalidated immediately before
-child release. The plan is immutable after launch authority is committed.
+and classification. Referenced resources and sandbox capabilities are
+revalidated immediately before launch. The plan is immutable after launch
+authority is committed.
 
 ## Service
 
 ```ts
-interface SubagentServiceV1 {
-	readonly contract: SubagentRuntimeContractV1;
-	forOwner(owner: OwnerRegistration): SubagentClientV1;
+interface SubagentService {
+	readonly contract: SubagentRuntimeContract;
+	forOwner(owner: OwnerRegistration): SubagentClient;
 }
 
-interface SubagentClientV1 {
+interface SubagentClient {
 	preflight(request: SubagentRequest): Promise<SubagentPreflight>;
-	launch(context: MutationContext, preflightId: string, expectedIdentitySha256: string): Promise<RunReceipt>;
+	launch(
+		context: MutationContext,
+		preflightId: string,
+		expectedIdentitySha256: string,
+	): Promise<RunReceipt>;
 	findByOperation(operationId: OperationId): Promise<RunReceipt | undefined>;
 	status(runId: RunId): Promise<RunStatus>;
 	logs(runId: RunId, options?: LogOptions): Promise<RunLogs>;
 	wait(runId: RunId, options?: WaitOptions): Promise<RunResult>;
-	steer(context: MutationContext, runId: RunId, input: ControlInput): Promise<ControlReceipt>;
-	followUp(context: MutationContext, runId: RunId, input: ControlInput): Promise<ControlReceipt>;
-	interrupt(context: MutationContext, runId: RunId, reason: StopReason): Promise<InterruptReceipt>;
-	retry(context: MutationContext, runId: RunId, policy?: RetryPolicy): Promise<RunReceipt>;
-	resume(context: MutationContext, runId: RunId, input?: ResumeInput): Promise<RunReceipt>;
-	reconcile(context: MutationContext, runId: RunId): Promise<ReconcileResult>;
+	steer(
+		context: MutationContext,
+		runId: RunId,
+		input: ControlInput,
+	): Promise<ControlReceipt>;
+	followUp(
+		context: MutationContext,
+		runId: RunId,
+		input: ControlInput,
+	): Promise<ControlReceipt>;
+	interrupt(
+		context: MutationContext,
+		runId: RunId,
+		reason: StopReason,
+	): Promise<InterruptReceipt>;
+	retry(
+		context: MutationContext,
+		runId: RunId,
+		policy?: RetryPolicy,
+	): Promise<RunReceipt>;
+	resume(
+		context: MutationContext,
+		runId: RunId,
+		input?: ResumeInput,
+	): Promise<RunReceipt>;
+	reconcile(
+		context: MutationContext,
+		runId: RunId,
+	): Promise<ReconcileResult>;
 	exportArtifact(artifact: ArtifactRef): Promise<ArtifactExport>;
-	release(context: MutationContext, runId: RunId): Promise<CleanupReceipt>;
+	release(
+		context: MutationContext,
+		runId: RunId,
+	): Promise<CleanupReceipt>;
 }
 ```
 
 `forOwner` returns an opaque client bound to one trusted extension owner; model
 input cannot choose or impersonate an owner. This is authorization within the
-trusted extension process, not a security boundary against arbitrary installed
-extensions. Every mutating operation carries a caller-chosen idempotency key. A
-workflow owner also supplies its current fencing generation; the service records
-the highest accepted generation per owner scope and rejects stale mutations.
-`launch` succeeds only for the exact unexpired preflight identity and consumes
-its launch authority once. Run IDs are not bearer authorization; owner identity
-is checked for every operation. Result delivery destinations are persisted and
-inactive destinations retain bounded receipts for later collection.
+trusted seat process, not a boundary against arbitrary installed extensions.
+Run IDs are not bearer authorization.
+
+`launch` consumes one exact unexpired preflight identity. It creates the native
+session and VM in the current seat. It does not create detached work. A seat
+exit interrupts every active attempt. The next seat may call `resume`, which
+creates a new attempt and VM after validation; it does not reconnect to the old
+VM.
 
 `exportArtifact` returns bounded verified bytes plus media type and digest so a
-caller can import them into its own retention domain. `release` retries or
-completes retained workspace/process cleanup through the owning service.
+caller can import them into its own retention domain. `release` completes
+retained workspace cleanup through the owning service.
 
 ## Control receipt
 
@@ -161,22 +222,25 @@ completes retained workspace/process cleanup through the owning service.
 interface ControlReceipt {
 	operationId: string;
 	sequence: number;
-	state: "persisted" | "accepted-by-session" | "missed" | "failed";
+	state: "accepted-by-session" | "missed" | "failed";
 }
 ```
 
 `accepted-by-session` does not claim that the model followed the input.
-Duplicate operation IDs replay the prior receipt.
+Duplicate operation IDs replay the prior receipt. There is no durable control
+queue while the seat is absent.
 
 ## Runtime capability contract
 
 ```ts
-interface SubagentRuntimeContractV1 {
-	schema: "pi-subagent-runtime-v1";
-	apiVersion: 1;
+interface SubagentRuntimeContract {
+	schema: "pi-subagent-runtime";
+	contractRevision: number;
 	features: {
-		rpcBackend: boolean;
-		background: boolean;
+		nativeSessionBackend: boolean;
+		gondolinSandbox: boolean;
+		background: false;
+		survivesSeatExit: false;
 		steering: boolean;
 		followUp: boolean;
 		structuredOutput: boolean;
@@ -184,14 +248,17 @@ interface SubagentRuntimeContractV1 {
 		idempotentLaunch: boolean;
 		resume: boolean;
 		worktrees: boolean;
-		sandbox: boolean;
-		explicitExtensions: boolean;
+		publicNetworkEgress: boolean;
+		explicitResources: boolean;
 		ambientExtensionsControl: boolean;
 	};
 }
 ```
 
-Consumers check required features, not inferred package versions.
+Consumers check the exact contract revision and required features rather than
+infer support from package versions. Revisions are not backwards-compatible:
+a consumer either supports the current revision or refuses to start. The
+project does not provide compatibility aliases, adapters, or migration shims.
 
 ## Outcomes and states
 
@@ -208,7 +275,6 @@ type RunStatus =
 
 type AttemptStatus =
 	| "preparing"
-	| "launching"
 	| "running"
 	| "settling"
 	| "completed"
@@ -216,16 +282,22 @@ type AttemptStatus =
 	| "cancelled"
 	| "interrupted";
 
-type CleanupOutcome = "proved" | "not-needed" | "retained" | "blocked" | "unknown";
+type CleanupOutcome =
+	| "proved"
+	| "not-needed"
+	| "retained"
+	| "blocked"
+	| "unknown";
 ```
 
 A run aggregates attempts. Retry and resume terminate the prior attempt and
 create a new one. Any post-side-effect path enters settlement before the run can
 be terminal.
 
-A run may be `completed` only when required process and workspace cleanup are
-`proved` or `not-needed`. `retained`, `blocked`, or `unknown` produces
-`cleanup-blocked` until an explicit `release` operation proves cleanup.
+A run may be `completed` only when VM cleanup is proved and workspace cleanup is
+`proved` or `not-needed`. A deliberately retained worktree is represented in
+the result and requires explicit `release`; unproved cleanup produces
+`cleanup-blocked`.
 
 ```mermaid
 stateDiagram-v2
@@ -248,13 +320,18 @@ stateDiagram-v2
 ```ts
 interface RunResult {
 	runId: RunId;
-	status: "completed" | "failed" | "cancelled" | "interrupted" | "cleanup-blocked";
+	status:
+		| "completed"
+		| "failed"
+		| "cancelled"
+		| "interrupted"
+		| "cleanup-blocked";
 	output?: ArtifactRef;
 	structuredOutput?: unknown;
 	usage: Usage;
 	usageComplete: boolean;
 	failure?: ClassifiedFailure;
-	processCleanup: CleanupOutcome;
+	sandboxCleanup: CleanupOutcome;
 	workspaceCleanup: CleanupOutcome;
 	truncated: boolean;
 }

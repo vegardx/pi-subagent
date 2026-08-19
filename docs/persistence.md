@@ -2,15 +2,18 @@
 
 ## Storage
 
-Authoritative supervisor state lives outside child workspaces:
+Authoritative host state lives outside every mounted workspace:
 
 ```text
 <getAgentDir()>/subagents/projects/<project-id>/runs/<run-id>/
   run.json
   events.jsonl
+  sessions/<attempt-id>.jsonl
   attempts/<attempt-id>/
+    launch.json
+    sandbox.json
+    result.json
   artifacts/
-  control/
   workspace.json
 ```
 
@@ -22,8 +25,7 @@ A bounded pointer index lives under:
 
 Directories are mode `0700`; sensitive files are mode `0600`. Prompts, logs,
 context, artifacts, and results are bounded. Credential-shaped metadata is
-redacted, while unavoidable source-derived secrets are treated as sensitive
-artifact content with explicit retention.
+redacted. The store is never mounted into Gondolin.
 
 ## Journal
 
@@ -33,55 +35,84 @@ that can be rebuilt from events plus external reconciliation.
 External side effects follow:
 
 ```text
-acquire fenced lease/authority
-→ persist intent with fencing token
-→ perform side effect with the same token
-→ persist receipt with the same token
+persist intent
+→ perform side effect
+→ persist receipt and observed identity
 ```
 
-State must never claim that a process stopped, a worktree was removed, or input
-was delivered without corresponding evidence.
-
-## Single-writer ownership
-
-Each run has a lease with owner identity, monotonic fencing token, and
-heartbeat. Every state write and supervisor control-channel command carries the
-current fencing token. Only the current supervisor lease holder may write stock
-Pi RPC stdin; RPC itself has no fencing field. Reclamation requires
-process/owner evidence in addition to heartbeat expiry; a stale clock
-observation alone is insufficient. Process and session leases are separate with
-documented lock ordering.
+State must never claim that a VM started or stopped, a session settled, a
+worktree was removed, or a handoff was captured without corresponding evidence.
 
 Events carry schema version, sequence number, event ID, timestamp, owner, and
-fencing token. Appends and snapshots use crash-safe write/fsync/rename rules.
-Recovery ignores one provably torn tail record, rejects interior corruption,
-and isolates unknown future event versions.
+attempt identity. Appends and snapshots use crash-safe write/fsync/rename rules.
+Recovery ignores one provably torn tail record and rejects interior corruption
+or an unknown contract revision. Persisted-state compatibility and migrations
+are not supported; incompatible state receives explicit discard guidance.
+
+## Seat ownership
+
+The current seat owns all active native sessions and VMs. There is no external
+supervisor, detached control channel, heartbeat lease, or live adoption.
+
+On graceful seat exit or reload the extension:
+
+1. marks active attempts as stopping;
+2. aborts their `AgentSession`s;
+3. closes their Gondolin VMs;
+4. records VM cleanup evidence;
+5. retains session and workspace state;
+6. marks resumable work as interrupted.
+
+After an ungraceful exit, the next seat treats persisted `active`, `running`, or
+`settling` attempts as interrupted until reconciliation proves VM and workspace
+state. It never reports completion from stale state.
 
 ## Resume
 
-Resume creates a new attempt. Before launch it validates:
+Resume creates a new attempt and a fresh Gondolin VM. It does not restore guest
+RAM, guest processes, sockets, or a previous VM controller.
 
-- original run ownership and terminal/interrupted state;
-- retained session existence and identity;
-- cwd and workspace identity;
+Before launch it validates:
+
+- original run ownership and interrupted state;
+- retained Pi session existence and identity;
 - agent definition and authority ceiling;
-- model/tool/resource contract;
-- remaining limits;
-- absence of another live session writer.
+- model, tools, skills, and context projection;
+- workspace/worktree and baseline identity;
+- Gondolin package and image compatibility;
+- mount and public-egress policy;
+- remaining runtime, token, cost, retry, and resume limits;
+- absence of another active writer for the session or worktree.
 
-Stopped runs and runs in `cleanup-blocked` are not automatically resumable.
+A changed policy requires new preflight authority. Cleanup-blocked runs are not
+automatically resumable.
 
 ## Reconciliation
 
 Reconciliation compares records with:
 
-- process birth identity and process-group membership;
-- session file and lease state;
-- control-channel acknowledgements;
-- workspace/worktree existence and cleanliness;
+- Pi session files;
+- QEMU process identity when one was recorded;
+- Gondolin terminal/close receipts;
+- worktree existence and baseline identity;
+- handoff commits and artifact digests;
 - terminal result and cleanup receipts.
 
+An apparently live stale QEMU process is never adopted into a new session. It is
+terminated only after identity validation; otherwise cleanup remains blocked
+for operator action.
+
 Unprovable state becomes explicit `unknown` or `cleanup-blocked`, never success.
+
+## Workspaces and handoff
+
+A read-only checkout has no workspace mutation to retain. A writing attempt's
+worktree remains host-owned across seat restart. Completion records an immutable
+commit or artifact handoff before removal.
+
+Cancellation or interruption preserves uncaptured writes unless cleanup policy
+can prove there are none. Explicit `release` removes a retained worktree only
+after durable handoff or explicit discard confirmation.
 
 ## Retention
 

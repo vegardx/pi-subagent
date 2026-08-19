@@ -15,13 +15,14 @@ from pi-workflow and pi-maestro policy.
 
 - Pi public APIs are the platform boundary. Do not import private `dist/*`
   modules.
-- A logical run, physical attempt, process identity, session, and workspace are
+- A logical run, physical attempt, VM identity, session, and workspace are
   distinct identities.
 - Ambient child extensions are disabled by default. Explicit grants may narrow
   authority but never widen an agent definition's ceiling.
 - A requested worktree or sandbox must fail closed; never silently fall back to
-  shared execution.
-- PID alone is not process identity. Do not report cleanup without evidence.
+  shared or host execution.
+- VM closure and workspace cleanup require evidence; do not infer either from a
+  missing in-memory handle.
 - Persist state before external side effects and make recovery conservative.
 - Keep model-facing tools and the internal service on one implementation.
 - Do not add workflow scheduling, plan compilation, publication, or PR policy.
@@ -30,5 +31,7 @@ from pi-workflow and pi-maestro policy.
 
 - TypeScript strict mode, tabs, double quotes, Biome defaults.
 - Test observable behavior and failure transitions.
-- Keep public contracts versioned and backwards compatibility explicit.
+- Do not preserve backwards compatibility. Incompatible public contracts,
+  consumers, or persisted state must fail explicitly; do not add aliases,
+  adapters, migration shims, or dual-format readers.
 - Use Conventional Commits.

@@ -1,55 +1,125 @@
 # Threat model
 
+## Primary goal
+
+The sandbox protects the host from accidental destructive model-driven actions.
+The representative failures are commands such as:
+
+```text
+rm -rf ~
+find / -type f -delete
+chmod -R ... outside the repository
+kill host processes
+write to another checkout
+connect to a local database or cloud metadata service
+```
+
+Model-driven filesystem and process effects run in one Gondolin VM assigned to
+one attempt. The guest receives only its selected repository/worktree mount, so
+an accidental broad path or process command cannot operate on the host home,
+other repositories, Pi state, or host processes.
+
 ## Protected properties
 
-- A child receives only its declared model, resources, tools, and workspace.
-- Run state cannot claim unobserved launch, delivery, completion, or cleanup.
-- A project cannot supply agents/resources before Pi project trust.
-- Provider credential material held by the runtime does not enter child prompts, journals, or artifacts.
-- Parallel mutating children cannot share an unisolated checkout accidentally.
-- Process cleanup proof is scoped to tracked birth identities/process groups
-  unless a stronger sandbox boundary can enumerate escaped descendants.
+- Guest writes cannot escape the selected workspace mount.
+- Read-only attempts cannot mutate the selected checkout.
+- Writing attempts cannot mutate the active checkout or another attempt's
+  worktree.
+- Guest processes cannot signal or manipulate host processes.
+- Guest network traffic cannot reach localhost, private networks, link-local
+  services, or cloud metadata endpoints.
+- VM shutdown is proved before an attempt reports successful cleanup.
+- VM memory, runtime, concurrency, guest-disk growth, workspace writes, and
+  captured output have enforceable bounds or fail qualification.
+- Worktree handoff is captured before destructive cleanup.
+- State never claims unobserved launch, completion, shutdown, handoff, or
+  cleanup.
+
+## Explicit non-goals
+
+The initial runtime does not claim to prevent:
+
+- reading files intentionally present in the selected repository/worktree;
+- transmitting repository content or repository-local secrets to the public
+  internet;
+- a deliberately malicious model probing the permitted workspace or public
+  network;
+- a malicious trusted Pi extension or same-account host process;
+- QEMU, Gondolin, or guest-kernel escapes;
+- side channels;
+- hostile denial-of-service behavior beyond the qualified hard limits.
+
+Repository-local `.env`, `.npmrc`, key, and credential files are visible when
+present. Host home, Pi configuration, and provider credential stores remain
+unmounted because they are unnecessary, not because confidentiality against an
+active attacker is the primary boundary.
 
 ## Trust boundaries
 
 | Boundary | Assumption |
 | --- | --- |
-| Pi and installed trusted extensions | Trusted code with user authority |
+| Pi, pi-subagent, and Gondolin host library | Trusted code with user authority |
+| QEMU and qualified guest image | Trusted isolation foundation |
 | User-global agent definitions | Trusted configuration |
 | Project agents/resources | Untrusted until Pi project trust |
-| Model output and fetched content | Untrusted data/instructions |
-| Child process | Cooperative by default; potentially confused or tool-injected |
-| Same-UID hostile process | Outside strong guarantees unless an OS sandbox/broker isolates state |
+| Model output, fetched content, guest commands | Error-prone and potentially destructive |
+| Gondolin guest | Must be contained to declared host resources |
+| Other same-UID host process | Outside the boundary |
+| Arbitrary installed Pi extension | Trusted host code; outside owner-client isolation |
 
-## Supervisor state
+## Filesystem boundary
 
-Authoritative state lives under a private supervisor root outside child
-workspaces:
+Only the selected repository or private worktree is mounted at `/workspace`.
+The active checkout is read-only for non-writing attempts. Writing attempts use
+a private worktree so even destructive commands affect recoverable isolated Git
+state rather than the user's active checkout.
 
-```text
-<getAgentDir()>/subagents/projects/<project-id>/runs/<run-id>/
-```
+A `RealFSProvider` intentionally grants access beneath its root. Mount
+construction, path canonicalization, symlink containment, and read-only wrapping
+are therefore security-critical. The Pi agent directory, host home, runtime
+store, unrelated repositories, and unrestricted common Git metadata are not
+mounted.
 
-Children receive no supervisor-store path. File permissions protect against
-other OS users, not a hostile same-UID process. Strong evidence against a
-hostile child requires an OS sandbox denying the supervisor root or an external
-broker with capabilities unavailable to the child.
+The sandbox does not prevent an agent from deleting every file in its own
+private worktree. That is acceptable: the host baseline and handoff lifecycle
+must make the damage reviewable and recoverable.
 
-The initial runtime claims crash consistency and protection against accidental
-child writes—not protection from a malicious same-UID process. Owner-bound
-service clients are cooperative authorization between trusted extensions, not
-protection against arbitrary installed code. Documentation and tests must
-preserve these distinctions.
+## Process boundary
 
-## Extension providers
+Guest shell commands and subprocesses execute in the VM. Model-facing built-in
+tools must route through Gondolin-backed operations. A mutating host-backed tool
+would bypass the primary safety property and is not allowed.
 
-Loading an extension executes arbitrary code before tool allowlisting matters.
-Provider grants therefore include trusted provenance, canonical path, content
-digest, and required sandbox/environment policy. A descriptive tool
-classification alone is not an authority boundary.
+Host-owned lifecycle and Git operations are narrowly implemented runtime code,
+not model-selected shell commands. Read-only host adapters may be added only
+when their lack of mutation is mechanically constrained and tested.
 
-## Worktrees and sandboxes
+## Network boundary
 
-A worktree separates Git state but does not restrict reads, writes, processes,
-or network. Sandboxing and write confinement are separate grants. Requested
-isolation never silently degrades.
+Guest commands may access the public internet. Gondolin mediates DNS and
+connections and blocks localhost, private, link-local, metadata, and other
+internal address ranges, including after resolution and redirects.
+
+This prevents common accidental interaction with host and local infrastructure.
+It is not an exfiltration boundary. Per-agent hostname allowlists and dynamic
+approval are intentionally out of scope.
+
+## Lifecycle and denial of service
+
+One VM belongs to one active attempt and closes on completion, cancellation,
+seat exit, or reload. The runtime records enough QEMU identity to verify closure
+but does not claim active work survives loss of the seat.
+
+Timeouts and output bounds are not enough if a guest can exhaust host storage or
+memory first. Qualification must prove configured VM memory and concurrency
+bounds and a hard bound for guest-overlay and workspace growth. It must also
+measure CPU, process, cancellation, and shutdown behavior. If Gondolin's VFS or
+image backend cannot enforce storage bounds, the production adapter needs a
+quota wrapper or the backend fails qualification.
+
+## Worktrees are not sandboxes
+
+A worktree protects Git state but does not isolate host filesystem, processes,
+or network. Gondolin supplies the execution boundary; the worktree supplies a
+recoverable mutation and handoff boundary. Writing attempts require both and
+fail before model execution if either cannot be established.

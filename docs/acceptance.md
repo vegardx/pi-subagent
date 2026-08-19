@@ -1,71 +1,161 @@
 # Acceptance inventory
 
-This inventory defines evidence required before stable releases.
+This inventory defines evidence required before stable releases. Unit tests or
+mocks alone do not prove VM isolation.
+
+## Qualification gate
+
+Before production implementation:
+
+- QEMU capability probe succeeds on supported macOS and Linux hosts;
+- pinned Gondolin package and image boot successfully;
+- a disposable workspace mounts at `/workspace`;
+- Pi `read`, `write`, `edit`, `bash`, `grep`, `find`, and `ls` operations execute
+  through the VM;
+- host home, Pi agent directory, runtime store, and unrelated paths are
+  unreachable;
+- repository-local files, including `.env`, remain visible;
+- public internet works while localhost, private ranges, link-local addresses,
+  and cloud metadata endpoints fail;
+- two native sessions run concurrently in separate VMs without shared writable
+  state;
+- cancellation closes one VM without affecting the other;
+- boot latency, memory, disk cache, and shutdown latency are measured;
+- configured VM memory/concurrency and guest-overlay/workspace growth limits are
+  enforced before host exhaustion.
+
+A failed qualification item is a backend finding. Tests or policy must not be
+weakened and host execution must not be used as fallback.
 
 ## Launch and resources
 
-- clean one-shot RPC child reaches `agent_settled`;
+- a native `AgentSession` reaches authoritative settlement;
+- one attempt creates exactly one VM and no child Pi process;
 - ambient extensions, skills, prompts, themes, and context files are absent;
-- explicit extension provider and exact tools/resources are present;
-- child attests effective model, thinking, cwd, session, tools, provider source
-  identities, and prompt/resource projection;
-- resource changes between preflight and release are rejected;
-- project agent/resource loading follows Pi trust;
-- custom provider model and authentication work without credential persistence.
+- only explicit tools, skills, and context are projected;
+- effective model, thinking, session, tools, resource identities, workspace,
+  image, mount policy, and network policy match preflight;
+- resource or policy changes between preflight and launch are rejected;
+- project resources follow Pi trust;
+- custom provider models work without mounting host provider credentials.
+
+## Accidental-damage containment
+
+Inside a disposable fixture, test commands equivalent to:
+
+```text
+rm -rf /workspace
+rm -rf ~
+find / -type f -delete
+chmod -R 000 /
+kill -9 -1
+```
+
+Acceptance requires:
+
+- destructive effects remain inside the disposable guest/workspace boundary;
+- host home, Pi state, active checkout, unrelated fixtures, and host processes
+  remain unchanged;
+- a read-only workspace rejects destructive writes;
+- a writing attempt may destroy its private worktree without affecting the
+  active checkout or another attempt;
+- VM closure terminates all guest processes;
+- no host-backed mutating tool bypass exists.
+
+These tests run only against disposable fixtures with explicit sentinels. They
+must never target a real home or active repository.
+
+## Resource exhaustion
+
+Using bounded disposable fixtures:
+
+- a guest cannot allocate memory beyond its configured VM limit;
+- global and per-owner VM concurrency limits prevent accidental fan-out;
+- guest root-overlay growth has a hard maximum;
+- writes through the workspace VFS stop at a configured byte quota;
+- output and artifact streams truncate or fail at documented bounds;
+- a fork loop or CPU loop remains confined and is stopped by cancellation or
+  timeout;
+- quota failure cannot trigger fallback to an unbounded host path.
+
+## Filesystem and tools
+
+- every granted built-in operation is VM-backed;
+- denied or undeclared host-backed tools cannot be invoked;
+- read-only checkout mounts reject all writes;
+- writing attempts use distinct private worktrees;
+- traversal, absolute host paths, symlink escape, and VFS-provider escape fail;
+- host home, Pi config, runtime store, and unrelated repositories are absent;
+- repository-local `.env` and similar files are visible under the workspace's
+  normal read/write mode;
+- user shell commands, when enabled, use the same VM path as `bash`;
+- arbitrary child extension code is absent.
+
+## Network
+
+- ordinary public HTTP and HTTPS destinations work;
+- DNS and redirects are mediated by Gondolin;
+- loopback, private, link-local, metadata, and DNS-rebinding targets fail;
+- guest commands cannot reach services bound only to the host or local network;
+- the runtime does not claim to prevent public-network exfiltration;
+- host Pi/provider credentials remain absent unless they are themselves copied
+  into the selected repository by the user.
 
 ## Idempotency and lifecycle
 
-- concurrent duplicate caller operation ID creates one run;
-- same operation ID with a different request identity fails;
-- crash after child start but before caller receipt is recoverable by operation ID;
-- retry creates a new attempt under the same run;
-- resume validates and exclusively leases the retained session;
-- foreground and detached startup receipts have documented durability points;
-- run-wide limits survive retry/resume.
+- concurrent duplicate operation ID creates one attempt in one seat;
+- the same operation ID with a different request identity fails;
+- retry creates a new attempt and fresh VM;
+- graceful stop aborts the session, closes the VM, and records workspace state;
+- seat reload/exit marks active work interrupted rather than completed;
+- explicit resume validates the retained session and workspace, then creates a
+  fresh VM;
+- no contract claims detached execution or survival across seat exit;
+- run-wide limits survive retry and resume.
 
-## Control
+## Cancellation and cleanup
 
-- steering and follow-up are ordered and deduplicated;
-- acknowledgements distinguish persistence from session acceptance;
-- terminal children return `missed`, not false delivery;
 - stop races with launch and completion have one winner;
-- inactive-owner notifications are at least once with stable IDs; repeated
-  delivery is harmless through consumer deduplication.
+- guest work cannot outlive proved VM closure;
+- VM-close timeout or unknown QEMU identity becomes cleanup-blocked;
+- no completion is reported while VM shutdown is unproved;
+- cancellation preserves uncaptured worktree changes;
+- closing one VM does not terminate another attempt's VM;
+- repeated cleanup is idempotent.
 
-## Processes
+## Workspaces and handoff
 
-- PID reuse/birth mismatch prevents signaling;
-- TERM-resistant tracked child and descendants escalate to KILL and are proved
-  gone within the tracked process-group boundary;
-- a descendant escaping that boundary becomes cleanup-blocked unless a stronger
-  sandbox boundary proves it gone;
-- unknown process identity becomes cleanup-blocked;
-- parent crash leaves enough state for conservative reconciliation.
-
-## Workspaces
-
-- requested worktree fails outside Git and never falls back;
+- worktree requests fail outside Git and never fall back;
 - parallel writers receive distinct worktrees;
-- patch/commit handoff is captured before cleanup;
-- uncertain worktree is retained;
+- the VM does not receive unrestricted common Git metadata;
+- binary, mode, symlink, rename, and deletion changes survive handoff;
+- commit or artifact handoff is durable before cleanup;
+- uncertain worktrees are retained;
 - cleanup failure blocks successful terminal status;
-- sandbox denial is never retried without sandbox.
+- explicit release removes only the recorded worktree after identity checks.
 
-## Persistence and security
+## Persistence and recovery
 
-- torn journal tail, corrupt snapshot, future schema, and stale lease fail closed;
-- fencing rejects writes from a superseded supervisor;
-- sensitive fields are redacted and files use private modes;
-- numerical output/log/event/artifact/control/runtime/retry/token/cost bounds
+- torn journal tail, corrupt snapshot, and unknown schema fail closed;
+- stale `active` state after seat loss reconciles to interrupted or
+  cleanup-blocked, never completed;
+- a stale QEMU process is not adopted by a new native session;
+- files use private modes and bounded serialization;
+- numerical output, log, event, artifact, runtime, retry, token, and cost bounds
   produce documented truncation or terminal outcomes;
-- child workspace cannot reach supervisor state under the sandboxed profile;
-- retention never deletes active or cleanup-blocked runs.
+- retention never deletes interrupted or cleanup-blocked runs;
+- incompatible persisted contract revisions are rejected with discard guidance;
+  no migration or compatibility path is provided.
 
 ## Distribution
 
 - packed package loads in a fresh `PI_CODING_AGENT_DIR`;
+- Gondolin is pinned behind the project adapter and third-party notices are
+  present;
 - tool and command ownership has no collisions;
-- public runtime contract matches implementation;
-- real Pi structured output covers sole final-answer, sibling tool calls, schema
-  rejection, repair exhaustion, and partial usage completeness;
-- supported Pi version range is tested explicitly.
+- public runtime capability contract matches implementation exactly;
+- supported Pi, Node, Gondolin, image, QEMU, macOS, and Linux ranges are tested
+  and documented;
+- `pi-workflow` uses the public service without creating another runtime;
+- incompatible consumer contract revisions fail startup instead of receiving a
+  compatibility shim.

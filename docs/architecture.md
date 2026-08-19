@@ -9,52 +9,141 @@ Maestro plans, publication, or repository-delivery policy.
 graph TD
     Host[Pi extension or workflow host]
     Service[SubagentService]
-    Store[Run store and journal]
-    Backend[RPC child backend]
-    Child[Child Pi process]
-    Workspace[Workspace manager]
-    Control[Control channel]
+    Store[Run store]
+    Session[Native Pi AgentSession]
+    Sandbox[Gondolin VM]
+    Tools[VM-backed Pi tools]
+    Workspace[Read-only checkout or private worktree]
+    Network[Public egress policy]
 
     Host --> Service
     Service --> Store
-    Service --> Workspace
-    Service --> Backend
-    Backend --> Child
-    Service <--> Control
-    Control <--> Child
+    Service --> Session
+    Service --> Sandbox
+    Session --> Tools
+    Tools --> Sandbox
+    Sandbox --> Workspace
+    Sandbox --> Network
 ```
+
+## Canonical execution model
+
+Each active attempt has one native in-process Pi `AgentSession` and one
+Gondolin Linux micro-VM. The seat owns model inference, provider authentication,
+session persistence, lifecycle state, and Git operations. Model-driven tool
+effects cross the VM boundary.
+
+There is no child Pi process and no detached supervisor in the initial runtime.
+Active attempts stop when the seat exits or reloads. Explicit resume restores
+the persisted Pi session into a new attempt with a fresh VM after revalidating
+authority and workspace identity.
+
+One VM belongs to exactly one attempt. VMs are not pooled or shared between
+agents. This makes filesystem, process, network, cancellation, and cleanup state
+attributable to one attempt.
 
 ## Layers
 
-1. **Extension adapter** registers the `subagent` tool, commands, and UI.
+1. **Extension adapter** registers model-facing tools, commands, and UI.
 2. **Service** exposes the same runtime to trusted extension consumers.
 3. **Policy compiler** resolves an immutable launch plan.
-4. **Lifecycle runtime** owns runs, attempts, status, retry, and resume.
-5. **Backend** owns child Pi startup, RPC, event collection, and settlement.
-6. **Process supervisor** owns process identity, signals, and cleanup proof.
-7. **Workspace manager** owns shared/worktree/sandbox preparation and handoff.
-8. **Store** owns append-only events, bounded snapshots, artifacts, and leases in a supervisor root outside child workspaces.
+4. **Lifecycle runtime** owns runs, attempts, cancellation, retry, and resume.
+5. **Session runtime** creates native `AgentSession`s with explicit resources.
+6. **Sandbox adapter** owns Gondolin VM creation, policy, and terminal proof.
+7. **Tool adapter** routes every granted model-facing operation into the VM.
+8. **Workspace manager** owns read-only mounts, worktrees, handoff, and cleanup.
+9. **Store** owns bounded records, sessions, artifacts, and recovery evidence
+   outside mounted workspaces.
 
-No model-facing tool may bypass the service.
+No model-facing tool may bypass the service or use host-backed filesystem,
+process, or network operations.
 
-## Canonical backend
+## Resource isolation
 
-The first backend is a child Pi process in classic RPC mode. The supervisor
-implements the documented JSONL protocol directly so it can own process groups,
-stdio, readiness, and terminal evidence; Pi's convenience `RpcClient` does not
-expose the required spawn controls. Stock RPC is not reconnectable: supervisor
-loss interrupts the child, and recovery uses validated session resume rather
-than live stdio adoption.
+Child sessions use `DefaultResourceLoader` with ambient extensions, skills,
+prompt templates, themes, and context files disabled. Only preflighted resources
+are projected into the session. Arbitrary extension code is not loaded into a
+child session in the initial release; trusted capabilities must have a
+pi-subagent-owned adapter whose authority is part of the launch plan.
 
-Children start with ambient extensions disabled. The launch plan supplies only
-the extension providers needed for granted tools:
+Models and provider credentials stay in the seat through Pi's `ModelRuntime`.
+The VM does not receive Pi settings, provider auth files, the user home, or the
+Pi agent directory.
+
+## Tool isolation
+
+The initial built-in set is implemented with Pi tool factories and
+Gondolin-backed operations:
 
 ```text
-pi --mode rpc --no-extensions --extension <provider> ...
+read
+write
+edit
+bash
+grep
+find
+ls
 ```
 
-JSON mode may be supported for one-shot compatibility. In-process and tmux
-backends are later additions and must preserve the same run/attempt contracts.
+Read-only launch plans omit mutating tools. Tool factories use `/workspace` as
+the only child cwd. Paths are canonicalized and checked before crossing the VFS
+boundary. User shell commands follow the same VM execution path when exposed.
+
+A future external tool is admissible only when its implementation runs inside
+the VM or a project-owned host adapter enforces equivalent bounded authority.
+Merely hiding a host extension tool from the prompt is not isolation.
+
+## Workspace model
+
+Read-only attempts mount the active checkout through a filtered read-only VFS.
+Writing attempts receive a private host-created Git worktree mounted read-write.
+A worktree is never treated as the sandbox boundary.
+
+The host owns worktree creation, baseline identity, handoff capture, commit,
+retention, and cleanup. The VM does not receive unrestricted repository Git
+metadata. If a child needs Git evidence, the service provides a bounded
+read-only adapter or artifact rather than mounting the entire common Git dir.
+
+The selected repository is mounted as repository content, including local files
+such as `.env` when present. Confidentiality of repository contents is not an
+initial security goal. Host-private roots outside the selected repository—the
+runtime store, Pi configuration, home directory, and unrelated repositories—are
+not mounted because the guest has no operational need for them.
+
+## Network model
+
+Guest commands may access the public internet through Gondolin's host-mediated
+network stack. Localhost, private, link-local, metadata, and other internal
+address ranges remain blocked. The runtime does not maintain per-agent hostname
+allowlists or interactive network approvals in the initial release.
+
+This policy is intended to prevent accidental interaction with host and local
+network services, not data exfiltration. Repository-local secrets may be read
+and transmitted by guest commands. Provider traffic remains outside the VM
+because model inference happens in the seat; Pi provider credentials and host
+credential stores are not mounted.
+
+## Lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> preparing
+    preparing --> running: session and VM ready
+    preparing --> failed
+    running --> settling
+    running --> interrupted: seat exit or reload
+    running --> cancelled: caller stop
+    settling --> completed
+    settling --> failed
+    settling --> cleanupBlocked: cleanup unproved
+    interrupted --> preparing: explicit resume
+    failed --> preparing: eligible retry
+    cleanupBlocked: cleanup-blocked
+```
+
+Cancellation aborts model activity, terminates guest work, closes the VM, and
+records workspace disposition. Completion requires a terminal `AgentSession`,
+a closed VM, and proved or intentionally retained workspace state.
 
 ## Platform use
 
@@ -62,17 +151,24 @@ Use Pi rather than rebuilding:
 
 - `getAgentDir()` and `CONFIG_DIR_NAME`;
 - `ModelRuntime` and provider authentication;
-- `AgentSession`, `SessionManager`, and RPC;
-- built-in tool factories and tool schemas;
-- project trust and resource provenance;
-- extension lifecycle and UI APIs.
+- `createAgentSession()`, `AgentSession`, and `SessionManager`;
+- `DefaultResourceLoader` and resource provenance;
+- built-in tool factories and schemas;
+- project trust and extension lifecycle APIs.
 
-This repository owns what Pi does not provide: subagent supervision, process
-trees, run persistence, worktrees, capability projection, named-agent discovery,
-and recovery. Pi packages do not define an agent resource category, so packaged
-agent definitions use an explicit pi-subagent manifest convention.
+Use Gondolin for:
+
+- VM lifecycle and guest command execution;
+- host-mediated VFS mounts;
+- public-egress mediation and internal-range blocking;
+- guest process isolation.
+
+This repository owns the immutable authority plan, resource projection, VM tool
+operations, run persistence, worktrees, handoff, cancellation, resume, and
+recovery.
 
 ## Dependency rule
 
 `pi-workflow` depends on the public service contract. `pi-subagent` has no
-runtime dependency on pi-workflow or pi-maestro.
+runtime dependency on pi-workflow or pi-maestro. Gondolin is hidden behind a
+project-owned adapter and pinned to an exact qualified version.
