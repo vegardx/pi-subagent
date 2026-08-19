@@ -207,6 +207,12 @@ describe("foreground subagent service", () => {
 			first.runId,
 		);
 		expect((await restartedClient.wait(first.runId)).output).toBe("done");
+		expect((await restartedClient.release(first.runId)).status).toBe(
+			"completed",
+		);
+		expect((await restartedClient.release(first.runId)).status).toBe(
+			"completed",
+		);
 	});
 
 	it("rejects workspace drift after preflight", async () => {
