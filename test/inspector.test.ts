@@ -25,6 +25,7 @@ function summary(
 		createdAt: "2026-08-19T00:00:00.000Z",
 		updatedAt: "2026-08-19T00:00:01.000Z",
 		pinned: false,
+		controllable: status === "active",
 		retainedWorktree: false,
 		requiresAttention: status === "active" || status === "interrupted",
 		...overrides,

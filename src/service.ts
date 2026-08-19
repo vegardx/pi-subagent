@@ -115,6 +115,7 @@ export type RunSummary = {
 	updatedAt: string;
 	usage?: RunResult["usage"];
 	pinned: boolean;
+	controllable: boolean;
 	retainedWorktree: boolean;
 	requiresAttention: boolean;
 };
@@ -747,6 +748,7 @@ export async function createSubagentService(options: {
 					pendingControl = control;
 					if (active && control) active.control = control;
 					else if (active) delete active.control;
+					if (active) emit(active.plan.runId, active.status);
 				},
 				signal: abort.signal,
 			});
@@ -856,6 +858,7 @@ export async function createSubagentService(options: {
 			updatedAt,
 			...(run.result ? { usage: run.result.result.usage } : {}),
 			pinned: pinnedRuns.has(run.plan.runId),
+			controllable: run.status === "active" && run.control !== undefined,
 			retainedWorktree: await retainedWorktree(run, attempts),
 			requiresAttention: [
 				"active",
