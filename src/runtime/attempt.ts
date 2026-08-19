@@ -367,9 +367,15 @@ export async function runNativeAttempt(options: {
 		await options.journal.append("attempt-completed", {
 			result,
 			output,
+			sessionFile,
 			handoff,
 		});
-		await options.journal.writeSnapshot({ result, output, handoff });
+		await options.journal.writeSnapshot({
+			result,
+			output,
+			sessionFile,
+			handoff,
+		});
 		return {
 			result,
 			output,
@@ -415,8 +421,20 @@ export async function runNativeAttempt(options: {
 			truncated,
 		});
 		const message = error instanceof Error ? error.message : String(error);
-		await options.journal.append("attempt-failed", { result, error: message });
-		await options.journal.writeSnapshot({ result, error: message });
+		await options.journal.append("attempt-failed", {
+			result,
+			output,
+			sessionFile,
+			handoff,
+			error: message,
+		});
+		await options.journal.writeSnapshot({
+			result,
+			output,
+			sessionFile,
+			handoff,
+			error: message,
+		});
 		return {
 			result,
 			output,

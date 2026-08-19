@@ -153,6 +153,7 @@ export {
 export {
 	createSubagentService,
 	type OwnerRegistration,
+	type ReconcileResult,
 	type RunReceipt,
 	type RunView,
 	type SubagentClient,
