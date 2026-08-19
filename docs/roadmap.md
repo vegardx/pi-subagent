@@ -1,5 +1,11 @@
 # Roadmap
 
+Phases 0–4 are implemented and release-qualified on the supported macOS Apple
+Silicon host. The standalone 0.9 candidate is active in the maintainer's normal
+Pi configuration alongside pi-maestro, which no longer bundles a subagent
+extension. No package-path filter is required. Phase 5 remains intentionally
+blocked until the stable-version decision.
+
 ## Phase 0 — contracts
 
 - glossary and ownership boundary;
