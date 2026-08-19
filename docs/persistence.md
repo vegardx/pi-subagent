@@ -13,7 +13,9 @@ monotonic durable generations. Fenced journals and worktree lifecycle mutations
 verify the current lease before side effects and receipts. Session leases,
 retention, and
 external-side-effect reconciliation remain design contracts rather than
-implemented behavior.
+implemented behavior. Artifact blobs are content-addressed, privately stored,
+bounded per artifact and store, deduplicated, and rehashed on export; retention
+pins and garbage collection are not implemented yet.
 
 ## Storage
 

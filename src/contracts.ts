@@ -62,6 +62,21 @@ export const UsageSchema = Type.Object(
 );
 export type Usage = Static<typeof UsageSchema>;
 
+export const ArtifactRefSchema = Type.Object(
+	{
+		id: Type.String({ pattern: "^artifact_[a-f0-9]{64}$" }),
+		sha256: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+		bytes: Type.Integer({ minimum: 0 }),
+		mediaType: Type.String({
+			pattern:
+				"^[a-zA-Z0-9][a-zA-Z0-9!#$&^_.+-]*/[a-zA-Z0-9][a-zA-Z0-9!#$&^_.+-]*$",
+			maxLength: 256,
+		}),
+	},
+	{ additionalProperties: false },
+);
+export type ArtifactRef = Static<typeof ArtifactRefSchema>;
+
 export const RunResultSchema = Type.Object(
 	{
 		runId: RunIdSchema,
@@ -72,6 +87,7 @@ export const RunResultSchema = Type.Object(
 			Type.Literal("interrupted"),
 			Type.Literal("cleanup-blocked"),
 		]),
+		output: Type.Optional(ArtifactRefSchema),
 		usage: UsageSchema,
 		usageComplete: Type.Boolean(),
 		sandboxCleanup: CleanupOutcomeSchema,

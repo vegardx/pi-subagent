@@ -133,8 +133,9 @@ describe("foreground subagent service", () => {
 	it("preflights, launches idempotently, waits, and scopes owners", async () => {
 		const data = await serviceFor("success", async (input) => {
 			await input.journal.append("fake-attempt", {});
+			const output = await input.artifactStore.put("done", "text/plain");
 			return {
-				result: result(input.plan.runId, "completed"),
+				result: { ...result(input.plan.runId, "completed"), output },
 				output: "done",
 				sessionFile: "/session.jsonl",
 				handoff: undefined,
@@ -148,7 +149,16 @@ describe("foreground subagent service", () => {
 			client.launch(preflight.preflightId, preflight.identitySha256),
 		]);
 		expect(duplicate.runId).toBe(first.runId);
-		expect((await client.wait(first.runId)).output).toBe("done");
+		const completed = await client.wait(first.runId);
+		expect(completed.output).toBe("done");
+		const outputRef = completed.result.output;
+		expect(outputRef).toBeDefined();
+		if (!outputRef) throw new Error("output artifact missing");
+		expect(
+			(await client.exportArtifact(first.runId, outputRef)).content.toString(
+				"utf8",
+			),
+		).toBe("done");
 		expect((await client.status(first.runId)).status).toBe("completed");
 		expect(await client.logs(first.runId)).toHaveLength(1);
 		await expect(

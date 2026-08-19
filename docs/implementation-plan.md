@@ -414,6 +414,13 @@ output, and resume remain outstanding.
 One read-only foreground subagent can complete or fail with trustworthy session
 and VM terminal evidence.
 
+The artifact foundation now stores fenced immutable content-addressed blobs with
+per-artifact and per-store limits, private modes, deduplication, media types,
+SHA-256 verification, and bounded owner-scoped export. The runner stores bounded
+full text output as an artifact while returning a 32 KiB inline projection.
+Retention pins, garbage collection, binary task artifacts, and structured output
+remain outstanding.
+
 ## Deliverable 5 — workspaces and network
 
 ### Build

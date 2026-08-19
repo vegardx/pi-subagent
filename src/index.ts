@@ -1,4 +1,11 @@
 export {
+	type ArtifactExport,
+	ArtifactStore,
+	ArtifactStoreError,
+} from "./artifacts/store.js";
+export {
+	type ArtifactRef,
+	ArtifactRefSchema,
 	type AttemptId,
 	AttemptIdSchema,
 	type AttemptStatus,

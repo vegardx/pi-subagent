@@ -3,7 +3,8 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
-import type { AttemptId, RunId, RunStatus } from "./contracts.js";
+import { type ArtifactExport, ArtifactStore } from "./artifacts/store.js";
+import type { ArtifactRef, AttemptId, RunId, RunStatus } from "./contracts.js";
 import type {
 	AgentLaunchPlan,
 	ExactModelRequest,
@@ -68,6 +69,11 @@ export type SubagentClient = {
 	logs(runId: RunId): Promise<JournalEvent[]>;
 	wait(runId: RunId): Promise<AttemptExecutionResult>;
 	interrupt(runId: RunId): Promise<RunReceipt>;
+	exportArtifact(
+		runId: RunId,
+		ref: ArtifactRef,
+		maxBytes?: number,
+	): Promise<ArtifactExport>;
 };
 
 export type SubagentService = {
@@ -85,6 +91,7 @@ type ActiveRun = {
 	ownerId: string;
 	plan: AgentLaunchPlan;
 	journal: RunJournal;
+	artifacts: ArtifactStore;
 	lease: RunLease;
 	abort: AbortController;
 	promise: Promise<AttemptExecutionResult>;
@@ -310,6 +317,17 @@ export async function createSubagentService(options: {
 								prepared.launchPlan.runId,
 								lease,
 							);
+							const artifacts = await ArtifactStore.open({
+								root: path.join(
+									options.root,
+									"runs",
+									prepared.launchPlan.runId,
+									"artifacts",
+								),
+								maxArtifactBytes: prepared.launchPlan.limits.outputBytes,
+								maxTotalBytes: prepared.launchPlan.limits.outputBytes,
+								lease,
+							});
 							let worktree: WorktreeRecord | undefined;
 							let workspacePath = prepared.workspace.cwd;
 							if (prepared.launchPlan.workspace.mode === "worktree") {
@@ -338,6 +356,7 @@ export async function createSubagentService(options: {
 								capacity: options.capacity,
 								lease,
 								journal,
+								artifactStore: artifacts,
 								sessionRoot: path.join(options.root, "sessions"),
 								signal: abort.signal,
 							});
@@ -345,6 +364,7 @@ export async function createSubagentService(options: {
 								ownerId: owner.id,
 								plan: prepared.launchPlan,
 								journal,
+								artifacts,
 								lease,
 								abort,
 								promise: rawPromise,
@@ -398,6 +418,14 @@ export async function createSubagentService(options: {
 
 				async wait(runId) {
 					return ownedRun(runId).promise;
+				},
+
+				async exportArtifact(runId, ref, maxBytes) {
+					const run = ownedRun(runId);
+					return run.artifacts.export(
+						ref,
+						maxBytes ?? run.plan.limits.outputBytes,
+					);
 				},
 
 				async interrupt(runId) {
