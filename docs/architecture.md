@@ -170,7 +170,13 @@ a distinct abort reason and records interrupted when cleanup is proved, preservi
 session/workspace eligibility for a fresh-VM resume. Completion requires a terminal `AgentSession`,
 a closed VM, and proved workspace cleanup. Intentionally retained work remains
 `cleanup-blocked` until explicit release. Cross-seat lease generations fence
-stale lifecycle and cleanup writes.
+stale lifecycle and cleanup writes. Reconciliation never adopts a stale VM. It
+may terminate one only after matching the recorded PID, process birth time, and
+full qualified-QEMU command digest, rechecking identity before every signal.
+Session recovery requires canonical root containment plus exact `SessionManager`
+identity. Worktree recovery verifies canonical path, Git root, branch, HEAD,
+status, commit, and release evidence rather than inferring cleanup from path
+absence alone.
 
 Retention treats each run as a graph spanning records, attempts, sessions,
 artifacts, operation mappings, leases, and worktree metadata. Owner pins and

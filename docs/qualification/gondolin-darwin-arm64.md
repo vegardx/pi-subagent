@@ -125,6 +125,17 @@ Result views lost handoff metadata. The accepted behavior is now:
 
 No qualified drive left a Pi-owned QEMU or runner process.
 
+An abrupt-seat fault drive killed Pi with `SIGKILL` only after the child native
+session and QEMU were ready. The OS removed the QEMU process in this drive; the
+replacement seat recovered the run as cleanup-blocked, reconciled recorded
+process absence without signalling, conservatively classified missing session
+persistence as failed, retained the verified clean worktree, and then released
+its worktree and branch through the production service. Deterministic process
+controller tests separately prove that an exact PID/start-time/command-digest
+match invokes termination while a mismatched birth identity is never signalled
+and remains cleanup-blocked. Session and worktree tests prove exact session ID
+matching plus clean, dirty, branch-retained, absent, and mismatch-safe states.
+
 Failure-policy dogfood used a 30-second attempt deadline inside a 90-second
 run-wide budget. The real attempt persisted `timeout/service/manual`, the stable
 message `Attempt runtime limit exceeded`, 30,201 measured milliseconds, and

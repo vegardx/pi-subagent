@@ -11,10 +11,15 @@ links; identical replay adopts the mapping and conflicting replay fails.
 Cross-process run leases now use OS-owned per-run localhost listeners and
 monotonic durable generations. Fenced journals and worktree lifecycle mutations
 verify the current lease before side effects and receipts. Session-specific leases and deep external-side-effect reconciliation remain
-incomplete; run and retention leases cover current destructive ownership. Current
-reconciliation reacquires run fencing, observes recorded VM PID presence without
-signaling it, checks retained worktree presence, and persists conservative
-failed/interrupted/cleanup-blocked outcomes. Immutable run
+incomplete; run and retention leases cover current destructive ownership. Current reconciliation reacquires run fencing, compares the recorded QEMU PID,
+process start time, and full command digest, and signals only an exact stale
+identity. PID reuse, malformed evidence, or a non-QEMU command remains unknown
+and is never signalled. Retained sessions are accepted only when their canonical
+path is inside the session root and `SessionManager` identity matches the durable
+`session-started` receipt. Worktrees are classified from canonical path, Git
+root, branch, HEAD, status, handoff/baseline commit, release receipt, and retained
+branch evidence before conservative failed/interrupted/cleanup-blocked outcomes
+are persisted. Immutable run
 records persist owner and launch identity before execution. Startup scans them,
 restores proved terminal snapshots and artifact access, skips runs held by a
 live seat, and classifies unproved stale execution as cleanup-blocked. Artifact
@@ -142,7 +147,9 @@ Reconciliation compares records with:
 - terminal result and cleanup receipts.
 
 An apparently live stale QEMU process is never adopted into a new session. It is
-terminated only after identity validation; otherwise cleanup remains blocked
+terminated only when PID, start time, qualified QEMU command, and command digest
+match the durable startup receipt; identity is rechecked before escalation from
+SIGTERM to SIGKILL. Otherwise cleanup remains blocked
 for operator action. Retry, resume, or release cannot acquire the worktree while
 the prior VM or seat writer remains live or its terminal state is unproved.
 

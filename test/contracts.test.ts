@@ -28,6 +28,7 @@ describe("runtime contracts", () => {
 			classifiedFailures: true,
 			cumulativeRuntimeBudget: true,
 			retryBackoff: true,
+			deepReconciliation: true,
 			worktrees: true,
 			publicNetworkEgress: true,
 			explicitResources: true,
