@@ -33,7 +33,7 @@ provide. This is a qualification result, not production acceptance.
 | Host/internal network denial | Pass | Loopback and `169.254.169.254` requests failed with internal-range blocking enabled. |
 | Workspace write budget | Pass | A project wrapper stopped a 1 MiB write at the configured 131,072-byte cumulative limit. |
 | Concurrent VM isolation | Pass | Two VMs wrote distinct markers to distinct host mounts without observing each other. |
-| Native Pi sessions | Pass | Two concurrent in-process `AgentSession`s used separate VMs and returned exact markers. |
+| Native Pi sessions | Pass | Two concurrent in-process `AgentSession`s passed exact catalog/thinking/auth preflight through `ModelRuntime`, used separate VMs, and returned exact markers. |
 | Ambient resource isolation | Pass | Both native sessions loaded zero extensions, skills, prompts, themes, and context files. |
 | VM shutdown | Pass | Every recorded QEMU PID was absent after `vm.close()`; no Gondolin/QEMU runner remained after the drive. |
 | Global cross-process VM limit | Pass | A pi-subagent host-socket lease enforced capacity across worker processes and recovered automatically after a killed owner. |
