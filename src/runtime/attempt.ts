@@ -24,6 +24,7 @@ import {
 import type { RunJournal } from "../persistence/journal.js";
 import type { RunLease } from "../persistence/run-lease.js";
 import type { DiscoveredAgent } from "../preflight/agents.js";
+import { canonicalJson } from "../preflight/canonical.js";
 import { verifyLaunchPlanIdentity } from "../preflight/compile.js";
 import { resolveExactPiModel } from "../preflight/models.js";
 import type { VmCapacityManager } from "../sandbox/capacity.js";
@@ -37,6 +38,7 @@ import {
 	removeCleanWorktree,
 	type WorktreeRecord,
 } from "../workspace/worktree.js";
+import { createFinalAnswerController } from "./structured-output.js";
 
 const MAX_INLINE_OUTPUT_BYTES = 32 * 1024;
 
@@ -45,6 +47,7 @@ export type AttemptExecutionResult = {
 	output: string;
 	sessionFile: string | undefined;
 	handoff: WorktreeRecord | undefined;
+	structuredOutput: unknown | undefined;
 	error: string | undefined;
 };
 
@@ -119,11 +122,15 @@ function terminalResult(input: {
 	workspaceCleanup: RunResult["workspaceCleanup"];
 	truncated: boolean;
 	output?: ArtifactRef;
+	structuredOutput?: unknown;
 }): RunResult {
 	const result: RunResult = {
 		runId: input.plan.runId,
 		status: input.status,
 		...(input.output ? { output: input.output } : {}),
+		...(input.structuredOutput !== undefined
+			? { structuredOutput: input.structuredOutput }
+			: {}),
 		usage: input.usage,
 		usageComplete: input.usageComplete,
 		sandboxCleanup: input.sandboxCleanup,
@@ -169,9 +176,10 @@ export async function runNativeAttempt(options: {
 	if (options.plan.resources.some((resource) => resource.kind === "context")) {
 		throw new Error("explicit context resources are not implemented");
 	}
-	if (options.plan.outputSchema !== undefined) {
-		throw new Error("structured output is not implemented");
-	}
+	const finalAnswer =
+		options.plan.outputSchema === undefined
+			? undefined
+			: createFinalAnswerController(options.plan.outputSchema);
 	if (
 		options.agent.name !== options.plan.agent ||
 		!options.plan.resources.some(
@@ -206,6 +214,7 @@ export async function runNativeAttempt(options: {
 	};
 	let output = "";
 	let outputRef: ArtifactRef | undefined;
+	let structuredOutput: unknown | undefined;
 	let truncated = false;
 	const timeoutSignal = AbortSignal.timeout(options.plan.limits.runtimeMs);
 	const runSignal = options.signal
@@ -255,6 +264,13 @@ export async function runNativeAttempt(options: {
 			systemPrompt: `${options.agent.prompt}\n\nCurrent working directory: ${GUEST_WORKSPACE} (Gondolin VM).`,
 		});
 		await loader.reload();
+		const customTools = Object.values(sandbox.tools).map(
+			(tool) => tool as unknown as ToolDefinition,
+		);
+		if (finalAnswer) customTools.push(finalAnswer.tool);
+		const activeTools = finalAnswer
+			? [...options.plan.tools, "final_answer"]
+			: options.plan.tools;
 		const created = await createAgentSession({
 			cwd: GUEST_WORKSPACE,
 			agentDir: getAgentDir(),
@@ -262,10 +278,8 @@ export async function runNativeAttempt(options: {
 			model: resolved.model,
 			thinkingLevel: options.plan.model.thinking,
 			noTools: "builtin",
-			tools: options.plan.tools,
-			customTools: Object.values(sandbox.tools).map(
-				(tool) => tool as unknown as ToolDefinition,
-			),
+			tools: activeTools,
+			customTools,
 			resourceLoader: loader,
 			sessionManager: SessionManager.create(
 				GUEST_WORKSPACE,
@@ -280,15 +294,36 @@ export async function runNativeAttempt(options: {
 			sessionFile: session.sessionFile,
 		});
 		await session.prompt(delegatedPrompt(options.plan));
+		if (finalAnswer) {
+			for (
+				let repair = 0;
+				repair < 2 && finalAnswer.getValue() === undefined;
+				repair++
+			) {
+				await session.prompt(
+					"The task is incomplete. Call final_answer exactly once with a value matching the required schema. Do not return the answer as ordinary text.",
+				);
+			}
+			structuredOutput = finalAnswer.getValue();
+			if (structuredOutput === undefined) {
+				throw new Error("structured output repair exhausted");
+			}
+		}
 		await session.agent.waitForIdle();
 		collectedUsage = usage(session);
+		const rawOutput =
+			structuredOutput === undefined
+				? assistantOutput(session)
+				: canonicalJson(structuredOutput);
+		const mediaType =
+			structuredOutput === undefined ? "text/plain" : "application/json";
 		const artifactOutput = boundAttemptOutput(
-			assistantOutput(session),
+			rawOutput,
 			options.plan.limits.outputBytes,
 		);
 		outputRef = await options.artifactStore.put(
 			artifactOutput.output,
-			"text/plain",
+			mediaType,
 		);
 		const inlineOutput = boundAttemptOutput(
 			artifactOutput.output,
@@ -327,6 +362,7 @@ export async function runNativeAttempt(options: {
 			workspaceCleanup,
 			truncated,
 			...(outputRef ? { output: outputRef } : {}),
+			...(structuredOutput !== undefined ? { structuredOutput } : {}),
 		});
 		await options.journal.append("attempt-completed", {
 			result,
@@ -339,6 +375,7 @@ export async function runNativeAttempt(options: {
 			output,
 			sessionFile,
 			handoff,
+			structuredOutput,
 			error: undefined,
 		};
 	} catch (error) {
@@ -385,6 +422,7 @@ export async function runNativeAttempt(options: {
 			output,
 			sessionFile,
 			handoff,
+			structuredOutput,
 			error: message,
 		};
 	} finally {

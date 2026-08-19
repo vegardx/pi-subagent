@@ -119,6 +119,11 @@ export {
 	runNativeAttempt,
 } from "./runtime/attempt.js";
 export {
+	createFinalAnswerController,
+	type FinalAnswerController,
+	StructuredOutputError,
+} from "./runtime/structured-output.js";
+export {
 	createVmCapacityManager,
 	VmCapacityExhaustedError,
 	type VmCapacityLease,

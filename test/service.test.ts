@@ -139,6 +139,7 @@ describe("foreground subagent service", () => {
 				output: "done",
 				sessionFile: "/session.jsonl",
 				handoff: undefined,
+				structuredOutput: undefined,
 				error: undefined,
 			};
 		});
@@ -172,6 +173,7 @@ describe("foreground subagent service", () => {
 			output: "unused",
 			sessionFile: undefined,
 			handoff: undefined,
+			structuredOutput: undefined,
 			error: undefined,
 		}));
 		const client = data.service.forOwner({ id: "owner-a" });
@@ -196,6 +198,7 @@ describe("foreground subagent service", () => {
 				output: "",
 				sessionFile: undefined,
 				handoff: undefined,
+				structuredOutput: undefined,
 				error: "cancelled",
 			};
 		});

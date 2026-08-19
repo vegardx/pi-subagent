@@ -21,7 +21,7 @@ describe("runtime contracts", () => {
 			survivesSeatExit: false,
 			steering: false,
 			followUp: false,
-			structuredOutput: false,
+			structuredOutput: true,
 			preflight: true,
 			idempotentLaunch: false,
 			resume: false,
