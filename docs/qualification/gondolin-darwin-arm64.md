@@ -125,6 +125,14 @@ Result views lost handoff metadata. The accepted behavior is now:
 
 No qualified drive left a Pi-owned QEMU or runner process.
 
+Package qualification built the 0.9.0 candidate into compiled ESM plus
+declarations, produced a bounded npm archive containing no `src`, `test`, or
+`spike` tree, installed that archive into a fresh temporary project, imported
+both public exports, and loaded `dist/extension.js` in a fresh
+`PI_CODING_AGENT_DIR`. `/subagents list` returned `No subagent runs.` without
+initializing QEMU. The archive includes the project license, third-party notices,
+and the Apache-2.0 text required by Gondolin.
+
 An abrupt-seat fault drive killed Pi with `SIGKILL` only after the child native
 session and QEMU were ready. The OS removed the QEMU process in this drive; the
 replacement seat recovered the run as cleanup-blocked, reconciled recorded

@@ -50,6 +50,19 @@ The project does not provide backwards compatibility. Public contracts and
 persisted formats may change incompatibly; consumers must use the exact supported
 contract revision.
 
+## Package
+
+The npm package ships compiled ESM and declarations:
+
+```ts
+import { createSubagentService } from "@vegardx/pi-subagent";
+import piSubagentExtension from "@vegardx/pi-subagent/extension";
+```
+
+Pi loads the declared extension from `dist/extension.js`. The supported release
+line requires Pi `>=0.84.2 <0.85`, Node.js 23.6 or newer, and macOS Apple Silicon
+with the qualified Gondolin/QEMU stack.
+
 ## Documentation
 
 - [Glossary](docs/glossary.md)

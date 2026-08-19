@@ -240,9 +240,13 @@ Using bounded disposable fixtures:
 
 ## Distribution
 
-- packed package loads in a fresh `PI_CODING_AGENT_DIR`;
-- Gondolin is pinned behind the project adapter and third-party notices are
-  present;
+- packed package contains compiled ESM/declarations and excludes source, tests,
+  spikes, local state, archives, and build-only scripts;
+- packed package installs into a fresh project, public and extension exports
+  import under plain Node.js, and the extension loads in a fresh
+  `PI_CODING_AGENT_DIR` without starting QEMU;
+- Gondolin is pinned behind the project adapter and third-party notices plus
+  required dependency license texts are present;
 - tool and command ownership has no collisions;
 - public runtime capability contract matches implementation exactly;
 - supported Pi, Node, Gondolin, image, QEMU, and macOS Apple Silicon ranges are

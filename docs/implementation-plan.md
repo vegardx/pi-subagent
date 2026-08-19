@@ -605,6 +605,11 @@ intents, and centralize command/format sources. The alleged unrecoverable trash
 case was narrowed to an actual missing recovery loop; the run-record-last commit
 ordering remains the crash-safety boundary.
 
+The 0.9 release-candidate package now emits compiled ESM and declarations,
+exports public API and extension entry points from `dist`, excludes development
+source/tests/spikes, carries third-party notices and Apache-2.0 text, and passes a
+fresh archive install/import plus fresh `PI_CODING_AGENT_DIR` extension drive.
+
 ### Build
 
 - execute every item in `docs/acceptance.md`;

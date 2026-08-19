@@ -1,34 +1,44 @@
 {
 	"name": "@vegardx/pi-subagent",
-	"version": "0.1.0",
+	"version": "0.9.0",
 	"description": "Native Gondolin-isolated subagent runtime for Pi.",
 	"type": "module",
 	"license": "MIT",
-	"private": true,
 	"files": [
-		"src",
-		"spike",
+		"dist",
 		"docs",
 		"README.md",
-		"LICENSE"
+		"LICENSE",
+		"LICENSES",
+		"THIRD_PARTY_NOTICES.md"
 	],
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
 	"exports": {
-		".": "./src/index.ts",
-		"./extension": "./src/extension.ts"
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		},
+		"./extension": {
+			"types": "./dist/extension.d.ts",
+			"import": "./dist/extension.js"
+		}
 	},
 	"pi": {
 		"extensions": [
-			"./src/extension.ts"
+			"./dist/extension.js"
 		]
 	},
 	"scripts": {
+		"build": "tsc -p tsconfig.build.json",
+		"prepare": "npm run build",
 		"check": "biome check . && tsc --noEmit && vitest run && npm run pack:check",
 		"lint": "biome check .",
 		"lint:fix": "biome check --write .",
 		"typecheck": "tsc --noEmit",
 		"test": "vitest run",
 		"qualify:gondolin": "tsx spike/gondolin/qualify.ts",
-		"pack:check": "npm pack --dry-run --json >/dev/null"
+		"pack:check": "node scripts/check-pack.mjs"
 	},
 	"engines": {
 		"node": ">=23.6.0"
