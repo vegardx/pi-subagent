@@ -17,7 +17,7 @@ transient.
 | Network policy | Destination denied or policy could not be enforced | Never without a new grant |
 | Provider transient | Rate limit or temporary model transport failure | Bounded with backoff |
 | Model output | Structured-output noncompliance | Bounded repair, then fail |
-| Tool | Guest tool execution failed | Workflow/caller policy |
+| Tool | Guest tool failed; fatal command timeout closed the VM | Manual only after inspecting partial effects |
 | Timeout | Attempt or settlement deadline | New attempt only by policy |
 | Cancellation | Caller stop won before completion | Never |
 | Seat interruption | Seat exited or reloaded during an active attempt | Explicit validated resume |

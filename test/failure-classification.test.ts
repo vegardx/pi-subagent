@@ -31,6 +31,17 @@ describe("attempt failure classification", () => {
 			retry: "never",
 		},
 		{
+			name: "fatal tool timeout",
+			input: {
+				error: new Error("timeout:1"),
+				timedOut: false,
+				fatalToolAbort: true,
+				...cleanup,
+			},
+			code: "tool",
+			retry: "manual",
+		},
+		{
 			name: "attempt timeout",
 			input: { error: new Error("deadline"), timedOut: true, ...cleanup },
 			code: "timeout",

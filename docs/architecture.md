@@ -111,6 +111,10 @@ ls
 Read-only launch plans omit mutating tools. Tool factories use `/workspace` as
 the only child cwd. Paths are canonicalized and checked before crossing the VFS
 boundary. User shell commands follow the same VM execution path when exposed.
+Guest command environments use an explicit locale/terminal allowlist. A command
+abort or tool timeout is fatal to the attempt VM because aborting `vm.exec()`
+alone cannot prove guest-process termination; QEMU closes before the error is
+returned and the VM cannot be reused.
 
 A future external tool is admissible only when its implementation runs inside
 the VM or a project-owned host adapter enforces equivalent bounded authority.

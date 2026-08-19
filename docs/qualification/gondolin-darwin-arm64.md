@@ -152,9 +152,12 @@ Relying on the first filesystem or exec operation to trigger lazy startup gives
 misleading timing and identity evidence.
 
 Aborting a Gondolin `vm.exec()` rejects the host-side promise but does not by
-itself guarantee termination of the guest process. Attempt cancellation must
-close the whole per-attempt VM and prove its QEMU process terminal. It must not
-reuse the VM after an aborted command.
+itself guarantee termination of the guest process. Attempt cancellation and bash
+tool timeout now close the whole per-attempt VM and prove its QEMU process
+terminal. Focused qualification ran `sleep 3; write` with a one-second tool
+timeout: the VM was closed before the error returned, the delayed host-backed
+write remained absent after 3.5 seconds, reuse was unavailable, and no QEMU
+remained.
 
 `RealFSProvider` has no built-in workspace quota. The spike wraps it with
 `SandboxVfsProvider` and reserves a cumulative byte budget before each write,
@@ -162,10 +165,14 @@ write-file, or truncate operation. This safely limits host write amplification,
 but the production wrapper still needs adversarial coverage for every VFS
 mutation path and concurrent handles.
 
-The spike's recursive `grep` and `find` operations are adapted from Pi's official
-Gondolin example. They prove VM routing, not complete local-tool parity. They do
-not yet implement the full ignore behavior and need cycle-safe, bounded traversal
-before becoming production tools.
+The recursive `grep` and `find` operations intentionally remain lightweight and
+do not claim complete local-tool or ignore-file parity. Focused drives found no
+practical host-stall defect: cancellation of a 2,000-file `find` returned in 53
+milliseconds while VM closure completed, and 5,000 grep matches produced a
+2,311-byte bounded result with the exact 100-match notice. No arbitrary traversal
+limits are imposed. A host-absolute workspace symlink could not resolve through
+the VFS provider. A host environment sentinel was absent in the guest; only the
+explicit locale/terminal allowlist plus guest `HOME`/`TMPDIR` remains.
 
 Gondolin's memory and CPU options constrain each QEMU instance, but global
 capacity is outside Gondolin. pi-subagent now reserves deterministic localhost
@@ -178,7 +185,6 @@ observational rather than authoritative.
 
 ## Remaining qualification
 
-- integration of the capacity lease into production VM launch authority;
 - adversarial write-budget tests for truncate, append, concurrent handles,
   rename, links, and failed writes;
 - CPU-loop, fork-loop, guest-root-disk, and host-pressure measurements;

@@ -86,9 +86,13 @@ must make the damage reviewable and recoverable.
 
 ## Process boundary
 
-Guest shell commands and subprocesses execute in the VM. Model-facing built-in
-tools must route through Gondolin-backed operations. A mutating host-backed tool
-would bypass the primary safety property and is not allowed.
+Guest shell commands and subprocesses execute in the VM. Their environment is
+rebuilt from a bounded locale/terminal allowlist with guest-fixed `HOME` and
+`TMPDIR`; arbitrary host variables are not forwarded. A bash tool timeout closes
+the complete VM because an aborted `vm.exec()` alone does not prove child-process
+termination, and the attempt cannot reuse that VM. Model-facing built-in tools
+must route through Gondolin-backed operations. A mutating host-backed tool would
+bypass the primary safety property and is not allowed.
 
 Host-owned lifecycle and Git operations are narrowly implemented runtime code,
 not model-selected shell commands. Read-only host adapters may be added only

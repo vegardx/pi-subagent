@@ -130,10 +130,17 @@ Using bounded disposable fixtures:
 - read-only checkout mounts reject all writes;
 - writing attempts use distinct private worktrees;
 - traversal, absolute host paths, symlink escape, and VFS-provider escape fail;
+- ordinary broad grep/find remain allowed; focused cancellation and output drives
+  prove bounded parent output and VM-close containment without imposing arbitrary
+  repository-size limits;
 - host home, Pi config, runtime store, and unrelated repositories are absent;
 - repository-local `.env` and similar files are visible under the workspace's
   normal read/write mode;
 - user shell commands, when enabled, use the same VM path as `bash`;
+- guest commands receive only bounded locale/terminal variables plus guest
+  `HOME`/`TMPDIR`; arbitrary host environment variables are absent;
+- a bash tool timeout closes and fences the entire attempt VM, proves QEMU
+  absence, prevents late writes, and prevents subsequent VM reuse;
 - arbitrary child extension code is absent.
 
 ## Network
