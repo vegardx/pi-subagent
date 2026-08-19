@@ -116,6 +116,7 @@ export {
 	captureWorktreeHandoff,
 	createAttemptWorktree,
 	readWorktreeRecord,
+	releaseWorktreeBranch,
 	removeCleanWorktree,
 	WorktreeError,
 	type WorktreeRecord,
