@@ -11,6 +11,7 @@ import {
 	SettingsManager,
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import { resolveExactPiModel } from "../../src/preflight/models.js";
 import { createGondolinTools, GUEST_WORKSPACE } from "./tools.js";
 
 export type NativeSessionDrive = {
@@ -109,10 +110,12 @@ export async function driveNativeSession(options: {
 		}
 
 		const modelId = options.modelId ?? "gpt-5.6-luna";
-		const model = options.modelRuntime.getModel("github-copilot", modelId);
-		if (!model) {
-			throw new Error(`model unavailable: github-copilot/${modelId}`);
-		}
+		const resolvedModel = await resolveExactPiModel(options.modelRuntime, {
+			provider: "github-copilot",
+			id: modelId,
+			thinking: "low",
+		});
+		const model = resolvedModel.model;
 
 		const created = await createAgentSession({
 			cwd: GUEST_WORKSPACE,

@@ -280,7 +280,9 @@ Cross-process run fencing with monotonic generations is implemented and enforced
 by journal appends and snapshots. Session/worktree fencing and package-manifest discovery remain outstanding.
 Agent discovery now parses bounded strict frontmatter, requires trusted project
 sources, validates default-model ceilings, rejects same-scope collisions, and
-applies deterministic builtin → package → global → project precedence.
+applies deterministic builtin → package → global → project precedence. Exact Pi
+model preflight now checks catalog identity, supported thinking levels, and
+provider authentication through `ModelRuntime` without clamping or fallback.
 Canonical file and tree digesting now binds real paths, relative entry names,
 content, executable mode, and bounded file/byte counts while rejecting symlinks
 and unsupported entries. The semantic compiler enforces agent capability and limit ceilings, exact model

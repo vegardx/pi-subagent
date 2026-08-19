@@ -80,6 +80,13 @@ export {
 	type ResolvedWorkspace,
 } from "./preflight/compile.js";
 export {
+	createExactModelResolver,
+	ModelPreflightError,
+	type ModelPreflightRuntime,
+	type ResolvedPiModel,
+	resolveExactPiModel,
+} from "./preflight/models.js";
+export {
 	digestFileResource,
 	digestTreeResource,
 	type ResourceDigest,
