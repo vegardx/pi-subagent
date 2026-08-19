@@ -293,6 +293,7 @@ interface SubagentRuntimeContract {
 		classifiedFailures: boolean;
 		cumulativeRuntimeBudget: boolean;
 		retryBackoff: boolean;
+		deepReconciliation: boolean;
 		worktrees: boolean;
 		publicNetworkEgress: boolean;
 		explicitResources: boolean;

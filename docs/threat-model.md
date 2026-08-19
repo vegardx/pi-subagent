@@ -112,9 +112,13 @@ by a deterministic localhost TCP listener. Socket binding is atomic across seat
 processes and the OS releases it on owner death; occupied unrelated ports reduce
 capacity rather than widening it. Gondolin's internal-range policy prevents the
 guest from connecting to lease listeners. A separate fenced cross-process lease
-prevents another seat from mutating the same run or worktree. The runtime records host-process and QEMU
-identity; a replacement seat cannot resume or reuse the worktree until the prior
-writer and VM are proved terminal. Active work does not survive loss of its
+prevents another seat from mutating the same run or worktree. The runtime records
+QEMU PID, process birth time, and a full qualified-command digest. A replacement
+seat never adopts the VM and signals it only after exact identity matching with a
+fresh comparison before each signal; PID-only evidence, PID reuse, non-QEMU
+commands, or malformed records remain cleanup-blocked. The replacement seat
+cannot resume or reuse the worktree until the prior writer and VM are proved
+terminal. Active work does not survive loss of its
 seat.
 
 Timeouts and output bounds are not enough if a guest can exhaust host storage or

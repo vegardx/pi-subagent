@@ -187,8 +187,17 @@ Using bounded disposable fixtures:
 - torn journal tail, corrupt snapshot, and unknown schema fail closed;
 - stale `active` state after seat loss reconciles to interrupted or
   cleanup-blocked, never completed;
-- a stale QEMU process is not adopted by a new native session and blocks reuse
-  of its worktree until termination is proved;
+- a stale QEMU process is never adopted; termination requires exact recorded PID,
+  process birth time, qualified-QEMU command digest, and per-signal identity
+  revalidation;
+- PID reuse, a non-QEMU process, malformed identity, or command mismatch is never
+  signalled and remains cleanup-blocked;
+- retained session recovery requires canonical session-root containment and an
+  exact durable `SessionManager` identity match;
+- worktree reconciliation verifies canonical path, Git root, branch, HEAD,
+  status, expected baseline/handoff commit, release receipt, and branch-only
+  retention before classification;
+- a stale process blocks reuse of its worktree until termination is proved;
 - files use private modes and bounded serialization;
 - every non-completed terminal result has one bounded stable failure code,
   origin, retry disposition, message, and guidance;

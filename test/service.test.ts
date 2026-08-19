@@ -863,6 +863,87 @@ describe("foreground subagent service", () => {
 		expect(reconciled.run.status).toBe("failed");
 	});
 
+	it("recovers an exactly matched retained session during reconciliation", async () => {
+		const data = await serviceFor("session-evidence");
+		const ownerId = "owner-session-evidence";
+		const preflight = await data.service.forOwner({ id: ownerId }).preflight({
+			...data.request,
+			operationId: "operation-session-evidence",
+		});
+		const stateRoot = path.join(data.root, "state");
+		await (
+			await RunRecordStore.open(path.join(stateRoot, "run-records"))
+		).create(
+			ownerId,
+			preflight.launchPlan,
+			await preflightWorkspace(data.request.workspace),
+		);
+		const manager = SessionManager.create(
+			"/workspace",
+			path.join(stateRoot, "sessions", preflight.launchPlan.attemptId),
+		);
+		manager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "session evidence" }],
+			timestamp: Date.now(),
+		});
+		const header = manager.getHeader();
+		const sessionFile = manager.getSessionFile();
+		if (!header || !sessionFile) throw new Error("session evidence missing");
+		await writeFile(
+			sessionFile,
+			`${[header, ...manager.getEntries()]
+				.map((entry) => JSON.stringify(entry))
+				.join("\n")}\n`,
+		);
+		const lease = await acquireRunLease({
+			root: path.join(stateRoot, "leases"),
+			runId: preflight.launchPlan.runId,
+		});
+		const journal = await RunJournal.open(
+			path.join(stateRoot, "runs"),
+			preflight.launchPlan.runId,
+			lease,
+		);
+		await journal.append("session-started", {
+			sessionId: manager.getSessionId(),
+			sessionFile,
+		});
+		await lease.release();
+		await data.service.shutdown();
+		const restarted = await createSubagentService({
+			root: stateRoot,
+			agentDir: path.join(data.root, "agent"),
+			agents: new Map([[data.agent.name, data.agent]]),
+			modelRuntime: {} as ModelRuntime,
+			capacity: await createVmCapacityManager({
+				root: path.join(data.root, "capacity"),
+				maxSlots: 2,
+			}),
+			sandbox: {
+				packageVersion: "0.12.0",
+				imageSha256: hash,
+				mountPolicySha256: hash,
+				networkPolicySha256: hash,
+				capacityPolicySha256: hash,
+				memoryBytes: 512 * 1024 * 1024,
+				guestDiskBytes: 2 * 1024 * 1024 * 1024,
+			},
+			resolveModel: async (model) => model,
+		});
+		const reconciled = await restarted
+			.forOwner({ id: ownerId })
+			.reconcile(preflight.launchPlan.runId);
+		expect(reconciled.run.status).toBe("interrupted");
+		expect(reconciled.run.result?.sessionFile).toBe(
+			await realpath(sessionFile),
+		);
+		expect(reconciled.run.result?.result.failure).toMatchObject({
+			code: "seat-interruption",
+			retry: "resume",
+		});
+	});
+
 	it("terminates only an exactly matched stale QEMU identity", async () => {
 		for (const matching of [true, false]) {
 			const data = await serviceFor(`process-identity-${matching}`);

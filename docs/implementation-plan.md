@@ -500,8 +500,12 @@ disposition, bounded message, and operator guidance into every non-completed
 result. Unknown errors fail closed to reconciliation; manual retry and
 exponentially delayed transient retry are distinct; resume requires a seat
 interruption classification and retained session. Runtime, token, and cost are
-cumulative across fresh attempts. Deeper VM session-registry reconciliation
-remains outstanding. Cross-process retention fencing,
+cumulative across fresh attempts. Reconciliation now captures QEMU process birth
+and command identity, terminates only an exact stale match with per-signal
+revalidation, verifies retained `SessionManager` identity and containment, and
+classifies worktrees from canonical Git root/branch/HEAD/status/commit/release
+evidence. Deeper external platform fault coverage remains outstanding.
+Cross-process retention fencing,
 owner pins, unreleased-worktree protection, 30-day age selection, the 2 GiB
 ordinary-data budget, dry-run reporting, and recoverable trash are integrated.
 Owner-bound release now reacquires fencing,
