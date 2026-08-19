@@ -216,6 +216,10 @@ export class RunJournal {
 	async readEvents(): Promise<JournalEvent[]> {
 		await this.appendTail;
 		try {
+			const journalStat = await stat(this.journalPath);
+			if (journalStat.size > MAX_JOURNAL_BYTES) {
+				throw new PersistenceCorruptionError("journal exceeds size limit");
+			}
 			return parseJournal(await readFile(this.journalPath, "utf8"), this.runId);
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
@@ -250,6 +254,10 @@ export class RunJournal {
 
 	async readSnapshot(): Promise<RunSnapshot | undefined> {
 		try {
+			const snapshotStat = await stat(this.snapshotPath);
+			if (snapshotStat.size > MAX_SNAPSHOT_BYTES) {
+				throw new PersistenceCorruptionError("snapshot exceeds size limit");
+			}
 			const value = JSON.parse(await readFile(this.snapshotPath, "utf8"));
 			if (!Value.Check(RunSnapshotSchema, value)) {
 				throw new PersistenceCorruptionError("invalid snapshot schema");
