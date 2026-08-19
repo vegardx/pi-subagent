@@ -68,6 +68,7 @@ function plan(): AgentLaunchPlan {
 		},
 		limits: {
 			runtimeMs: 60_000,
+			attemptRuntimeMs: 30_000,
 			tokens: 1000,
 			cost: 1,
 			outputBytes: 1024,

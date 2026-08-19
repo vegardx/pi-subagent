@@ -248,7 +248,9 @@ export async function runNativeAttempt(options: {
 	let outputRef: ArtifactRef | undefined;
 	let structuredOutput: unknown | undefined;
 	let truncated = false;
-	const timeoutSignal = AbortSignal.timeout(options.plan.limits.runtimeMs);
+	const timeoutSignal = AbortSignal.timeout(
+		options.plan.limits.attemptRuntimeMs,
+	);
 	const runSignal = options.signal
 		? AbortSignal.any([options.signal, timeoutSignal])
 		: timeoutSignal;

@@ -11,6 +11,7 @@ const a = "a".repeat(64);
 const b = "b".repeat(64);
 const limits = {
 	runtimeMs: 60_000,
+	attemptRuntimeMs: 30_000,
 	tokens: 100_000,
 	cost: 10,
 	outputBytes: 1024 * 1024,
@@ -160,6 +161,20 @@ describe("semantic preflight", () => {
 		const plan = await compile({ request: forkRequest, forkContext });
 		expect(plan.forkContext).toEqual(forkContext);
 		expect(verifyLaunchPlanIdentity(plan)).toBe(true);
+	});
+
+	it("rejects an attempt runtime above the cumulative run budget", async () => {
+		await expect(
+			compile({
+				request: {
+					...request,
+					limits: {
+						...request.limits,
+						attemptRuntimeMs: request.limits.runtimeMs + 1,
+					},
+				},
+			}),
+		).rejects.toThrow("attempt runtime exceeds run-wide runtime");
 	});
 
 	it("rejects capability and limit escalation", async () => {
