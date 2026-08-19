@@ -94,6 +94,11 @@ export {
 	type ResourceDigestLimits,
 } from "./preflight/resources.js";
 export {
+	preflightWorkspace,
+	type WorkspacePreflight,
+	WorkspacePreflightError,
+} from "./preflight/workspace.js";
+export {
 	createVmCapacityManager,
 	VmCapacityExhaustedError,
 	type VmCapacityLease,

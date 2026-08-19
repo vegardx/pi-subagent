@@ -277,7 +277,11 @@ persistence slice adds bounded sequenced JSONL events, fsync-backed atomic
 snapshots, private modes, JSON-roundtrip checks, conservative torn-tail and
 corruption handling, and an atomic owner-scoped operation idempotency index.
 Cross-process run fencing with monotonic generations is implemented and enforced
-by journal appends and snapshots. Session/worktree fencing and package-manifest discovery remain outstanding.
+by journal appends and snapshots. Session/worktree fencing, worktree creation/handoff, and package-manifest
+discovery remain outstanding. Git workspace preflight now resolves canonical
+repository/subdirectory identity, requires clean writing baselines, and binds
+HEAD plus tracked diff, status, and untracked content for dirty read-only
+reviews.
 Agent discovery now parses bounded strict frontmatter, requires trusted project
 sources, validates default-model ceilings, rejects same-scope collisions, and
 applies deterministic builtin → package → global → project precedence. Exact Pi

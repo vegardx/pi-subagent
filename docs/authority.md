@@ -116,6 +116,8 @@ transmit repository content.
 A requested worktree is a contract. Failure to create or mount it fails the
 attempt before model execution. There is no fallback to shared mutation.
 
-Mutating parallel attempts receive separate worktrees. Work is captured as an
-immutable commit or declared artifact before cleanup. Uncertain workspaces are
+Mutating attempts currently require a clean source repository at preflight and
+receive separate worktrees. Read-only attempts may inspect dirty checkouts; their
+baseline identity binds tracked diffs and untracked content. Work is captured as
+an immutable commit or declared artifact before cleanup. Uncertain workspaces are
 retained for diagnosis.
