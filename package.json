@@ -12,6 +12,15 @@
 		"README.md",
 		"LICENSE"
 	],
+	"exports": {
+		".": "./src/index.ts",
+		"./extension": "./src/extension.ts"
+	},
+	"pi": {
+		"extensions": [
+			"./src/extension.ts"
+		]
+	},
 	"scripts": {
 		"check": "biome check . && tsc --noEmit && vitest run && npm run pack:check",
 		"lint": "biome check .",
