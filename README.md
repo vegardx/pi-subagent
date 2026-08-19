@@ -42,6 +42,7 @@ contract revision.
 - [Implementation research](docs/research.md)
 - [Research source ledger](docs/research-sources.md)
 - [Implementation plan](docs/implementation-plan.md)
+- [macOS arm64 Gondolin qualification](docs/qualification/gondolin-darwin-arm64.md)
 - [Roadmap](docs/roadmap.md)
 
 ## Relationship to pi-workflow

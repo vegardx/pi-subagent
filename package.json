@@ -1,0 +1,47 @@
+{
+	"name": "@vegardx/pi-subagent",
+	"version": "0.1.0",
+	"description": "Native Gondolin-isolated subagent runtime for Pi.",
+	"type": "module",
+	"license": "MIT",
+	"private": true,
+	"files": [
+		"src",
+		"spike",
+		"docs",
+		"README.md",
+		"LICENSE"
+	],
+	"scripts": {
+		"check": "biome check . && tsc --noEmit && vitest run && npm run pack:check",
+		"lint": "biome check .",
+		"lint:fix": "biome check --write .",
+		"typecheck": "tsc --noEmit",
+		"test": "vitest run",
+		"qualify:gondolin": "tsx spike/gondolin/qualify.ts",
+		"pack:check": "npm pack --dry-run --json >/dev/null"
+	},
+	"engines": {
+		"node": ">=23.6.0"
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-ai": "0.84.2",
+		"@earendil-works/pi-coding-agent": "0.84.2",
+		"@earendil-works/pi-tui": "0.84.2",
+		"typebox": "*"
+	},
+	"dependencies": {
+		"@earendil-works/gondolin": "0.12.0"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "2.5.4",
+		"@earendil-works/pi-ai": "0.84.2",
+		"@earendil-works/pi-coding-agent": "0.84.2",
+		"@earendil-works/pi-tui": "0.84.2",
+		"@types/node": "24.13.3",
+		"tsx": "4.23.12",
+		"typebox": "1.1.39",
+		"typescript": "7.0.2",
+		"vitest": "4.1.0"
+	}
+}
