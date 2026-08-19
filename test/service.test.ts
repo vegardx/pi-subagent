@@ -134,7 +134,7 @@ describe("foreground subagent service", () => {
 		const data = await serviceFor("success", async (input) => {
 			await input.journal.append("fake-attempt", {});
 			const output = await input.artifactStore.put("done", "text/plain");
-			return {
+			const execution = {
 				result: { ...result(input.plan.runId, "completed"), output },
 				output: "done",
 				sessionFile: "/session.jsonl",
@@ -142,6 +142,8 @@ describe("foreground subagent service", () => {
 				structuredOutput: undefined,
 				error: undefined,
 			};
+			await input.journal.writeSnapshot(execution);
+			return execution;
 		});
 		const client = data.service.forOwner({ id: "owner-a" });
 		const preflight = await client.preflight(data.request);
@@ -165,6 +167,34 @@ describe("foreground subagent service", () => {
 		await expect(
 			data.service.forOwner({ id: "owner-b" }).status(first.runId),
 		).rejects.toThrow("run not found");
+
+		const restarted = await createSubagentService({
+			root: path.join(data.root, "state"),
+			agents: new Map([[data.agent.name, data.agent]]),
+			modelRuntime: {} as ModelRuntime,
+			capacity: await createVmCapacityManager({
+				root: path.join(data.root, "capacity"),
+				maxSlots: 2,
+			}),
+			sandbox: {
+				packageVersion: "0.12.0",
+				imageSha256: hash,
+				mountPolicySha256: hash,
+				networkPolicySha256: hash,
+				capacityPolicySha256: hash,
+				memoryBytes: 512 * 1024 * 1024,
+				guestDiskBytes: 2 * 1024 * 1024 * 1024,
+			},
+			resolveModel: async (model) => model,
+		});
+		const restartedClient = restarted.forOwner({ id: "owner-a" });
+		expect((await restartedClient.status(first.runId)).status).toBe(
+			"completed",
+		);
+		expect((await restartedClient.findByOperation("operation-1"))?.runId).toBe(
+			first.runId,
+		);
+		expect((await restartedClient.wait(first.runId)).output).toBe("done");
 	});
 
 	it("rejects workspace drift after preflight", async () => {

@@ -582,7 +582,37 @@ async function qualifyForegroundService(): Promise<string> {
 		(await client.logs(receipt.runId)).length >= 4,
 		"service logs missing",
 	);
-	return `Foreground service preflighted, launched idempotently, waited for, and observed ${receipt.runId}.`;
+	const restartedService = await createSubagentService({
+		root: path.join(root, "service-state"),
+		agents: new Map([[agent.name, agent]]),
+		modelRuntime,
+		capacity: await createVmCapacityManager({
+			root: path.join(root, "service-capacity"),
+			maxSlots: 1,
+		}),
+		sandbox: {
+			packageVersion: "0.12.0",
+			imageSha256: canonicalSha256("qualification-image"),
+			mountPolicySha256: canonicalSha256("qualification-mount"),
+			networkPolicySha256: canonicalSha256("qualification-network"),
+			capacityPolicySha256: canonicalSha256("qualification-capacity"),
+			memoryBytes: 512 * 1024 * 1024,
+			guestDiskBytes: 2 * 1024 * 1024 * 1024,
+		},
+	});
+	const restarted = restartedService.forOwner({
+		id: "qualification-service-owner",
+	});
+	assert(
+		(await restarted.status(receipt.runId)).status === "completed",
+		"restarted service did not recover terminal status",
+	);
+	assert(
+		(await restarted.findByOperation("qualification-service-operation"))
+			?.runId === receipt.runId,
+		"restarted service did not recover operation identity",
+	);
+	return `Foreground service preflighted, launched idempotently, recovered after restart, and observed ${receipt.runId}.`;
 }
 
 async function qualifyAttemptRunner(): Promise<string> {

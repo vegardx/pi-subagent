@@ -465,8 +465,12 @@ status, logs, wait, and interrupt. It deterministically derives run identity,
 revalidates agent/model/workspace state at launch, claims the durable operation
 index, acquires fenced run ownership, prepares worktrees, and delegates to the
 production attempt runner. Duplicate launch in the live seat adopts the same
-run. Cross-seat adoption, retry, resume, reconciliation, artifacts, and release
-remain outstanding.
+run. Startup now scans immutable run records, acquires replacement fencing, restores
+terminal snapshots and artifact access, rebuilds owner/status/wait routing, and
+adopts durable operation IDs. Runs without proved terminal snapshots are
+conservatively rewritten as cleanup-blocked. Active observation of runs still
+owned by another seat, retry, resume, deeper QEMU/worktree reconciliation,
+retention, and release remain outstanding.
 
 ### Build
 

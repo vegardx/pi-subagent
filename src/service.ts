@@ -4,7 +4,15 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { type ArtifactExport, ArtifactStore } from "./artifacts/store.js";
-import type { ArtifactRef, AttemptId, RunId, RunStatus } from "./contracts.js";
+import {
+	type ArtifactRef,
+	type AttemptId,
+	isRunResult,
+	type RunId,
+	type RunResult,
+	type RunStatus,
+	type Usage,
+} from "./contracts.js";
 import type {
 	AgentLaunchPlan,
 	ExactModelRequest,
@@ -13,7 +21,12 @@ import type {
 } from "./launch-contracts.js";
 import { type JournalEvent, RunJournal } from "./persistence/journal.js";
 import { OperationIndex } from "./persistence/operation-index.js";
-import { acquireRunLease, type RunLease } from "./persistence/run-lease.js";
+import {
+	acquireRunLease,
+	type RunLease,
+	RunLeaseUnavailableError,
+} from "./persistence/run-lease.js";
+import { RunRecordStore } from "./persistence/run-record.js";
 import type { DiscoveredAgent } from "./preflight/agents.js";
 import { canonicalSha256 } from "./preflight/canonical.js";
 import {
@@ -66,6 +79,7 @@ export type SubagentClient = {
 		preflightId: string,
 		expectedIdentitySha256: string,
 	): Promise<RunReceipt>;
+	findByOperation(operationId: string): Promise<RunReceipt | undefined>;
 	status(runId: RunId): Promise<RunView>;
 	logs(runId: RunId): Promise<JournalEvent[]>;
 	wait(runId: RunId): Promise<AttemptExecutionResult>;
@@ -93,7 +107,6 @@ type ActiveRun = {
 	plan: AgentLaunchPlan;
 	journal: RunJournal;
 	artifacts: ArtifactStore;
-	lease: RunLease;
 	abort: AbortController;
 	promise: Promise<AttemptExecutionResult>;
 	result?: AttemptExecutionResult;
@@ -118,6 +131,17 @@ function deterministicIds(ownerId: string, request: SubagentRequest) {
 		runId: `run_${identity.slice(0, 48)}`,
 		attemptId: `attempt_${identity.slice(0, 48)}`,
 		requestSha256: canonicalSha256(request),
+	};
+}
+
+function emptyUsage(): Usage {
+	return {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 0,
+		cost: 0,
 	};
 }
 
@@ -174,6 +198,9 @@ export async function createSubagentService(options: {
 	const operationIndex = await OperationIndex.open(
 		path.join(options.root, "operations"),
 	);
+	const runRecords = await RunRecordStore.open(
+		path.join(options.root, "run-records"),
+	);
 	const preflights = new Map<string, PreparedPreflight>();
 	const runs = new Map<string, ActiveRun>();
 	let launchTail = Promise.resolve();
@@ -194,6 +221,84 @@ export async function createSubagentService(options: {
 	const executeAttempt = options.executeAttempt ?? runNativeAttempt;
 	const resolveModel =
 		options.resolveModel ?? createExactModelResolver(options.modelRuntime);
+
+	for (const record of await runRecords.list()) {
+		let lease: RunLease;
+		try {
+			lease = await acquireRunLease({
+				root: path.join(options.root, "leases"),
+				runId: record.plan.runId,
+			});
+		} catch (error) {
+			if (error instanceof RunLeaseUnavailableError) continue;
+			throw error;
+		}
+		try {
+			const journal = await RunJournal.open(
+				path.join(options.root, "runs"),
+				record.plan.runId,
+				lease,
+			);
+			const artifacts = await ArtifactStore.open({
+				root: path.join(options.root, "runs", record.plan.runId, "artifacts"),
+				maxArtifactBytes: record.plan.limits.outputBytes,
+				maxTotalBytes: record.plan.limits.outputBytes,
+				lease,
+			});
+			const snapshot = await journal.readSnapshot();
+			const state = snapshot?.state as
+				| { result?: unknown; output?: unknown; error?: unknown }
+				| undefined;
+			const persistedResult = state?.result;
+			let result: RunResult;
+			if (isRunResult(persistedResult)) {
+				result = persistedResult;
+			} else {
+				result = {
+					runId: record.plan.runId,
+					status: "cleanup-blocked",
+					usage: emptyUsage(),
+					usageComplete: false,
+					sandboxCleanup: "unknown",
+					workspaceCleanup:
+						record.plan.workspace.mode === "read-only"
+							? "not-needed"
+							: "unknown",
+					truncated: false,
+				};
+				await journal.append("startup-reconciled", {
+					status: "cleanup-blocked",
+					reason: "terminal state was not proved before seat loss",
+				});
+				await journal.writeSnapshot({
+					result,
+					error: "terminal state was not proved before seat loss",
+				});
+			}
+			const execution: AttemptExecutionResult = {
+				result,
+				output: typeof state?.output === "string" ? state.output : "",
+				sessionFile: undefined,
+				handoff: undefined,
+				structuredOutput: result.structuredOutput,
+				error: typeof state?.error === "string" ? state.error : undefined,
+			};
+			const abort = new AbortController();
+			const active: ActiveRun = {
+				ownerId: record.ownerId,
+				plan: record.plan,
+				journal,
+				artifacts,
+				abort,
+				promise: Promise.resolve(execution),
+				result: execution,
+				status: result.status,
+			};
+			runs.set(record.plan.runId, active);
+		} finally {
+			await lease.release();
+		}
+	}
 
 	return {
 		forOwner(owner) {
@@ -332,6 +437,7 @@ export async function createSubagentService(options: {
 								maxTotalBytes: prepared.launchPlan.limits.outputBytes,
 								lease,
 							});
+							await runRecords.create(owner.id, prepared.launchPlan);
 							let worktree: WorktreeRecord | undefined;
 							let workspacePath = prepared.workspace.cwd;
 							if (prepared.launchPlan.workspace.mode === "worktree") {
@@ -369,7 +475,6 @@ export async function createSubagentService(options: {
 								plan: prepared.launchPlan,
 								journal,
 								artifacts,
-								lease,
 								abort,
 								promise: rawPromise,
 								status: "active",
@@ -404,6 +509,18 @@ export async function createSubagentService(options: {
 							throw error;
 						}
 					});
+				},
+
+				async findByOperation(operationId) {
+					const record = await operationIndex.find(owner.id, operationId);
+					if (!record) return undefined;
+					const run = runs.get(record.runId);
+					return {
+						runId: record.runId,
+						attemptId:
+							run?.plan.attemptId ?? `attempt_${record.runId.slice(4)}`,
+						status: run?.status ?? "active",
+					};
 				},
 
 				async status(runId) {
