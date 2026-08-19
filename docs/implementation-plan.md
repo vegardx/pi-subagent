@@ -3,8 +3,9 @@
 ## Target
 
 The first stable release targets Pi `>=0.84.2 <0.85`, Node.js 23.6 or newer,
-and qualified Gondolin/QEMU combinations on macOS and Linux. New Pi, Node,
-Gondolin, image, QEMU, or platform versions require explicit qualification.
+and qualified Gondolin/QEMU combinations on macOS Apple Silicon. New Pi, Node,
+Gondolin, image, QEMU, macOS, or architecture versions require explicit
+qualification. Linux and macOS Intel are not supported hosts.
 
 The current Gondolin qualification candidate is
 `@earendil-works/gondolin` 0.12.0. Production code pins the exact version and
@@ -215,7 +216,8 @@ graph LR
 - npm package `@vegardx/pi-subagent`;
 - strict TypeScript with NodeNext and explicit `.js` imports;
 - Biome, Vitest, and TypeScript gates;
-- GitHub Actions on qualified macOS and Linux runners;
+- GitHub Actions on the qualified macOS runner plus Ubuntu build-portability
+  coverage that does not imply runtime support;
 - Pi package manifest with one extension entry;
 - public exports for the service contract and extension;
 - Pi core packages as peer dependencies;
@@ -235,7 +237,8 @@ This is a disposable spike, not production architecture hidden in a test.
 The macOS arm64 drive is recorded in
 [`docs/qualification/gondolin-darwin-arm64.md`](qualification/gondolin-darwin-arm64.md).
 VM/tool/session isolation and the pi-subagent-owned cross-process VM-capacity
-lease passed. Linux qualification remains outstanding.
+lease passed on the supported macOS Apple Silicon host. No Linux qualification
+is planned.
 
 ### Build and measure
 
@@ -557,7 +560,7 @@ The extension is a thin adapter over the standalone service.
 - execute every item in `docs/acceptance.md`;
 - packed installation into a fresh `PI_CODING_AGENT_DIR`;
 - real custom-provider model qualification;
-- real read-only and writing agents on macOS and Linux;
+- real read-only and writing agents on macOS Apple Silicon;
 - workflow-consumer compatibility fixture;
 - crash and fault injection around state, VM, and workspace lifecycle;
 - publish numeric limits and performance measurements;
@@ -570,7 +573,8 @@ The extension is a thin adapter over the standalone service.
 - no isolation claim relies only on mocks;
 - no path reports completion without session, VM, handoff, and cleanup evidence;
 - runtime and model-facing capability contracts match implementation;
-- supported Pi/Node/Gondolin/image/QEMU/platform matrix is documented;
+- supported Pi/Node/Gondolin/image/QEMU/macOS Apple Silicon matrix is
+  documented;
 - pi-workflow uses the public service without private runtime duplication.
 
 ## Public API target
@@ -614,9 +618,10 @@ Versions are capability milestones, not deadlines.
 
 ## Cross-repository dependency
 
-`pi-workflow` may develop against a fake `SubagentService` after the contract
-stabilizes. Packed integration begins only after required features have real
-acceptance evidence. Workflow checks the exact runtime contract revision and
-features and must not request detached survival from a runtime declaring it
-unsupported. Incompatible revisions fail startup; no compatibility adapter is
-provided.
+`pi-workflow` work is paused until pi-subagent completes its planned production
+implementation, full acceptance inventory, dogfood cutover, and stable release
+qualification. No parallel fake-service development or early packed integration
+is planned. After that gate, workflow consumes only the public service, checks
+the exact runtime contract revision and features, and must not request detached
+survival from a runtime declaring it unsupported. Incompatible revisions fail
+startup; no compatibility adapter is provided.

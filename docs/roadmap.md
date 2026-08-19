@@ -48,9 +48,17 @@
 - steering and follow-up while the seat is active;
 - bounded widget and inspector;
 - packed-package smoke tests;
-- real QEMU acceptance on macOS and Linux;
-- exact contract revision check for workflow consumers;
+- real QEMU acceptance on macOS Apple Silicon;
 - first stable API.
+
+## Phase 5 — deferred workflow integration
+
+Starts only after pi-subagent completes full acceptance, dogfood cutover, and
+stable release qualification:
+
+- exact contract revision check for workflow consumers;
+- public-service-only pi-workflow integration;
+- no duplicate workflow-owned subagent runtime.
 
 ## Initial non-goals
 

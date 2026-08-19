@@ -2,8 +2,9 @@
 
 Native subagent runtime for [Pi](https://pi.dev).
 
-This repository is in the contract-definition and qualification phase. It does
-not yet ship a working extension.
+This repository is in active implementation and qualification. The supported
+host target is macOS on Apple Silicon; the guest remains Linux under Gondolin.
+Other hosts may pass build checks but are not supported or release-qualified.
 
 ## Goal
 
@@ -47,8 +48,10 @@ contract revision.
 
 ## Relationship to pi-workflow
 
-[`pi-workflow`](https://github.com/vegardx/pi-workflow) consumes the typed
-`SubagentService`; it must not create a private second subagent runtime.
+[`pi-workflow`](https://github.com/vegardx/pi-workflow) will consume the typed
+`SubagentService` only after pi-subagent is finished and release-qualified.
+Workflow implementation and integration are intentionally deferred until then;
+workflow must never create a private second subagent runtime.
 
 ## License
 

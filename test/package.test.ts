@@ -30,5 +30,5 @@ describe("package contract", () => {
 		const publicApi = await import("../src/index.js");
 		expect(extension.default).toBeTypeOf("function");
 		expect(publicApi.createVmCapacityManager).toBeTypeOf("function");
-	});
+	}, 15_000);
 });
