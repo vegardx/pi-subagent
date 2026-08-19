@@ -2,23 +2,32 @@
 
 Native subagent runtime for [Pi](https://pi.dev).
 
-This repository is in the contract-definition phase. It does not yet ship a
-working extension.
+This repository is in the contract-definition and qualification phase. It does
+not yet ship a working extension.
 
 ## Goal
 
 Provide one reusable implementation for delegated Pi agents:
 
-- explicit model, tool, extension, skill, and context grants;
-- isolated child Pi sessions with a canonical RPC subprocess backend;
-- foreground and durable background runs;
-- steering, follow-up, cancellation, retry, resume, and reconciliation;
-- worktree and sandbox policies that fail closed;
-- bounded artifacts, usage accounting, and process-cleanup evidence;
+- native in-process Pi `AgentSession`s with explicit resource projection;
+- one Gondolin Linux micro-VM per active attempt;
+- VM-backed built-in tools with fail-closed host-write containment;
+- read-only checkout access for readers and private worktrees for writers;
+- host-owned models, credentials, Git handoffs, persistence, and cleanup;
+- cancellation, retry, fresh-VM resume, and reconciliation;
+- bounded artifacts and usage accounting;
 - a typed service used by both the model-facing tool and workflow engines.
+
+Active attempts stop when the Pi seat exits or reloads. Their session and
+workspace state persist for explicit resume in a fresh VM. The initial runtime
+does not provide detached execution or survival across seat exit.
 
 `pi-subagent` owns physical agent execution. It does not schedule workflow
 stages or define delivery policy.
+
+The project does not provide backwards compatibility. Public contracts and
+persisted formats may change incompatibly; consumers must use the exact supported
+contract revision.
 
 ## Documentation
 
