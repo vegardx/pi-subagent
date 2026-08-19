@@ -391,12 +391,10 @@ export async function createSubagentService(options: {
 		options.resolveModel ?? createExactModelResolver(options.modelRuntime);
 
 	for (const record of await runRecords.list()) {
-		const recoveredSkills = await discoverAndProjectSkills({
-			cwd: record.workspace.cwd,
-			agentDir,
-			projectTrusted: options.isProjectTrusted?.(record.workspace.cwd) ?? false,
-			preloadSkills: record.plan.preloadSkills,
-		});
+		const recoveredSkills: SkillProjection = {
+			catalog: [],
+			preloadPrompt: "",
+		};
 		const latestAttempt = await attemptRecords.latest(record.plan.runId);
 		const recoveredPlan = latestAttempt?.plan ?? record.plan;
 		let lease: RunLease;
