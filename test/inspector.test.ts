@@ -26,6 +26,8 @@ function summary(
 		updatedAt: "2026-08-19T00:00:01.000Z",
 		pinned: false,
 		controllable: status === "active",
+		retryable: status === "failed",
+		resumable: status === "interrupted",
 		retainedWorktree: false,
 		requiresAttention: status === "active" || status === "interrupted",
 		...overrides,
@@ -48,6 +50,9 @@ describe("subagent inspector", () => {
 				}),
 			),
 		).toEqual(["resume", "release", "unpin"]);
+		expect(actionsForRun(summary("interrupted", { resumable: false }))).toEqual(
+			["pin"],
+		);
 		expect(actionsForRun(summary("cleanup-blocked"))).toEqual([
 			"reconcile",
 			"pin",

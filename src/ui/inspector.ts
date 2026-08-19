@@ -129,8 +129,8 @@ export function actionsForRun(run: RunSummary): InspectorAction[] {
 		if (run.controllable) actions.push("steer", "follow-up");
 		actions.push("stop");
 	}
-	if (run.status === "failed") actions.push("retry");
-	if (run.status === "interrupted") actions.push("resume");
+	if (run.retryable) actions.push("retry");
+	if (run.resumable) actions.push("resume");
 	if (run.status === "cleanup-blocked") actions.push("reconcile");
 	if (run.retainedWorktree && !["active", "stopping"].includes(run.status)) {
 		actions.push("release");
@@ -304,8 +304,16 @@ function detailBody(
 					: "unavailable",
 				width,
 			),
-			keyValue("Retries", String(plan.limits.retries), width),
-			keyValue("Resumes", String(plan.limits.resumes), width),
+			keyValue(
+				"Retries",
+				`${plan.limits.retries} · ${summary.retryable ? "eligible" : "unavailable"}`,
+				width,
+			),
+			keyValue(
+				"Resumes",
+				`${plan.limits.resumes} · ${summary.resumable ? "eligible" : "unavailable"}`,
+				width,
+			),
 			keyValue("Sandbox", result?.result.sandboxCleanup ?? "pending", width),
 			keyValue(
 				"Workspace cleanup",
