@@ -9,8 +9,9 @@ tail. Interior corruption fails closed. The operation index atomically binds an
 owner-scoped operation ID to one request digest and run through create-once hard
 links; identical replay adopts the mapping and conflicting replay fails.
 Cross-process run leases now use OS-owned per-run localhost listeners and
-monotonic durable generations. Fenced journals verify the current lease before
-every append and snapshot. Session/worktree leases, retention, and
+monotonic durable generations. Fenced journals and worktree lifecycle mutations
+verify the current lease before side effects and receipts. Session leases,
+retention, and
 external-side-effect reconciliation remain design contracts rather than
 implemented behavior.
 

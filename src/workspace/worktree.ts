@@ -19,6 +19,7 @@ import {
 	type RunId,
 	RunIdSchema,
 } from "../contracts.js";
+import type { RunLease } from "../persistence/run-lease.js";
 import type { WorkspacePreflight } from "../preflight/workspace.js";
 
 const execFileAsync = promisify(execFile);
@@ -115,7 +116,12 @@ export async function createAttemptWorktree(options: {
 	runId: RunId;
 	attemptId: AttemptId;
 	workspace: WorkspacePreflight;
+	lease: RunLease;
 }): Promise<WorktreeRecord> {
+	if (options.lease.record.runId !== options.runId) {
+		throw new WorktreeError("worktree run lease identity mismatch");
+	}
+	await options.lease.assertCurrent();
 	if (options.workspace.mode !== "worktree" || options.workspace.dirty) {
 		throw new WorktreeError(
 			"writing worktree requires a clean worktree preflight",
@@ -150,6 +156,7 @@ export async function createAttemptWorktree(options: {
 	});
 	await reservation.close();
 	try {
+		await options.lease.assertCurrent();
 		await git(options.workspace.repositoryRoot, [
 			"worktree",
 			"add",
@@ -158,6 +165,7 @@ export async function createAttemptWorktree(options: {
 			worktreePath,
 			options.workspace.head,
 		]);
+		await options.lease.assertCurrent();
 		await writeRecord(recordPath, record);
 		return record;
 	} catch (error) {
@@ -170,7 +178,12 @@ export async function createAttemptWorktree(options: {
 export async function captureWorktreeHandoff(
 	record: WorktreeRecord,
 	message: string,
+	lease: RunLease,
 ): Promise<WorktreeRecord> {
+	if (lease.record.runId !== record.runId) {
+		throw new WorktreeError("worktree run lease identity mismatch");
+	}
+	await lease.assertCurrent();
 	if (!message.trim() || message.length > 512) {
 		throw new WorktreeError(
 			"handoff commit message must contain 1-512 characters",
@@ -213,13 +226,19 @@ export async function captureWorktreeHandoff(
 		.toString("utf8")
 		.trim();
 	const updated = { ...record, handoffCommit };
+	await lease.assertCurrent();
 	await writeRecord(record.recordPath, updated);
 	return updated;
 }
 
 export async function removeCleanWorktree(
 	record: WorktreeRecord,
+	lease: RunLease,
 ): Promise<void> {
+	if (lease.record.runId !== record.runId) {
+		throw new WorktreeError("worktree run lease identity mismatch");
+	}
+	await lease.assertCurrent();
 	const metadata = await stat(record.worktreePath);
 	if (!metadata.isDirectory())
 		throw new WorktreeError("worktree path is not a directory");
@@ -252,7 +271,38 @@ export async function removeCleanWorktree(
 	) {
 		throw new WorktreeError("worktree cleanup identity mismatch");
 	}
+	await lease.assertCurrent();
 	await git(record.repositoryRoot, ["worktree", "remove", record.worktreePath]);
+}
+
+export async function releaseWorktreeBranch(
+	record: WorktreeRecord,
+	lease: RunLease,
+): Promise<void> {
+	if (lease.record.runId !== record.runId) {
+		throw new WorktreeError("worktree run lease identity mismatch");
+	}
+	await lease.assertCurrent();
+	if (!record.handoffCommit) {
+		throw new WorktreeError("worktree handoff is not captured");
+	}
+	try {
+		await stat(record.worktreePath);
+		throw new WorktreeError("worktree must be removed before branch release");
+	} catch (error) {
+		if (error instanceof WorktreeError) throw error;
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+	}
+	const branchCommit = (
+		await git(record.repositoryRoot, ["rev-parse", "--verify", record.branch])
+	)
+		.toString("utf8")
+		.trim();
+	if (branchCommit !== record.handoffCommit) {
+		throw new WorktreeError("handoff branch identity mismatch");
+	}
+	await lease.assertCurrent();
+	await git(record.repositoryRoot, ["branch", "-D", record.branch]);
 }
 
 export async function readWorktreeRecord(

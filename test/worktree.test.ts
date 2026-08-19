@@ -5,11 +5,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
+import { acquireRunLease } from "../src/persistence/run-lease.js";
 import { preflightWorkspace } from "../src/preflight/workspace.js";
 import {
 	captureWorktreeHandoff,
 	createAttemptWorktree,
 	readWorktreeRecord,
+	releaseWorktreeBranch,
 	removeCleanWorktree,
 	WorktreeError,
 } from "../src/workspace/worktree.js";
@@ -53,16 +55,23 @@ describe("worktree lifecycle", () => {
 			mode: "worktree",
 			cwd: repositoryRoot,
 		});
+		const managerRoot = fixture("manager");
+		const lease = await acquireRunLease({
+			root: path.join(managerRoot, "leases"),
+			runId: "run_handoff",
+		});
 		const record = await createAttemptWorktree({
-			root: fixture("manager"),
+			root: managerRoot,
 			runId: "run_handoff",
 			attemptId: "attempt_handoff",
 			workspace,
+			lease,
 		});
 		await writeFile(path.join(record.worktreePath, "file.txt"), "changed\n");
 		const handoff = await captureWorktreeHandoff(
 			record,
 			"test: capture handoff",
+			lease,
 		);
 		expect(handoff.handoffCommit).toMatch(/^[a-f0-9]{40,64}$/);
 		expect(handoff.handoffCommit).not.toBe(sourceHead);
@@ -73,11 +82,26 @@ describe("worktree lifecycle", () => {
 		expect((await readWorktreeRecord(record.recordPath)).handoffCommit).toBe(
 			handoff.handoffCommit,
 		);
-		await removeCleanWorktree(handoff);
+		await lease.release();
+		const replacement = await acquireRunLease({
+			root: path.join(managerRoot, "leases"),
+			runId: "run_handoff",
+		});
+		await expect(removeCleanWorktree(handoff, lease)).rejects.toMatchObject({
+			name: "RunLeaseFencedError",
+		});
+		await removeCleanWorktree(handoff, replacement);
 		expect(await missing(record.worktreePath)).toBe(true);
 		expect(await git(repositoryRoot, "rev-parse", handoff.branch)).toBe(
 			handoff.handoffCommit,
 		);
+		await releaseWorktreeBranch(handoff, replacement);
+		await expect(
+			execFileAsync("git", ["rev-parse", "--verify", handoff.branch], {
+				cwd: repositoryRoot,
+			}),
+		).rejects.toBeDefined();
+		await replacement.release();
 	});
 
 	it("retains dirty work and rejects duplicate attempt reservations", async () => {
@@ -87,11 +111,16 @@ describe("worktree lifecycle", () => {
 			cwd: repositoryRoot,
 		});
 		const managerRoot = fixture("manager-retained");
+		const lease = await acquireRunLease({
+			root: path.join(managerRoot, "leases"),
+			runId: "run_retained",
+		});
 		const record = await createAttemptWorktree({
 			root: managerRoot,
 			runId: "run_retained",
 			attemptId: "attempt_retained",
 			workspace,
+			lease,
 		});
 		await expect(
 			createAttemptWorktree({
@@ -99,15 +128,17 @@ describe("worktree lifecycle", () => {
 				runId: "run_retained",
 				attemptId: "attempt_retained",
 				workspace,
+				lease,
 			}),
 		).rejects.toThrow("already reserved");
 		await writeFile(
 			path.join(record.worktreePath, "uncommitted.txt"),
 			"keep\n",
 		);
-		await expect(removeCleanWorktree(record)).rejects.toBeInstanceOf(
+		await expect(removeCleanWorktree(record, lease)).rejects.toBeInstanceOf(
 			WorktreeError,
 		);
 		expect(await missing(record.worktreePath)).toBe(false);
+		await lease.release();
 	});
 });
