@@ -49,10 +49,27 @@ Recovery ignores one provably torn tail record and rejects interior corruption
 or an unknown contract revision. Persisted-state compatibility and migrations
 are not supported; incompatible state receives explicit discard guidance.
 
-## Seat ownership
+## Cross-seat ownership
 
-The current seat owns all active native sessions and VMs. There is no external
-supervisor, detached control channel, heartbeat lease, or live adoption.
+One seat instance owns an active attempt. A private cross-process lease records
+the seat identity, host process birth identity, monotonic fencing generation,
+and bounded heartbeat. Every run event, session mutation, worktree mutation,
+and terminal receipt carries the accepted generation. A second seat cannot
+launch, resume, reconcile destructively, or release the same run while the lease
+holder is live.
+
+Heartbeat expiry alone does not grant authority. Reclamation validates the host
+process identity and reconciles any recorded QEMU VM before issuing a higher
+fencing generation. A stale writer cannot commit state after replacement. Run,
+session, worktree, and global VM-capacity locks use documented ordering.
+
+Operation indexes and leases make duplicate launch idempotent across concurrent
+seats and seat replacement. They do not provide detached execution. There is no
+external supervisor, detached control channel, or live VM adoption.
+
+## Seat shutdown
+
+The owning seat holds all active native sessions and VMs for its attempts.
 
 On graceful seat exit or reload the extension:
 
@@ -100,7 +117,8 @@ Reconciliation compares records with:
 
 An apparently live stale QEMU process is never adopted into a new session. It is
 terminated only after identity validation; otherwise cleanup remains blocked
-for operator action.
+for operator action. Retry, resume, or release cannot acquire the worktree while
+the prior VM or seat writer remains live or its terminal state is unproved.
 
 Unprovable state becomes explicit `unknown` or `cleanup-blocked`, never success.
 

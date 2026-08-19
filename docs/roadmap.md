@@ -40,6 +40,7 @@
 - host-owned commit/artifact handoff;
 - retained uncertain work;
 - retry and persisted-session resume into a fresh VM;
+- fenced cross-seat ownership;
 - seat-exit interruption and conservative reconciliation.
 
 ## Phase 4 — product surface

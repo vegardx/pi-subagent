@@ -46,8 +46,9 @@ interface SandboxIdentity {
 ```
 
 A VM belongs to one attempt and is never adopted by another attempt.
-`OperationId` is chosen by the caller and makes launch idempotent inside the
-current seat lifecycle.
+`OperationId` is chosen by the caller and makes logical launch idempotent across
+concurrent seats and seat replacement. It does not keep an attempt alive after
+its owning seat exits.
 
 ## Request and preflight
 
@@ -295,9 +296,9 @@ create a new one. Any post-side-effect path enters settlement before the run can
 be terminal.
 
 A run may be `completed` only when VM cleanup is proved and workspace cleanup is
-`proved` or `not-needed`. A deliberately retained worktree is represented in
-the result and requires explicit `release`; unproved cleanup produces
-`cleanup-blocked`.
+`proved` or `not-needed`. A deliberately retained worktree is represented as
+`retained` and leaves the run `cleanup-blocked` until explicit `release` proves
+cleanup. Blocked, retained, or unknown cleanup can never accompany `completed`.
 
 ```mermaid
 stateDiagram-v2

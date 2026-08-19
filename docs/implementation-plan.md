@@ -278,13 +278,18 @@ host fallback.
 - stable failure codes and retryability;
 - private bounded run store and session paths;
 - append-only sequenced events and atomic snapshots;
-- operation idempotency index;
+- durable operation idempotency index;
+- cross-process run/session/worktree leases with process birth identity,
+  monotonic fencing, and ordered lock acquisition;
+- cross-process global VM-capacity accounting;
 - bounded retention preserving interrupted and cleanup-blocked work.
 
 ### Tests
 
 - schema/type parity and transition exhaustiveness;
-- duplicate operation replay;
+- duplicate operation replay across concurrent seats;
+- stale lease writers are fenced after conservative reclamation;
+- global VM capacity cannot be exceeded by multiple seats;
 - unknown versions and corrupt/torn state fail closed;
 - serialization bounds and redaction;
 - symlink, hardlink, ownership, and mode checks;
@@ -401,20 +406,23 @@ boundaries with verifiable handoff.
 - `status`, `logs`, `wait`, `steer`, `followUp`, and `interrupt` while active;
 - retry budgets and attempt history;
 - graceful seat shutdown/reload interruption;
-- persisted Pi session resume into a fresh VM;
+- fenced cross-seat ownership and conservative stale-lease reclamation;
+- persisted Pi session resume into a fresh VM only after prior VM termination;
 - reconciliation of stale session, VM, worktree, handoff, and terminal records;
 - bounded artifact export and exact usage completeness;
 - explicit release of retained workspaces.
 
 ### Tests
 
-- duplicate launch starts one session and VM;
+- concurrent duplicate launch from separate seats starts one session and VM;
 - owner clients cannot access each other's runs;
+- a live owning seat prevents another seat from resuming or releasing its run;
 - cancellation races with completion;
 - graceful seat exit interrupts and closes VMs;
 - stale active state never becomes success;
-- resume validates authority/workspace and creates a fresh VM;
-- no live VM or guest process is adopted;
+- resume validates authority/workspace and creates a fresh VM only after the
+  prior seat and VM are proved terminal;
+- no live VM or guest process is adopted or allowed to share a worktree;
 - retry/resume preserve limits, cost, and evidence;
 - inactive-seat control is rejected rather than durably queued.
 
