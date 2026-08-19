@@ -164,8 +164,10 @@ stateDiagram-v2
     cleanupBlocked: cleanup-blocked
 ```
 
-Cancellation aborts model activity, terminates guest work, closes the VM, and
-records workspace disposition. Completion requires a terminal `AgentSession`,
+Explicit operator cancellation aborts model activity, terminates guest work,
+closes the VM, and records a cancelled disposition. Graceful seat shutdown uses
+a distinct abort reason and records interrupted when cleanup is proved, preserving
+session/workspace eligibility for a fresh-VM resume. Completion requires a terminal `AgentSession`,
 a closed VM, and proved workspace cleanup. Intentionally retained work remains
 `cleanup-blocked` until explicit release. Cross-seat lease generations fence
 stale lifecycle and cleanup writes.

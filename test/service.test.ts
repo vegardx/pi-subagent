@@ -255,6 +255,97 @@ describe("foreground subagent service", () => {
 		);
 	});
 
+	it("restores persisted handoff metadata after restart", async () => {
+		const data = await fixture("handoff-recovery");
+		const agent = { ...data.agent, workspaceModes: ["worktree" as const] };
+		let expectedHandoffCommit = "";
+		data.request.workspace = { mode: "worktree", cwd: data.repository };
+		const service = await createSubagentService({
+			root: path.join(data.root, "state"),
+			agentDir: path.join(data.root, "agent"),
+			agents: new Map([[agent.name, agent]]),
+			modelRuntime: {} as ModelRuntime,
+			capacity: await createVmCapacityManager({
+				root: path.join(data.root, "capacity"),
+				maxSlots: 1,
+			}),
+			sandbox: {
+				packageVersion: "0.12.0",
+				imageSha256: hash,
+				mountPolicySha256: hash,
+				networkPolicySha256: hash,
+				capacityPolicySha256: hash,
+				memoryBytes: 512 * 1024 * 1024,
+				guestDiskBytes: 2 * 1024 * 1024 * 1024,
+			},
+			resolveModel: async (model) => model,
+			executeAttempt: async (input) => {
+				if (!input.worktree) throw new Error("worktree missing");
+				expectedHandoffCommit = input.worktree.baselineHead;
+				const handoff = {
+					...input.worktree,
+					handoffCommit: expectedHandoffCommit,
+				};
+				await writeFile(
+					input.worktree.recordPath,
+					`${JSON.stringify(handoff, null, 2)}\n`,
+				);
+				const execution = {
+					result: {
+						...result(input.plan.runId, "completed"),
+						workspaceCleanup: "proved" as const,
+					},
+					output: "handoff",
+					sessionFile: undefined,
+					handoff,
+					structuredOutput: undefined,
+					error: undefined,
+				};
+				await input.journal.append("attempt-completed", {});
+				await input.journal.writeSnapshot(execution);
+				return execution;
+			},
+		});
+		const ownerId = "owner-handoff";
+		const client = service.forOwner({ id: ownerId });
+		const preflight = await client.preflight({
+			...data.request,
+			operationId: "operation-handoff",
+		});
+		const receipt = await client.launch(
+			preflight.preflightId,
+			preflight.identitySha256,
+		);
+		await client.wait(receipt.runId);
+		await service.shutdown();
+		const restarted = await createSubagentService({
+			root: path.join(data.root, "state"),
+			agentDir: path.join(data.root, "agent"),
+			agents: new Map(),
+			modelRuntime: {} as ModelRuntime,
+			capacity: await createVmCapacityManager({
+				root: path.join(data.root, "capacity"),
+				maxSlots: 1,
+			}),
+			sandbox: {
+				packageVersion: "0.12.0",
+				imageSha256: hash,
+				mountPolicySha256: hash,
+				networkPolicySha256: hash,
+				capacityPolicySha256: hash,
+				memoryBytes: 512 * 1024 * 1024,
+				guestDiskBytes: 2 * 1024 * 1024 * 1024,
+			},
+			resolveModel: async (model) => model,
+		});
+		const restartedClient = restarted.forOwner({ id: ownerId });
+		expect((await restartedClient.wait(receipt.runId)).handoff).toMatchObject({
+			handoffCommit: expectedHandoffCommit,
+		});
+		await restartedClient.release(receipt.runId);
+		await restarted.shutdown();
+	});
+
 	it("keeps execution dependencies lazy for metadata inspection", async () => {
 		const data = await fixture("lazy-metadata");
 		let loads = 0;
@@ -465,6 +556,7 @@ describe("foreground subagent service", () => {
 			preflight.preflightId,
 			preflight.identitySha256,
 		);
+		expect((await client.listRuns()).runs[0]?.controllable).toBe(true);
 		expect(
 			await client.steer(receipt.runId, {
 				operationId: "control-steer",
@@ -484,6 +576,7 @@ describe("foreground subagent service", () => {
 		expect(delivered).toEqual(["steer:focus", "follow:summarize"]);
 		finish();
 		await client.wait(receipt.runId);
+		expect((await client.listRuns()).runs[0]?.controllable).toBe(false);
 		expect(
 			await client.steer(receipt.runId, {
 				operationId: "control-missed",
@@ -670,7 +763,45 @@ describe("foreground subagent service", () => {
 		expect(reconciled.run.status).toBe("failed");
 	});
 
+	it("preserves resumability when the owning seat shuts down", async () => {
+		let observedReason: unknown;
+		const data = await serviceFor(
+			"seat-shutdown",
+			(input) =>
+				new Promise((resolve) => {
+					input.signal?.addEventListener(
+						"abort",
+						() => {
+							observedReason = input.signal?.reason;
+							resolve({
+								result: result(input.plan.runId, "interrupted"),
+								output: "interrupted",
+								sessionFile: "/retained-session.jsonl",
+								handoff: undefined,
+								structuredOutput: undefined,
+								error: "seat shutdown",
+							});
+						},
+						{ once: true },
+					);
+				}),
+		);
+		const client = data.service.forOwner({ id: "owner-seat" });
+		const preflight = await client.preflight({
+			...data.request,
+			operationId: "operation-seat-shutdown",
+		});
+		const receipt = await client.launch(
+			preflight.preflightId,
+			preflight.identitySha256,
+		);
+		await data.service.shutdown();
+		expect(observedReason).toBe("seat-shutdown");
+		expect((await client.status(receipt.runId)).status).toBe("interrupted");
+	});
+
 	it("interrupts an active attempt", async () => {
+		let observedReason: unknown;
 		const data = await serviceFor("interrupt", async (input) => {
 			await new Promise<void>((resolve) => {
 				if (input.signal?.aborted) resolve();
@@ -679,6 +810,7 @@ describe("foreground subagent service", () => {
 						once: true,
 					});
 			});
+			observedReason = input.signal?.reason;
 			return {
 				result: result(input.plan.runId, "cancelled"),
 				output: "",
@@ -696,5 +828,6 @@ describe("foreground subagent service", () => {
 		);
 		expect((await client.interrupt(receipt.runId)).status).toBe("stopping");
 		expect((await client.wait(receipt.runId)).result.status).toBe("cancelled");
+		expect(observedReason).toBe("caller-interrupt");
 	});
 });

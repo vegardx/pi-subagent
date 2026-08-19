@@ -61,12 +61,25 @@ weakened and host execution must not be used as fallback.
   color;
 - Overview, Activity, Result, and Technical tabs preserve selection across live
   status events;
+- `Alt+S` can open the inspector during a parent tool call without submitting
+  editor input;
+- steer/follow-up remain hidden until the native child session reports control
+  readiness, then produce durable `accepted-by-session`, `missed`, or `failed`
+  receipts;
+- streaming-time control text and confirmations remain inside the inspector
+  rather than relying on nested Pi dialogs;
+- retry/resume appear only when count budgets and durable result/session
+  prerequisites prove eligibility;
 - only state-valid actions appear, and destructive/costly actions require
   confirmation;
 - the attention widget is absent when no run is active, interrupted, stopping,
   or cleanup-blocked;
+- graceful seat shutdown classifies active work as interrupted while explicit
+  operator stop remains cancelled;
 - reload can inspect and retry/resume a dynamic agent from persisted authority
   without an in-memory agent definition;
+- recovered Result views restore persisted handoff metadata and can release the
+  verified worktree/branch reservation;
 - non-TUI command paths return bounded summaries without opening custom UI;
 - operator inspection or refresh never starts a VM.
 

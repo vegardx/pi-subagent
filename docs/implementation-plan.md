@@ -549,8 +549,12 @@ metadata is persisted so retry/resume survives reload without an in-memory agent
 catalog. A unified `/subagents` surface now provides bounded current-project/all
 run discovery, direct subcommands, a full-screen inspector with four detail
 tabs and action palette, retention report, lifecycle event updates, an
-attention-only widget, and progressive tool-row status. Static named-agent
-selection remains outstanding.
+attention-only widget, and progressive tool-row status. Real PTY qualification
+added a portable `Alt+S` active-run entry point, keeps streaming-time input and
+confirmation inside the inspector, gates controls on native-session readiness,
+gates retry/resume on durable eligibility, distinguishes seat interruption from
+operator cancellation, and restores handoff metadata after restart. Static
+named-agent selection remains outstanding.
 
 ### Build
 
