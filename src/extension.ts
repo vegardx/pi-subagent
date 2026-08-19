@@ -284,9 +284,10 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 		ctx: ExtensionCommandContext,
 		runtime: SubagentService,
 		providedText?: string,
+		confirmed = false,
 	): Promise<void> {
 		const client = ownerClient(runtime, run, ctx);
-		if (["stop", "retry", "resume", "release"].includes(action)) {
+		if (!confirmed && ["stop", "retry", "resume", "release"].includes(action)) {
 			const descriptions: Record<string, string> = {
 				stop: "The active model session will stop and its VM will close.",
 				retry: "A new attempt and fresh VM will consume remaining budgets.",
@@ -491,7 +492,14 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 				continue;
 			}
 			try {
-				await performAction(intent.action, intent.run, ctx, runtime);
+				await performAction(
+					intent.action,
+					intent.run,
+					ctx,
+					runtime,
+					intent.text,
+					intent.confirmed ?? false,
+				);
 			} catch (error) {
 				ctx.ui.notify(
 					error instanceof Error ? error.message : String(error),

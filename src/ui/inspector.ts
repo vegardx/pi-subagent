@@ -1,5 +1,6 @@
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import {
+	Input,
 	Key,
 	matchesKey,
 	truncateToWidth,
@@ -41,12 +42,14 @@ export type InspectorIntent =
 			action: InspectorAction;
 			run: RunSummary;
 			state: InspectorState;
+			text?: string;
+			confirmed?: true;
 	  }
 	| { type: "retention"; state: InspectorState }
 	| { type: "search"; state: InspectorState }
 	| { type: "filter"; state: InspectorState };
 
-type Screen = "runs" | "detail" | "actions" | "help";
+type Screen = "runs" | "detail" | "actions" | "input" | "confirm" | "help";
 type Theme = ExtensionCommandContext["ui"]["theme"];
 
 const TABS: InspectorState["tab"][] = [
@@ -469,6 +472,8 @@ export async function showSubagentInspector(options: {
 	let logs: RunLogPage | undefined;
 	let actions: InspectorAction[] = [];
 	let actionSelected = 0;
+	let pendingAction: InspectorAction | undefined;
+	const actionInput = new Input();
 	let detailScroll = 0;
 	let error: string | undefined;
 	let disposed = false;
@@ -559,9 +564,61 @@ export async function showSubagentInspector(options: {
 			(tui, theme, _keybindings, done) => {
 				requestRender = () => tui.requestRender();
 				const finish = (intent: InspectorIntent) => done(intent);
+				actionInput.onSubmit = (text) => {
+					if (
+						!inspection ||
+						!pendingAction ||
+						(pendingAction !== "pin" && !text.trim())
+					) {
+						return;
+					}
+					finish({
+						type: "action",
+						action: pendingAction,
+						run: inspection.summary,
+						state,
+						text:
+							pendingAction === "pin"
+								? text.trim() || "operator pin"
+								: text.trim(),
+					});
+				};
+				actionInput.onEscape = () => {
+					screen = "actions";
+					pendingAction = undefined;
+					tui.requestRender();
+				};
 				return {
 					render(width: number) {
 						const contentWidth = Math.max(20, width - 4);
+						if (screen === "input" && inspection && pendingAction) {
+							return bordered(
+								`${labelAction(pendingAction)} · ${inspection.summary.agentDisplayName}`,
+								[
+									pendingAction === "pin" ? "Reason" : "Instruction",
+									...actionInput.render(contentWidth),
+								],
+								["enter submit · esc cancel"],
+								width,
+								theme,
+							);
+						}
+						if (screen === "confirm" && inspection && pendingAction) {
+							const consequences: Partial<Record<InspectorAction, string>> = {
+								stop: "The active session will stop and its VM will close.",
+								retry:
+									"A new attempt and fresh VM will consume remaining budgets.",
+								resume: "The retained session will continue in a fresh VM.",
+								release: "The verified worktree and branch will be removed.",
+							};
+							return bordered(
+								`Confirm ${pendingAction} · ${inspection.summary.agentDisplayName}`,
+								[consequences[pendingAction] ?? "Continue?"],
+								["enter confirm · esc cancel"],
+								width,
+								theme,
+							);
+						}
 						if (screen === "help") {
 							return bordered(
 								"Subagent inspector help",
@@ -665,6 +722,32 @@ export async function showSubagentInspector(options: {
 						);
 					},
 					handleInput(data: string) {
+						if (screen === "input") {
+							actionInput.handleInput(data);
+							tui.requestRender();
+							return;
+						}
+						if (screen === "confirm") {
+							if (matchesKey(data, Key.escape)) {
+								screen = "actions";
+								pendingAction = undefined;
+							} else if (
+								matchesKey(data, Key.enter) &&
+								inspection &&
+								pendingAction
+							) {
+								finish({
+									type: "action",
+									action: pendingAction,
+									run: inspection.summary,
+									state,
+									confirmed: true,
+								});
+								return;
+							}
+							tui.requestRender();
+							return;
+						}
 						if (screen === "help") {
 							if (matchesKey(data, Key.escape) || data === "?")
 								screen = state.view;
@@ -684,13 +767,23 @@ export async function showSubagentInspector(options: {
 							} else if (matchesKey(data, Key.enter) && inspection) {
 								const action = actions[actionSelected];
 								if (action) {
-									finish({
-										type: "action",
-										action,
-										run: inspection.summary,
-										state,
-									});
-									return;
+									pendingAction = action;
+									if (["steer", "follow-up", "pin"].includes(action)) {
+										actionInput.setValue("");
+										screen = "input";
+									} else if (
+										["stop", "retry", "resume", "release"].includes(action)
+									) {
+										screen = "confirm";
+									} else {
+										finish({
+											type: "action",
+											action,
+											run: inspection.summary,
+											state,
+										});
+										return;
+									}
 								}
 							}
 							tui.requestRender();
@@ -783,7 +876,15 @@ export async function showSubagentInspector(options: {
 						}
 						tui.requestRender();
 					},
-					invalidate() {},
+					get focused() {
+						return actionInput.focused;
+					},
+					set focused(value: boolean) {
+						actionInput.focused = value;
+					},
+					invalidate() {
+						actionInput.invalidate();
+					},
 				};
 			},
 		);
