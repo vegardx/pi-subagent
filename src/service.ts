@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, realpath, stat } from "node:fs/promises";
+import { access, mkdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -560,9 +560,19 @@ export async function createSubagentService(options: {
 	processController?: ProcessController;
 }): Promise<SubagentService> {
 	await mkdir(options.root, { recursive: true, mode: 0o700 });
-	const toolImplementation = await digestFileResource(
-		fileURLToPath(new URL("./sandbox/tools.ts", import.meta.url)),
+	const builtToolImplementation = fileURLToPath(
+		new URL("./sandbox/tools.js", import.meta.url),
 	);
+	const sourceToolImplementation = fileURLToPath(
+		new URL("./sandbox/tools.ts", import.meta.url),
+	);
+	const toolImplementationPath = await access(builtToolImplementation)
+		.then(() => builtToolImplementation)
+		.catch((error: NodeJS.ErrnoException) => {
+			if (error.code === "ENOENT") return sourceToolImplementation;
+			throw error;
+		});
+	const toolImplementation = await digestFileResource(toolImplementationPath);
 	const operationIndex = await OperationIndex.open(
 		path.join(options.root, "operations"),
 	);
