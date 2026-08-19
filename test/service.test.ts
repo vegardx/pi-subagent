@@ -8,6 +8,9 @@ import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 import type { RunResult } from "../src/contracts.js";
 import type { SubagentRequest } from "../src/launch-contracts.js";
+import { RunJournal } from "../src/persistence/journal.js";
+import { acquireRunLease } from "../src/persistence/run-lease.js";
+import { RunRecordStore } from "../src/persistence/run-record.js";
 import { digestFileResource } from "../src/preflight/resources.js";
 import { createVmCapacityManager } from "../src/sandbox/capacity.js";
 import { createSubagentService } from "../src/service.js";
@@ -212,6 +215,58 @@ describe("foreground subagent service", () => {
 		await expect(
 			client.launch(preflight.preflightId, preflight.identitySha256),
 		).rejects.toThrow("workspace changed after preflight");
+	});
+
+	it("reconciles a stale pre-terminal run conservatively", async () => {
+		const data = await serviceFor("reconcile");
+		const ownerId = "owner-a";
+		const preflight = await data.service
+			.forOwner({ id: ownerId })
+			.preflight(data.request);
+		const stateRoot = path.join(data.root, "state");
+		const records = await RunRecordStore.open(
+			path.join(stateRoot, "run-records"),
+		);
+		await records.create(ownerId, preflight.launchPlan);
+		const lease = await acquireRunLease({
+			root: path.join(stateRoot, "leases"),
+			runId: preflight.launchPlan.runId,
+		});
+		const journal = await RunJournal.open(
+			path.join(stateRoot, "runs"),
+			preflight.launchPlan.runId,
+			lease,
+		);
+		await journal.append("attempt-starting", {});
+		await lease.release();
+
+		const restarted = await createSubagentService({
+			root: stateRoot,
+			agents: new Map([[data.agent.name, data.agent]]),
+			modelRuntime: {} as ModelRuntime,
+			capacity: await createVmCapacityManager({
+				root: path.join(data.root, "capacity"),
+				maxSlots: 2,
+			}),
+			sandbox: {
+				packageVersion: "0.12.0",
+				imageSha256: hash,
+				mountPolicySha256: hash,
+				networkPolicySha256: hash,
+				capacityPolicySha256: hash,
+				memoryBytes: 512 * 1024 * 1024,
+				guestDiskBytes: 2 * 1024 * 1024 * 1024,
+			},
+			resolveModel: async (model) => model,
+		});
+		const client = restarted.forOwner({ id: ownerId });
+		expect((await client.status(preflight.launchPlan.runId)).status).toBe(
+			"cleanup-blocked",
+		);
+		const reconciled = await client.reconcile(preflight.launchPlan.runId);
+		expect(reconciled.sandboxProcess).toBe("not-started");
+		expect(reconciled.workspace).toBe("not-needed");
+		expect(reconciled.run.status).toBe("failed");
 	});
 
 	it("interrupts an active attempt", async () => {

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir } from "node:fs/promises";
+import { mkdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
@@ -73,6 +73,12 @@ export type RunView = RunReceipt & {
 	result?: AttemptExecutionResult;
 };
 
+export type ReconcileResult = {
+	run: RunView;
+	sandboxProcess: "absent" | "present" | "not-started" | "unknown";
+	workspace: "not-needed" | "retained" | "absent" | "unknown";
+};
+
 export type SubagentClient = {
 	preflight(request: SubagentRequest): Promise<SubagentPreflight>;
 	launch(
@@ -84,6 +90,7 @@ export type SubagentClient = {
 	logs(runId: RunId): Promise<JournalEvent[]>;
 	wait(runId: RunId): Promise<AttemptExecutionResult>;
 	interrupt(runId: RunId): Promise<RunReceipt>;
+	reconcile(runId: RunId): Promise<ReconcileResult>;
 	exportArtifact(
 		runId: RunId,
 		ref: ArtifactRef,
@@ -143,6 +150,28 @@ function emptyUsage(): Usage {
 		totalTokens: 0,
 		cost: 0,
 	};
+}
+
+function processState(pid: number): "absent" | "present" | "unknown" {
+	try {
+		process.kill(pid, 0);
+		return "present";
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ESRCH") return "absent";
+		return "unknown";
+	}
+}
+
+async function pathState(
+	filePath: string,
+): Promise<"present" | "absent" | "unknown"> {
+	try {
+		await stat(filePath);
+		return "present";
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return "absent";
+		return "unknown";
+	}
 }
 
 function validateOwner(owner: OwnerRegistration): void {
@@ -247,7 +276,13 @@ export async function createSubagentService(options: {
 			});
 			const snapshot = await journal.readSnapshot();
 			const state = snapshot?.state as
-				| { result?: unknown; output?: unknown; error?: unknown }
+				| {
+						result?: unknown;
+						output?: unknown;
+						sessionFile?: unknown;
+						handoff?: unknown;
+						error?: unknown;
+				  }
 				| undefined;
 			const persistedResult = state?.result;
 			let result: RunResult;
@@ -278,7 +313,10 @@ export async function createSubagentService(options: {
 			const execution: AttemptExecutionResult = {
 				result,
 				output: typeof state?.output === "string" ? state.output : "",
-				sessionFile: undefined,
+				sessionFile:
+					typeof state?.sessionFile === "string"
+						? state.sessionFile
+						: undefined,
 				handoff: undefined,
 				structuredOutput: result.structuredOutput,
 				error: typeof state?.error === "string" ? state.error : undefined,
@@ -539,6 +577,142 @@ export async function createSubagentService(options: {
 
 				async wait(runId) {
 					return ownedRun(runId).promise;
+				},
+
+				async reconcile(runId) {
+					const run = ownedRun(runId);
+					if (run.status !== "cleanup-blocked") {
+						return {
+							run: {
+								runId,
+								attemptId: run.plan.attemptId,
+								status: run.status,
+								...(run.result ? { result: run.result } : {}),
+							},
+							sandboxProcess: "absent",
+							workspace:
+								run.plan.workspace.mode === "read-only"
+									? "not-needed"
+									: "absent",
+						};
+					}
+					const lease = await acquireRunLease({
+						root: path.join(options.root, "leases"),
+						runId,
+					});
+					try {
+						const journal = await RunJournal.open(
+							path.join(options.root, "runs"),
+							runId,
+							lease,
+						);
+						const events = await journal.readEvents();
+						const sandboxEvent = [...events]
+							.reverse()
+							.find((event) => event.type === "sandbox-started");
+						const hostPid = (
+							sandboxEvent?.data as { hostPid?: unknown } | undefined
+						)?.hostPid;
+						const sandboxProcess =
+							sandboxEvent === undefined
+								? "not-started"
+								: typeof hostPid === "number"
+									? processState(hostPid)
+									: "unknown";
+						const worktreePath = path.join(
+							options.root,
+							"workspace",
+							"worktrees",
+							run.plan.attemptId,
+						);
+						const observedWorktree =
+							run.plan.workspace.mode === "read-only"
+								? "absent"
+								: await pathState(worktreePath);
+						const workspace =
+							run.plan.workspace.mode === "read-only"
+								? "not-needed"
+								: observedWorktree === "present"
+									? "retained"
+									: observedWorktree === "absent"
+										? "absent"
+										: "unknown";
+						const sandboxCleanup =
+							sandboxProcess === "not-started"
+								? "not-needed"
+								: sandboxProcess === "absent"
+									? "proved"
+									: "unknown";
+						const workspaceCleanup =
+							workspace === "not-needed"
+								? "not-needed"
+								: workspace === "retained"
+									? "retained"
+									: workspace === "absent"
+										? "proved"
+										: "unknown";
+						const sessionFile = run.result?.sessionFile;
+						const canClassify =
+							(sandboxCleanup === "proved" ||
+								sandboxCleanup === "not-needed") &&
+							workspaceCleanup !== "unknown";
+						const status: RunResult["status"] = canClassify
+							? sessionFile
+								? "interrupted"
+								: "failed"
+							: "cleanup-blocked";
+						const result: RunResult = {
+							runId,
+							status,
+							...(run.result?.result.output
+								? { output: run.result.result.output }
+								: {}),
+							...(run.result?.result.structuredOutput !== undefined
+								? { structuredOutput: run.result.result.structuredOutput }
+								: {}),
+							usage: run.result?.result.usage ?? emptyUsage(),
+							usageComplete: run.result?.result.usageComplete ?? false,
+							sandboxCleanup,
+							workspaceCleanup,
+							truncated: run.result?.result.truncated ?? false,
+						};
+						if (!isRunResult(result)) {
+							throw new Error("reconciliation produced invalid result");
+						}
+						const execution: AttemptExecutionResult = {
+							result,
+							output: run.result?.output ?? "",
+							sessionFile,
+							handoff: run.result?.handoff,
+							structuredOutput: result.structuredOutput,
+							error:
+								status === "cleanup-blocked"
+									? "external cleanup remains unproved"
+									: "prior attempt was interrupted before terminal proof",
+						};
+						await journal.append("run-reconciled", {
+							status,
+							sandboxProcess,
+							workspace,
+						});
+						await journal.writeSnapshot(execution);
+						run.journal = journal;
+						run.result = execution;
+						run.promise = Promise.resolve(execution);
+						run.status = status;
+						return {
+							run: {
+								runId,
+								attemptId: run.plan.attemptId,
+								status,
+								result: execution,
+							},
+							sandboxProcess,
+							workspace,
+						};
+					} finally {
+						await lease.release();
+					}
 				},
 
 				async exportArtifact(runId, ref, maxBytes) {

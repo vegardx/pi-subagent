@@ -468,9 +468,12 @@ production attempt runner. Duplicate launch in the live seat adopts the same
 run. Startup now scans immutable run records, acquires replacement fencing, restores
 terminal snapshots and artifact access, rebuilds owner/status/wait routing, and
 adopts durable operation IDs. Runs without proved terminal snapshots are
-conservatively rewritten as cleanup-blocked. Active observation of runs still
-owned by another seat, retry, resume, deeper QEMU/worktree reconciliation,
-retention, and release remain outstanding.
+conservatively rewritten as cleanup-blocked. Active observation of runs still owned by another seat remains outstanding.
+Owner-triggered reconciliation now reacquires fencing, inspects persisted VM PID
+and worktree evidence without signaling unknown processes, and moves stale runs
+to failed, interrupted, or cleanup-blocked with a new durable receipt. Retry,
+resume, deeper VM session-registry reconciliation, retention, and release remain
+outstanding.
 
 ### Build
 

@@ -12,7 +12,10 @@ Cross-process run leases now use OS-owned per-run localhost listeners and
 monotonic durable generations. Fenced journals and worktree lifecycle mutations
 verify the current lease before side effects and receipts. Session leases,
 retention, and
-deep external-side-effect reconciliation remains incomplete. Immutable run
+deep external-side-effect reconciliation remains incomplete. Current
+reconciliation reacquires run fencing, observes recorded VM PID presence without
+signaling it, checks retained worktree presence, and persists conservative
+failed/interrupted/cleanup-blocked outcomes. Immutable run
 records persist owner and launch identity before execution. Startup scans them,
 restores proved terminal snapshots and artifact access, skips runs held by a
 live seat, and classifies unproved stale execution as cleanup-blocked. Artifact blobs are content-addressed, privately stored,
