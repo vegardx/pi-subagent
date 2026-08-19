@@ -36,6 +36,11 @@ weakened and host execution must not be used as fallback.
 - untrusted project skills are absent;
 - skill trees are mounted read-only under guest `/skills` paths;
 - `preloadSkills` content is present before the first model turn;
+- agent-required and request-selected context scopes are unioned;
+- global context is explicit and project context requires Pi project trust;
+- projected context is digest-bound, injected before the first turn, readable
+  under synthetic `/context` guest paths, and rejects writes;
+- repository context symlinks cannot escape the selected checkout;
 - only explicit tools, preloads, and context are projected beyond the normal
   skill catalog;
 - effective model, thinking, session, tools, resource identities, workspace,

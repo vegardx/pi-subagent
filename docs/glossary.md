@@ -35,7 +35,8 @@ these definitions rather than redefine them.
 | Tool declaration | Single registry entry binding a tool's schema, grant, implementation, authority, and acceptance coverage. |
 | Capability | Stable semantic permission mapped to concrete tools and resources. |
 | Authority ceiling | Maximum capabilities an agent definition permits. Calls may narrow but not widen it. |
-| Resource projection | Immutable resolution of tools, normal skill catalog, forced skill preloads, context, and prompts granted to an attempt. |
+| Resource projection | Immutable resolution of tools, normal skill catalog, forced skill preloads, scoped context files, fork transcript, and prompts granted to an attempt. |
+| Context scope | Explicit `global` or trusted `project` selection of Pi context files, separate from transcript fork mode. |
 | Ambient resource | Resource discovered from normal global or project configuration. |
 | Explicit resource | Resource deliberately granted in an attempt's launch plan. |
 | Artifact | Durable bounded output associated with a run or attempt. |

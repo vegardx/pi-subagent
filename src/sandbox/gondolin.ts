@@ -1,6 +1,8 @@
 import { lstat, realpath } from "node:fs/promises";
+import path from "node:path";
 import {
 	createHttpHooks,
+	MemoryProvider,
 	ReadonlyProvider,
 	RealFSProvider,
 	type VirtualProvider,
@@ -67,6 +69,7 @@ export async function createGondolinAttemptSandbox(options: {
 	startTimeoutMs?: number;
 	workspaceAliases?: string[];
 	skillMounts?: Array<{ hostBaseDir: string; guestBaseDir: string }>;
+	contextMounts?: Array<{ guestFilePath: string; content: string }>;
 }): Promise<GondolinAttemptSandbox> {
 	let workspace: string;
 	try {
@@ -108,6 +111,24 @@ export async function createGondolinAttemptSandbox(options: {
 		mounts[skill.guestBaseDir] = new ReadonlyProvider(
 			new RealFSProvider(hostBaseDir),
 		);
+	}
+	for (const context of options.contextMounts ?? []) {
+		const guestDir = path.posix.dirname(context.guestFilePath);
+		const guestName = path.posix.basename(context.guestFilePath);
+		if (!guestDir.startsWith("/context/") || guestName === ".") {
+			throw new GondolinSandboxError("invalid guest context mount path");
+		}
+		if (mounts[guestDir]) {
+			throw new GondolinSandboxError(
+				`duplicate guest context mount: ${guestDir}`,
+			);
+		}
+		const provider = new MemoryProvider();
+		if (!provider.writeFile) {
+			throw new GondolinSandboxError("context provider cannot write files");
+		}
+		await provider.writeFile(`/${guestName}`, context.content);
+		mounts[guestDir] = new ReadonlyProvider(provider);
 	}
 	const { httpHooks } = createHttpHooks({ blockInternalRanges: true });
 	const memory = options.memory ?? "512M";

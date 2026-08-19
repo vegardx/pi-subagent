@@ -80,6 +80,12 @@ export const RunLimitsSchema = Type.Object(
 );
 export type RunLimits = Static<typeof RunLimitsSchema>;
 
+export const ContextScopeSchema = Type.Union([
+	Type.Literal("global"),
+	Type.Literal("project"),
+]);
+export type ContextScope = Static<typeof ContextScopeSchema>;
+
 export const SubagentRequestSchema = Type.Object(
 	{
 		operationId: IdentitySchema,
@@ -90,6 +96,10 @@ export const SubagentRequestSchema = Type.Object(
 		tools: Type.Array(ResourceNameSchema, { maxItems: 64, uniqueItems: true }),
 		preloadSkills: Type.Array(ResourceNameSchema, {
 			maxItems: 64,
+			uniqueItems: true,
+		}),
+		contextScopes: Type.Array(ContextScopeSchema, {
+			maxItems: 2,
 			uniqueItems: true,
 		}),
 		workspace: WorkspaceRequestSchema,
@@ -148,6 +158,10 @@ export const AgentLaunchPlanSchema = Type.Object(
 		tools: Type.Array(ResourceNameSchema, { maxItems: 64, uniqueItems: true }),
 		preloadSkills: Type.Array(ResourceNameSchema, {
 			maxItems: 64,
+			uniqueItems: true,
+		}),
+		contextScopes: Type.Array(ContextScopeSchema, {
+			maxItems: 2,
 			uniqueItems: true,
 		}),
 		resources: Type.Array(ResourceGrantSchema, {

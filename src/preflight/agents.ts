@@ -4,6 +4,7 @@ import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { parse } from "yaml";
 import {
+	ContextScopeSchema,
 	ExactModelRequestSchema,
 	RunLimitsSchema,
 } from "../launch-contracts.js";
@@ -49,6 +50,10 @@ const FrontmatterSchema = Type.Object(
 		}),
 		preloadSkills: Type.Array(ResourceNameSchema, {
 			maxItems: 64,
+			uniqueItems: true,
+		}),
+		contextScopes: Type.Array(ContextScopeSchema, {
+			maxItems: 2,
 			uniqueItems: true,
 		}),
 		workspaceModes: Type.Array(
@@ -114,6 +119,7 @@ async function loadAgent(
 		allowedModels?: string[];
 		tools: string[];
 		preloadSkills: string[];
+		contextScopes: DiscoveredAgent["contextScopes"];
 		workspaceModes: DiscoveredAgent["workspaceModes"];
 		limits: DiscoveredAgent["limitCeiling"];
 	};
@@ -136,6 +142,7 @@ async function loadAgent(
 		allowedModels,
 		tools: [...frontmatter.tools],
 		preloadSkills: [...frontmatter.preloadSkills],
+		contextScopes: [...frontmatter.contextScopes],
 		workspaceModes: [...frontmatter.workspaceModes],
 		limitCeiling: frontmatter.limits,
 		prompt,

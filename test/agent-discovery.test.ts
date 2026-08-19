@@ -20,6 +20,7 @@ model:
   thinking: low
 tools: [${tools.join(", ")}]
 preloadSkills: []
+contextScopes: []
 workspaceModes: [read-only]
 limits:
   runtimeMs: 60000

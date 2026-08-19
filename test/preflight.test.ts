@@ -35,6 +35,7 @@ const request: SubagentRequest = {
 	model,
 	tools: ["write", "read"],
 	preloadSkills: ["typescript"],
+	contextScopes: [],
 	workspace: { mode: "worktree", cwd: "/repo" },
 	limits,
 };
@@ -46,6 +47,7 @@ const agent: AgentDefinition = {
 	allowedModels: ["github-copilot/gpt-5.6-luna:low"],
 	tools: ["read", "write", "bash"],
 	preloadSkills: ["typescript"],
+	contextScopes: [],
 	workspaceModes: ["worktree"],
 	limitCeiling: { ...limits },
 };
@@ -90,6 +92,7 @@ function compile(
 		request,
 		agent,
 		resources,
+		contextResources: [],
 		workspace,
 		sandbox,
 		resolveModel: async (model) => model,
@@ -112,6 +115,30 @@ describe("semantic preflight", () => {
 		expect(first.tools).toEqual(["read", "write"]);
 		expect(first.cwd).toBe("/workspace");
 		expect(first.network.blockInternalRanges).toBe(true);
+	});
+
+	it("unions agent-required and requested context scopes", async () => {
+		const plan = await compile({
+			agent: { ...agent, contextScopes: ["global"] },
+			request: { ...request, contextScopes: ["project"] },
+		});
+		expect(plan.contextScopes).toEqual(["global", "project"]);
+		expect(verifyLaunchPlanIdentity(plan)).toBe(true);
+	});
+
+	it("rejects context grants that do not match the resolved projection", async () => {
+		await expect(
+			compile({
+				contextResources: [
+					{
+						kind: "context",
+						name: "global-0-context",
+						source: "/context/AGENTS.md",
+						sha256: a,
+					},
+				],
+			}),
+		).rejects.toThrow("context resource projection mismatch");
 	});
 
 	it("requires an exact fork projection for fork context", async () => {

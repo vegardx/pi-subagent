@@ -69,6 +69,7 @@ async function fixture(name: string) {
 		allowedModels: ["github-copilot/gpt-5.6-luna:low"],
 		tools: ["read"],
 		preloadSkills: [],
+		contextScopes: [],
 		workspaceModes: ["read-only" as const],
 		limitCeiling: limits,
 		prompt: "worker prompt",
@@ -82,6 +83,7 @@ async function fixture(name: string) {
 		model,
 		tools: ["read"],
 		preloadSkills: [],
+		contextScopes: [],
 		workspace: { mode: "read-only", cwd: repository },
 		limits,
 	};
@@ -237,6 +239,43 @@ describe("foreground subagent service", () => {
 		await expect(
 			client.launch(preflight.preflightId, preflight.identitySha256),
 		).rejects.toThrow("workspace changed after preflight");
+	});
+
+	it("projects explicit global context files into attempts", async () => {
+		let observedContext = "";
+		const data = await serviceFor("context-files", async (input) => {
+			observedContext = JSON.stringify(input.contextFiles);
+			return {
+				result: result(input.plan.runId, "completed"),
+				output: "done",
+				sessionFile: undefined,
+				handoff: undefined,
+				structuredOutput: undefined,
+				error: undefined,
+			};
+		});
+		await writeFile(
+			path.join(data.root, "agent", "AGENTS.md"),
+			"SERVICE_CONTEXT_MARKER\n",
+		);
+		const client = data.service.forOwner({ id: "owner-context" });
+		const preflight = await client.preflight({
+			...data.request,
+			operationId: "operation-context",
+			contextScopes: ["global"],
+		});
+		expect(preflight.launchPlan.contextScopes).toEqual(["global"]);
+		expect(
+			preflight.launchPlan.resources.some(
+				(resource) => resource.kind === "context",
+			),
+		).toBe(true);
+		const receipt = await client.launch(
+			preflight.preflightId,
+			preflight.identitySha256,
+		);
+		await client.wait(receipt.runId);
+		expect(observedContext).toContain("SERVICE_CONTEXT_MARKER");
 	});
 
 	it("projects an authorized parent session for fork context", async () => {

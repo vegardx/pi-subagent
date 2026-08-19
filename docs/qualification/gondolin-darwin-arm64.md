@@ -37,9 +37,9 @@ provide. This is a qualification result, not production acceptance.
 | Ambient resource isolation | Pass | Both native sessions loaded zero extensions, skills, prompts, themes, and context files. |
 | VM shutdown | Pass | Every recorded QEMU PID was absent after `vm.close()`; no Gondolin/QEMU runner remained after the drive. |
 | Global cross-process VM limit | Pass | A pi-subagent host-socket lease enforced capacity across worker processes and recovered automatically after a killed owner. |
-| Production sandbox adapter | Pass | The promoted adapter acquired capacity, booted QEMU, mounted a budgeted workspace plus read-only skill namespace, proved skill reads and write denial, routed a guest write, closed the VM, proved its PID released, and returned capacity. |
+| Production sandbox adapter | Pass | The promoted adapter acquired capacity, booted QEMU, mounted a budgeted workspace plus read-only skill and synthetic context namespaces, proved skill/context reads and write denial, routed a guest write, closed the VM, proved its PID released, and returned capacity. |
 | Production native attempt runner | Pass | A validated launch plan drove exact model/auth resolution, a persistent native Pi session, isolated resources, VM-backed tools, fenced output artifacts, bounded inline results, journal/snapshot receipts, then reopened the session in a fresh VM and proved both cleanups. |
-| Foreground `SubagentService` | Pass | Owner-bound preflight, normal trusted-project skill discovery, forced preload proof in structured output, concurrent duplicate launch adoption, status/log/wait observation, terminal startup recovery, JSON artifact export, and the production runner completed through the public service surface. |
+| Foreground `SubagentService` | Pass | Owner-bound preflight, normal trusted-project skill discovery, forced skill preload plus trusted-project context projection proofs in structured output, concurrent duplicate launch adoption, status/log/wait observation, terminal startup recovery, JSON artifact export, and the production runner completed through the public service surface. |
 
 The final drive completed nine executable checks with no failures or blocked
 requirements. Warm QEMU boots were approximately 0.5–1.0 seconds at 512 MB and
@@ -79,6 +79,17 @@ FORK_CONTEXT_731
 
 The bounded parent projection was source/digest-bound and persisted as child
 session provenance.
+
+A fourth real CLI drive selected trusted `project` context. A temporary nested
+`AGENTS.md` supplied a marker that was absent from the delegated task, and the
+child returned exactly:
+
+```text
+CONTEXT_OK
+```
+
+The temporary context fixture was moved to recoverable trash. No QEMU process
+remained.
 
 ## Important behavior
 

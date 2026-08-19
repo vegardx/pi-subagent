@@ -63,6 +63,7 @@ interface SubagentRequest {
 	model?: ExactModelRequest;
 	tools?: string[];
 	preloadSkills?: string[];
+	contextScopes: Array<"global" | "project">;
 	workspace: WorkspaceRequest;
 	outputSchema?: JsonSchema;
 	limits: RunLimits;
@@ -86,6 +87,7 @@ interface MutationContext {
 interface OwnerRegistration {
 	id: OwnerId;
 	parentSessionId?: string;
+	parentSessionFile?: string;
 	workflowRunId?: string;
 	resultDestination?: string;
 }
@@ -118,6 +120,9 @@ interface AgentLaunchPlan {
 	tools: ToolGrant[];
 	preloadSkills: string[];
 	skillCatalog: SkillGrant[];
+	contextScopes: Array<"global" | "project">;
+	contextFiles: ContextFileGrant[];
+	forkContext?: ForkContextGrant;
 	workspace: WorkspaceGrant;
 	sandbox: GondolinGrant;
 	network: NetworkGrant;
@@ -144,6 +149,14 @@ interface NetworkGrant {
 	blockInternalRanges: true;
 }
 ```
+
+Agent-required and request-selected `contextScopes` are unioned. `global`
+projects the Pi agent-directory context file; `project` projects Pi's normal
+ancestor context chain only after project trust succeeds. Files are bounded,
+digest-bound, injected through Pi's context-file mechanism, and exposed through
+synthetic read-only guest `/context` mounts. Repository context symlinks may not
+escape the selected checkout. Transcript inheritance remains separately
+controlled by `contextMode`.
 
 Resource grants include canonical path, source provenance, content/tree digest,
 and classification. Referenced resources and sandbox capabilities are

@@ -72,9 +72,14 @@ Child sessions disable ambient extensions, prompt templates, themes, and context
 files. Normal Pi global/package skills and trusted-project skills are discovered
 on the host, bound into the launch identity, advertised through the standard
 progressive-disclosure catalog, and mounted read-only under `/skills` in the VM.
-`preloadSkills` injects selected full instructions before the first turn. Only
-preflighted resources are projected into the session. Arbitrary extension code is not loaded into a
-child session in the initial release; trusted capabilities must have a
+`preloadSkills` injects selected full instructions before the first turn.
+Agent-required and request-selected `contextScopes` explicitly project Pi's
+global context and/or trusted-project ancestor context chain. Context files are
+bounded, digest-bound, injected through Pi's normal context-file mechanism, and
+mounted read-only under synthetic `/context` guest paths. Ambient context remains
+disabled. Only preflighted resources are projected into the session. Arbitrary
+extension code is not loaded into a child session in the initial release;
+trusted capabilities must have a
 pi-subagent-owned adapter whose authority is part of the launch plan.
 
 Models and provider credentials stay in the seat through Pi's `ModelRuntime`.

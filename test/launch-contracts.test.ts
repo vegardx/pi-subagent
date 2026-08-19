@@ -29,6 +29,7 @@ const request = {
 	model: { provider: "github-copilot", id: "gpt-5.6-luna", thinking: "low" },
 	tools: ["read", "write", "edit", "bash"],
 	preloadSkills: [],
+	contextScopes: [],
 	workspace: { mode: "worktree", cwd: "/repo" },
 	limits,
 };
@@ -47,6 +48,7 @@ const plan = {
 	cwd: "/workspace",
 	tools: ["read", "write", "edit", "bash"],
 	preloadSkills: [],
+	contextScopes: [],
 	resources: [
 		{
 			kind: "agent",
