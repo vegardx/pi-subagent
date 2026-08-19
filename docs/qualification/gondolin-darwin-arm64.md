@@ -91,12 +91,39 @@ CONTEXT_OK
 The temporary context fixture was moved to recoverable trash. No QEMU process
 remained.
 
-The operator UX was also driven through a real Pi TUI. `/subagents` rendered the
-current-project dashboard, opened a run's tabbed detail and state-valid action
-palette, and opened the retention selected/protected report. A separate
-metadata-only invocation initialized and rendered the inspector without starting
-QEMU. A real `ux-smoke` child then returned exactly `UX_OK`, persisted its display
-metadata, and remained inspectable from a replacement Pi session.
+The operator UX was also driven through a real Pi TUI and pseudo-terminal.
+`/subagents` rendered the current-project dashboard, opened a run's tabbed detail
+and state-valid action palette, and opened the retention selected/protected
+report. A separate metadata-only invocation initialized and rendered the
+inspector without starting QEMU. A real `ux-smoke` child then returned exactly
+`UX_OK`, persisted its display metadata, and remained inspectable from a
+replacement Pi session.
+
+Active-run qualification exposed and fixed five lifecycle/UX defects: nested Pi
+input dialogs were unavailable while the parent streamed, controls were offered
+before the native child session was ready, seat shutdown was classified as
+cancelled, resume/retry were offered without durable prerequisites, and recovered
+Result views lost handoff metadata. The accepted behavior is now:
+
+- `Alt+S` opens the inspector during the parent tool call without submitting
+  editor input;
+- Overview transitions from `session starting` to control `ready`;
+- inspector-owned steer and follow-up inputs each produced durable
+  `accepted-by-session` receipts;
+- Stop produced cancelled, closed QEMU, and retained the isolated writing
+  workspace;
+- graceful `SIGTERM` produced interrupted, a replacement seat offered Resume,
+  and Resume created attempt 2 with immutable parent lineage and a fresh VM;
+- a deterministic timeout failure offered Retry and created attempt 2;
+- a real writer returned `WRITE_OK`, left the active checkout clean, persisted a
+  handoff commit, restored it in Result after restart, and released both the
+  reservation branch and absent worktree with a durable receipt;
+- output export reproduced exactly `UX_OK`; pin/unpin, cleanup-blocked
+  reconciliation, safe zero-selection retention apply, current/all scope,
+  search, filters, the active attention widget, and a 60-column dashboard all
+  passed.
+
+No qualified drive left a Pi-owned QEMU or runner process.
 
 ## Important behavior
 

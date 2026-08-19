@@ -31,7 +31,10 @@ stages or define delivery policy.
 Use `/subagents` for the current-project run inspector. It provides bounded
 Overview, Activity, Result, and Technical tabs, live status updates, state-valid
 actions, search/filtering, current/all-project scope, retention preview, and an
-attention-only widget. Direct commands use the same service authority:
+attention-only widget. During an active parent turn, `Alt+S` opens the inspector
+without submitting editor input; steer/follow-up appear only after the child
+session reports control readiness. Direct commands use the same service
+authority:
 
 ```text
 /subagents list [--all]
