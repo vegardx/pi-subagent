@@ -1,7 +1,9 @@
 # Failure taxonomy
 
-Every failure has a stable code, retryability classification, origin, and
-operator guidance. Unknown failures are not silently treated as transient.
+Every non-completed terminal result has a bounded `ClassifiedFailure` with a
+stable code, origin, retry disposition, message, and operator guidance. Unknown
+failures are classified `unknown/reconcile`; they are never silently treated as
+transient.
 
 | Class | Examples | Default retry |
 | --- | --- | --- |
@@ -26,10 +28,18 @@ operator guidance. Unknown failures are not silently treated as transient.
 | Resource drift | Agent, skill, context, image, or policy changed after preflight | Re-preflight; never continue old plan |
 | Unknown | Unclassified error or unprovable external state | Reconcile/operator action |
 
-A retry creates a new attempt under the same logical run. Resume is reserved for
-a validated persisted Pi session after seat interruption. Both create a fresh
-Gondolin VM. Neither operation erases prior evidence, reuses live guest state, or
-resets run-wide budgets.
+A retry creates a new attempt under the same logical run. `manual` permits only
+an explicit operator retry. `backoff` additionally enforces
+`min(300s, retryAfterMs × 2^attemptOrdinal)` from the durable terminal event.
+`never`, `resume`, and `reconcile` cannot enter the retry path. Resume is reserved
+for a validated persisted Pi session whose failure disposition is `resume`.
+Both operations create a fresh Gondolin VM. Neither operation erases prior
+evidence, reuses live guest state, or resets run-wide budgets.
+
+Runtime is a run-wide budget alongside tokens, cost, retry count, and resume
+count. Every terminal attempt records measured wall-clock milliseconds. Retry or
+resume subtracts that duration before compiling the next immutable plan and
+fails before execution when fewer than 1,000 milliseconds remain.
 
 A filesystem escape or denied host/internal-network destination is a boundary
 result, not a transient infrastructure failure. The runtime must not retry it

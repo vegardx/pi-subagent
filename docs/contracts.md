@@ -279,6 +279,9 @@ interface SubagentRuntimeContract {
 		preflight: boolean;
 		idempotentLaunch: boolean;
 		resume: boolean;
+		classifiedFailures: boolean;
+		cumulativeRuntimeBudget: boolean;
+		retryBackoff: boolean;
 		worktrees: boolean;
 		publicNetworkEgress: boolean;
 		explicitResources: boolean;
@@ -326,6 +329,33 @@ A run aggregates attempts. Retry and resume terminate the prior attempt and
 create a new one. Any post-side-effect path enters settlement before the run can
 be terminal.
 
+Completed results have no failure. Every failed, cancelled, interrupted, or
+cleanup-blocked result has exactly one bounded `ClassifiedFailure`:
+
+```ts
+interface ClassifiedFailure {
+	code: FailureCode;
+	origin:
+		| "model"
+		| "operator"
+		| "persistence"
+		| "provider"
+		| "sandbox"
+		| "service"
+		| "tool"
+		| "workspace";
+	retry: "never" | "manual" | "backoff" | "resume" | "reconcile";
+	message: string;
+	guidance: string;
+	retryAfterMs?: number;
+}
+```
+
+Unknown failures fail closed to `reconcile`. Explicit retry accepts only `manual`
+or elapsed `backoff`; resume accepts only `resume`. Every attempt records
+`runtimeMs`, and retry/resume subtract runtime, tokens, and cost from the current
+remaining plan before creating a fresh attempt.
+
 A run may be `completed` only when VM cleanup is proved and workspace cleanup is
 `proved` or `not-needed`. A deliberately retained worktree is represented as
 `retained` and leaves the run `cleanup-blocked` until explicit `release` proves
@@ -362,6 +392,7 @@ interface RunResult {
 	structuredOutput?: unknown;
 	usage: Usage;
 	usageComplete: boolean;
+	runtimeMs: number;
 	failure?: ClassifiedFailure;
 	sandboxCleanup: CleanupOutcome;
 	workspaceCleanup: CleanupOutcome;

@@ -15,8 +15,8 @@ Provide one reusable implementation for delegated Pi agents:
 - VM-backed built-in tools with fail-closed host-write containment;
 - read-only checkout access for readers and private worktrees for writers;
 - host-owned models, credentials, Git handoffs, persistence, and cleanup;
-- cancellation, retry, fresh-VM resume, and reconciliation;
-- bounded artifacts and usage accounting;
+- cancellation, classified failure, backoff, fresh-VM retry/resume, and reconciliation;
+- cumulative runtime/token/cost budgets plus bounded artifacts and usage accounting;
 - a typed service used by both the model-facing tool and workflow engines.
 
 Active attempts stop when the Pi seat exits or reloads. Their session and

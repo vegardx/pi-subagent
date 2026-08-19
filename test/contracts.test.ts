@@ -25,6 +25,9 @@ describe("runtime contracts", () => {
 			preflight: true,
 			idempotentLaunch: true,
 			resume: true,
+			classifiedFailures: true,
+			cumulativeRuntimeBudget: true,
+			retryBackoff: true,
 			worktrees: true,
 			publicNetworkEgress: true,
 			explicitResources: true,
@@ -60,6 +63,7 @@ describe("runtime contracts", () => {
 				cost: 0,
 			},
 			usageComplete: true,
+			runtimeMs: 125,
 			sandboxCleanup: "proved",
 			workspaceCleanup: "not-needed",
 			truncated: false,
@@ -75,6 +79,20 @@ describe("runtime contracts", () => {
 			false,
 		);
 		expect(isRunResult({ ...result, status: "cleanup-blocked" })).toBe(false);
+		expect(isRunResult({ ...result, status: "failed" })).toBe(false);
+		expect(
+			isRunResult({
+				...result,
+				status: "failed",
+				failure: {
+					code: "timeout",
+					origin: "service",
+					retry: "manual",
+					message: "attempt timed out",
+					guidance: "inspect before retry",
+				},
+			}),
+		).toBe(true);
 		expect(Value.Check(RunResultSchema, result)).toBe(true);
 	});
 });

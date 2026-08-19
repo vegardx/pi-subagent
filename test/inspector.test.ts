@@ -50,6 +50,13 @@ describe("subagent inspector", () => {
 				}),
 			),
 		).toEqual(["resume", "release", "unpin"]);
+		expect(
+			actionsForRun(
+				summary("failed", {
+					retryAt: new Date(Date.now() + 60_000).toISOString(),
+				}),
+			),
+		).toEqual(["pin"]);
 		expect(actionsForRun(summary("interrupted", { resumable: false }))).toEqual(
 			["pin"],
 		);

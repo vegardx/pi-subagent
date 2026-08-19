@@ -13,6 +13,7 @@ import { Value } from "typebox/value";
 import type { ArtifactStore } from "../artifacts/store.js";
 import {
 	type ArtifactRef,
+	type ClassifiedFailure,
 	isRunResult,
 	type RunResult,
 	type Usage,
@@ -44,6 +45,7 @@ import {
 	removeCleanWorktree,
 	type WorktreeRecord,
 } from "../workspace/worktree.js";
+import { classifyAttemptFailure } from "./failure.js";
 import { createFinalAnswerController } from "./structured-output.js";
 
 const MAX_INLINE_OUTPUT_BYTES = 32 * 1024;
@@ -129,6 +131,8 @@ function terminalResult(input: {
 	status: RunResult["status"];
 	usage: Usage;
 	usageComplete: boolean;
+	runtimeMs: number;
+	failure?: ClassifiedFailure;
 	sandboxCleanup: RunResult["sandboxCleanup"];
 	workspaceCleanup: RunResult["workspaceCleanup"];
 	truncated: boolean;
@@ -144,6 +148,8 @@ function terminalResult(input: {
 			: {}),
 		usage: input.usage,
 		usageComplete: input.usageComplete,
+		runtimeMs: input.runtimeMs,
+		...(input.failure ? { failure: input.failure } : {}),
 		sandboxCleanup: input.sandboxCleanup,
 		workspaceCleanup: input.workspaceCleanup,
 		truncated: input.truncated,
@@ -172,6 +178,9 @@ export async function runNativeAttempt(options: {
 	registerControl?: (control: AttemptControl | undefined) => void;
 	signal?: AbortSignal;
 }): Promise<AttemptExecutionResult> {
+	const attemptStartedAt = performance.now();
+	const elapsedRuntimeMs = () =>
+		Math.max(0, Math.ceil(performance.now() - attemptStartedAt));
 	if (!Value.Check(AgentLaunchPlanSchema, options.plan)) {
 		throw new Error("invalid launch plan");
 	}
@@ -431,6 +440,7 @@ export async function runNativeAttempt(options: {
 			status: "completed",
 			usage: collectedUsage,
 			usageComplete: true,
+			runtimeMs: elapsedRuntimeMs(),
 			sandboxCleanup,
 			workspaceCleanup,
 			truncated,
@@ -486,16 +496,27 @@ export async function runNativeAttempt(options: {
 						? "interrupted"
 						: "cancelled"
 					: "failed";
+		const failure = classifyAttemptFailure({
+			error,
+			timedOut: timeoutSignal.aborted && !options.signal?.aborted,
+			...(options.signal?.aborted
+				? { externalAbortReason: options.signal.reason }
+				: {}),
+			sandboxCleanup,
+			workspaceCleanup,
+		});
 		const result = terminalResult({
 			plan: options.plan,
 			status,
 			usage: collectedUsage,
 			usageComplete: false,
+			runtimeMs: elapsedRuntimeMs(),
+			failure,
 			sandboxCleanup,
 			workspaceCleanup,
 			truncated,
 		});
-		const message = error instanceof Error ? error.message : String(error);
+		const message = failure.message;
 		await options.journal.append("attempt-failed", {
 			result,
 			output,

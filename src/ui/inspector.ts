@@ -129,7 +129,12 @@ export function actionsForRun(run: RunSummary): InspectorAction[] {
 		if (run.controllable) actions.push("steer", "follow-up");
 		actions.push("stop");
 	}
-	if (run.retryable) actions.push("retry");
+	if (
+		run.retryable &&
+		(!run.retryAt || Date.parse(run.retryAt) <= Date.now())
+	) {
+		actions.push("retry");
+	}
 	if (run.resumable) actions.push("resume");
 	if (run.status === "cleanup-blocked") actions.push("reconcile");
 	if (run.retainedWorktree && !["active", "stopping"].includes(run.status)) {
@@ -298,6 +303,11 @@ function detailBody(
 				width,
 			),
 			keyValue(
+				"Runtime",
+				result ? `${result.result.runtimeMs} ms` : "active",
+				width,
+			),
+			keyValue(
 				"Usage",
 				summary.usage
 					? `${formatTokens(summary.usage.totalTokens)} tokens · $${summary.usage.cost.toFixed(4)}`
@@ -306,7 +316,9 @@ function detailBody(
 			),
 			keyValue(
 				"Retries",
-				`${plan.limits.retries} · ${summary.retryable ? "eligible" : "unavailable"}`,
+				summary.retryAt && Date.parse(summary.retryAt) > Date.now()
+					? `${plan.limits.retries} · backoff until ${summary.retryAt}`
+					: `${plan.limits.retries} · ${summary.retryable ? "eligible" : "unavailable"}`,
 				width,
 			),
 			keyValue(
@@ -355,7 +367,19 @@ function detailBody(
 		} else {
 			lines.push(
 				theme.fg("accent", result.error ? "Failure" : "Final output"),
-				...(result.error ? [theme.fg("error", result.error), ""] : []),
+				...(result.result.failure
+					? [
+							theme.fg(
+								"error",
+								`${result.result.failure.code} · ${result.result.failure.retry}`,
+							),
+							result.result.failure.message,
+							theme.fg("muted", result.result.failure.guidance),
+							"",
+						]
+					: result.error
+						? [theme.fg("error", result.error), ""]
+						: []),
 				...result.output.split("\n").slice(0, 18),
 			);
 			if (result.result.truncated)
