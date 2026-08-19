@@ -436,8 +436,9 @@ full text output as an artifact while returning a 32 KiB inline projection.
 Structured output now compiles bounded strict JSON schemas before launch,
 exposes a terminating `final_answer` tool, validates and deep-copies one value,
 and allows two bounded repair turns before failing. Accepted values are persisted
-as `application/json` artifacts and terminal results. Retention pins, garbage
-collection, and binary task artifacts remain outstanding.
+as `application/json` artifacts and terminal results. Retention now protects the
+complete linked graph through owner pins and applies age/budget pruning through
+recoverable trash; binary task artifacts remain outstanding.
 
 ## Deliverable 5 — workspaces and network
 
@@ -494,8 +495,11 @@ worktree identity across initial/retry/resume execution. Failed runs can retry
 with a new attempt while decrementing remaining retry/token/cost budgets.
 Interrupted runs can reopen a contained persisted Pi session in a fresh VM while
 decrementing resume/token/cost budgets and reusing a retained worktree when
-present. Deeper VM session-registry reconciliation, retry backoff/classification,
-retention remains outstanding. Owner-bound release now reacquires fencing,
+present. Deeper VM session-registry reconciliation and retry
+backoff/classification remain outstanding. Cross-process retention fencing,
+owner pins, unreleased-worktree protection, 30-day age selection, the 2 GiB
+ordinary-data budget, dry-run reporting, and recoverable trash are integrated.
+Owner-bound release now reacquires fencing,
 removes every recorded clean worktree without force, deletes only branches that
 still resolve to their baseline/handoff commit, updates cleanup state, and is
 idempotent. Dirty or identity-mismatched work is retained.

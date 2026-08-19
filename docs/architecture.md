@@ -163,6 +163,12 @@ a closed VM, and proved workspace cleanup. Intentionally retained work remains
 `cleanup-blocked` until explicit release. Cross-seat lease generations fence
 stale lifecycle and cleanup writes.
 
+Retention treats each run as a graph spanning records, attempts, sessions,
+artifacts, operation mappings, leases, and worktree metadata. Owner pins and
+unreleased worktrees protect the graph. Ordinary terminal graphs are selected by
+30-day age and a 2 GiB budget, fenced against live runs, and renamed into
+recoverable trash with a durable manifest.
+
 ## Platform use
 
 Use Pi rather than rebuilding:

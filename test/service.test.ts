@@ -241,6 +241,45 @@ describe("foreground subagent service", () => {
 		).rejects.toThrow("workspace changed after preflight");
 	});
 
+	it("pins and prunes complete owner-bound run graphs", async () => {
+		const data = await serviceFor("retention", async (input) => {
+			await input.journal.append("attempt-completed", { status: "completed" });
+			const execution = {
+				result: result(input.plan.runId, "completed"),
+				output: "done",
+				sessionFile: undefined,
+				handoff: undefined,
+				structuredOutput: undefined,
+				error: undefined,
+			};
+			await input.journal.writeSnapshot(execution);
+			return execution;
+		});
+		const client = data.service.forOwner({ id: "owner-retention" });
+		const preflight = await client.preflight({
+			...data.request,
+			operationId: "operation-retention",
+		});
+		const receipt = await client.launch(
+			preflight.preflightId,
+			preflight.identitySha256,
+		);
+		await client.wait(receipt.runId);
+		await client.pin(receipt.runId, "keep for review");
+		const protectedReport = await data.service.prune({
+			dryRun: false,
+			maxAgeMs: 0,
+		});
+		expect(
+			protectedReport.protected.find((run) => run.runId === receipt.runId)
+				?.reasons,
+		).toContain("pinned");
+		expect(await client.unpin(receipt.runId)).toBe(true);
+		const pruned = await data.service.prune({ dryRun: false, maxAgeMs: 0 });
+		expect(pruned.pruned.map((run) => run.runId)).toContain(receipt.runId);
+		await expect(client.status(receipt.runId)).rejects.toThrow("run not found");
+	});
+
 	it("projects explicit global context files into attempts", async () => {
 		let observedContext = "";
 		const data = await serviceFor("context-files", async (input) => {

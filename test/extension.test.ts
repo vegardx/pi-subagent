@@ -9,6 +9,7 @@ describe("Pi extension adapter", () => {
 	it("registers one model-facing subagent tool without eager runtime startup", () => {
 		let tool: ToolDefinition | undefined;
 		const events: string[] = [];
+		const commands: string[] = [];
 		const api = {
 			registerTool(definition: ToolDefinition) {
 				tool = definition;
@@ -16,10 +17,18 @@ describe("Pi extension adapter", () => {
 			on(event: string) {
 				events.push(event);
 			},
+			registerCommand(name: string) {
+				commands.push(name);
+			},
 		} as unknown as ExtensionAPI;
 		piSubagentExtension(api);
 		expect(tool?.name).toBe("subagent");
 		expect(tool?.description).toContain("Gondolin VM");
 		expect(events).toEqual(["session_shutdown"]);
+		expect(commands).toEqual([
+			"subagent-prune",
+			"subagent-pin",
+			"subagent-unpin",
+		]);
 	});
 });

@@ -39,6 +39,8 @@ these definitions rather than redefine them.
 | Context scope | Explicit `global` or trusted `project` selection of Pi context files, separate from transcript fork mode. |
 | Ambient resource | Resource discovered from normal global or project configuration. |
 | Explicit resource | Resource deliberately granted in an attempt's launch plan. |
+| Retention pin | Owner-scoped durable protection for a run's complete linked persistence graph. |
+| Recoverable trash | Timestamped sibling storage receiving pruned state by rename; ordinary pruning never hard-deletes run data. |
 | Artifact | Durable bounded output associated with a run or attempt. |
 | Handoff | Host-captured commit or artifact preserving worktree changes before cleanup. |
 | Retry | New attempt with the same task after a classified failure. It gets a fresh VM. |

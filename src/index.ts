@@ -71,6 +71,16 @@ export {
 	OperationRecordSchema,
 } from "./persistence/operation-index.js";
 export {
+	createRetentionManager,
+	RetentionLeaseUnavailableError,
+	type RetentionManager,
+	type RetentionPin,
+	RetentionPinSchema,
+	type RetentionReport,
+	type RetentionRun,
+	type RetentionRunReport,
+} from "./persistence/retention.js";
+export {
 	acquireRunLease,
 	type RunLease,
 	RunLeaseFencedError,

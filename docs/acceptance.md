@@ -158,7 +158,16 @@ Using bounded disposable fixtures:
 - files use private modes and bounded serialization;
 - numerical output, log, event, artifact, runtime, retry, token, and cost bounds
   produce documented truncation or terminal outcomes;
-- retention never deletes interrupted or cleanup-blocked runs;
+- retention never selects active, interrupted, cleanup-blocked, pinned, or
+  unreleased-worktree runs;
+- ordinary terminal runs older than 30 days are selected;
+- the oldest ordinary runs are selected until retained ordinary data is within
+  the 2 GiB budget;
+- dry-run and applied reports distinguish selected, protected, and actually
+  pruned runs with byte counts and reasons;
+- pruning holds a cross-process retention lease and each run fence;
+- a live run lease prevents pruning without signaling the owner;
+- applied pruning and pin removal use recoverable trash rather than hard delete;
 - incompatible persisted contract revisions are rejected with discard guidance;
   no migration or compatibility path is provided.
 

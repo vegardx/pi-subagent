@@ -26,6 +26,12 @@ import { AttemptRecordStore } from "./persistence/attempt-record.js";
 import { type JournalEvent, RunJournal } from "./persistence/journal.js";
 import { OperationIndex } from "./persistence/operation-index.js";
 import {
+	createRetentionManager,
+	type RetentionPin,
+	type RetentionReport,
+	type RetentionRun,
+} from "./persistence/retention.js";
+import {
 	acquireRunLease,
 	type RunLease,
 	RunLeaseUnavailableError,
@@ -128,6 +134,8 @@ export type SubagentClient = {
 	resume(runId: RunId): Promise<RunReceipt>;
 	reconcile(runId: RunId): Promise<ReconcileResult>;
 	release(runId: RunId): Promise<RunReceipt>;
+	pin(runId: RunId, reason: string): Promise<RetentionPin>;
+	unpin(runId: RunId): Promise<boolean>;
 	exportArtifact(
 		runId: RunId,
 		ref: ArtifactRef,
@@ -137,6 +145,11 @@ export type SubagentClient = {
 
 export type SubagentService = {
 	forOwner(owner: OwnerRegistration): SubagentClient;
+	prune(options?: {
+		dryRun?: boolean;
+		maxAgeMs?: number;
+		maxBytes?: number;
+	}): Promise<RetentionReport>;
 	shutdown(): Promise<void>;
 };
 
@@ -386,6 +399,7 @@ export async function createSubagentService(options: {
 	const attemptRecords = await AttemptRecordStore.open(
 		path.join(options.root, "attempt-records"),
 	);
+	const retention = await createRetentionManager({ root: options.root });
 	const preflights = new Map<string, PreparedPreflight>();
 	const runs = new Map<string, ActiveRun>();
 	let launchTail = Promise.resolve();
@@ -646,7 +660,81 @@ export async function createSubagentService(options: {
 		}
 	};
 
+	const retentionRuns = async (): Promise<RetentionRun[]> => {
+		const descriptors: RetentionRun[] = [];
+		for (const run of runs.values()) {
+			const attempts = await attemptRecords.list(run.plan.runId);
+			let retainedWorktree = false;
+			for (const attempt of attempts) {
+				const worktreeAttemptId = attempt.worktreeAttemptId;
+				if (!worktreeAttemptId) continue;
+				try {
+					const record = await readWorktreeRecord(
+						path.join(
+							options.root,
+							"workspace",
+							"records",
+							`${worktreeAttemptId}.json`,
+						),
+					);
+					if (!record.releasedAt) retainedWorktree = true;
+				} catch (error) {
+					if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+						retainedWorktree = true;
+						continue;
+					}
+					throw error;
+				}
+			}
+			const events = await run.journal.readEvents();
+			const terminalEvent = events.findLast((event) =>
+				[
+					"attempt-completed",
+					"attempt-failed",
+					"run-reconciled",
+					"startup-reconciled",
+				].includes(event.type),
+			);
+			descriptors.push({
+				runId: run.plan.runId,
+				status: run.status,
+				...(terminalEvent ? { terminalAt: terminalEvent.timestamp } : {}),
+				attemptIds: attempts.map((attempt) => attempt.attemptId),
+				retainedWorktree,
+			});
+		}
+		return descriptors;
+	};
+
 	return {
+		async prune(pruneOptions = {}) {
+			return runExclusive(async () => {
+				const report = await retention.prune({
+					runs: await retentionRuns(),
+					dryRun: pruneOptions.dryRun ?? true,
+					...(pruneOptions.maxAgeMs === undefined
+						? {}
+						: { maxAgeMs: pruneOptions.maxAgeMs }),
+					...(pruneOptions.maxBytes === undefined
+						? {}
+						: { maxBytes: pruneOptions.maxBytes }),
+				});
+				if (!report.dryRun) {
+					for (const pruned of report.pruned) runs.delete(pruned.runId);
+					for (const [preflightId, prepared] of preflights) {
+						if (
+							report.pruned.some(
+								(item) => item.runId === prepared.launchPlan.runId,
+							)
+						) {
+							preflights.delete(preflightId);
+						}
+					}
+				}
+				return report;
+			});
+		},
+
 		async shutdown() {
 			const pending: Promise<unknown>[] = [];
 			for (const run of runs.values()) {
@@ -1341,6 +1429,16 @@ export async function createSubagentService(options: {
 							await lease.release();
 						}
 					});
+				},
+
+				async pin(runId, reason) {
+					ownedRun(runId);
+					return retention.pin(owner.id, runId, reason);
+				},
+
+				async unpin(runId) {
+					ownedRun(runId);
+					return retention.unpin(owner.id, runId);
 				},
 
 				async exportArtifact(runId, ref, maxBytes) {

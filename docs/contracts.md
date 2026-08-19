@@ -169,6 +169,7 @@ authority is committed.
 interface SubagentService {
 	readonly contract: SubagentRuntimeContract;
 	forOwner(owner: OwnerRegistration): SubagentClient;
+	prune(options?: PruneOptions): Promise<RetentionReport>;
 }
 
 interface SubagentClient {
@@ -216,6 +217,8 @@ interface SubagentClient {
 		context: MutationContext,
 		runId: RunId,
 	): Promise<CleanupReceipt>;
+	pin(runId: RunId, reason: string): Promise<RetentionPin>;
+	unpin(runId: RunId): Promise<boolean>;
 }
 ```
 
@@ -229,6 +232,12 @@ session and VM in the current seat. It does not create detached work. A seat
 exit interrupts every active attempt. The next seat may call `resume`, which
 creates a new attempt and VM after validation; it does not reconnect to the old
 VM.
+
+`prune` defaults to dry-run, reports age/budget selection and protected reasons,
+and moves applied selections to recoverable trash under a cross-process
+retention lease plus per-run fencing. Owner pins protect the complete linked run
+graph. Active, interrupted, cleanup-blocked, pinned, and unreleased-worktree runs
+are never ordinary prune candidates.
 
 `exportArtifact` returns bounded verified bytes plus media type and digest so a
 caller can import them into its own retention domain. `release` completes

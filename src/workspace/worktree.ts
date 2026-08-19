@@ -38,6 +38,7 @@ export const WorktreeRecordSchema = Type.Object(
 		baselineHead: Type.String({ pattern: "^[a-f0-9]{40,64}$" }),
 		createdAt: Type.String({ format: "date-time" }),
 		handoffCommit: Type.Optional(Type.String({ pattern: "^[a-f0-9]{40,64}$" })),
+		releasedAt: Type.Optional(Type.String({ format: "date-time" })),
 	},
 	{ additionalProperties: false },
 );
@@ -54,6 +55,7 @@ export type WorktreeRecord = {
 	baselineHead: string;
 	createdAt: string;
 	handoffCommit?: string;
+	releasedAt?: string;
 };
 
 export class WorktreeError extends Error {
@@ -278,7 +280,7 @@ export async function removeCleanWorktree(
 export async function releaseWorktreeBranch(
 	record: WorktreeRecord,
 	lease: RunLease,
-): Promise<void> {
+): Promise<WorktreeRecord> {
 	if (lease.record.runId !== record.runId) {
 		throw new WorktreeError("worktree run lease identity mismatch");
 	}
@@ -295,17 +297,22 @@ export async function releaseWorktreeBranch(
 	)
 		.toString("utf8")
 		.trim();
-	if (!listed) return;
-	const branchCommit = (
-		await git(record.repositoryRoot, ["rev-parse", "--verify", record.branch])
-	)
-		.toString("utf8")
-		.trim();
-	if (branchCommit !== (record.handoffCommit ?? record.baselineHead)) {
-		throw new WorktreeError("handoff branch identity mismatch");
+	if (listed) {
+		const branchCommit = (
+			await git(record.repositoryRoot, ["rev-parse", "--verify", record.branch])
+		)
+			.toString("utf8")
+			.trim();
+		if (branchCommit !== (record.handoffCommit ?? record.baselineHead)) {
+			throw new WorktreeError("handoff branch identity mismatch");
+		}
+		await lease.assertCurrent();
+		await git(record.repositoryRoot, ["branch", "-D", record.branch]);
 	}
+	const released = { ...record, releasedAt: new Date().toISOString() };
 	await lease.assertCurrent();
-	await git(record.repositoryRoot, ["branch", "-D", record.branch]);
+	await writeRecord(record.recordPath, released);
+	return released;
 }
 
 export async function readWorktreeRecord(
