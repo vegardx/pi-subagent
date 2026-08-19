@@ -135,6 +135,16 @@ export const AgentLaunchPlanSchema = Type.Object(
 		runId: RunIdSchema,
 		attemptId: AttemptIdSchema,
 		agent: ResourceNameSchema,
+		agentDisplayName: Type.String({ minLength: 1, maxLength: 128 }),
+		agentPrompt: Type.String({ minLength: 1, maxLength: 64 * 1024 }),
+		agentSource: Type.String({ minLength: 1, maxLength: 4096 }),
+		agentSha256: Sha256Schema,
+		agentScope: Type.Union([
+			Type.Literal("builtin"),
+			Type.Literal("package"),
+			Type.Literal("global"),
+			Type.Literal("project"),
+		]),
 		task: DelegatedTaskSchema,
 		contextMode: Type.Union([Type.Literal("fresh"), Type.Literal("fork")]),
 		forkContext: Type.Optional(

@@ -41,6 +41,9 @@ const request: SubagentRequest = {
 };
 const agent: AgentDefinition = {
 	name: "worker",
+	displayName: "Worker",
+	prompt: "Worker prompt",
+	scope: "global",
 	source: "/agents/worker.md",
 	sha256: a,
 	defaultModel: model,
@@ -113,6 +116,8 @@ describe("semantic preflight", () => {
 			verifyLaunchPlanIdentity({ ...first, ownerId: "mutated-owner" }),
 		).toBe(false);
 		expect(first.tools).toEqual(["read", "write"]);
+		expect(first.agentDisplayName).toBe("Worker");
+		expect(first.agentPrompt).toBe("Worker prompt");
 		expect(first.cwd).toBe("/workspace");
 		expect(first.network.blockInternalRanges).toBe(true);
 	});

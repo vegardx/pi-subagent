@@ -15,6 +15,9 @@ import type { ForkContextGrant } from "./context.js";
 
 export type AgentDefinition = {
 	name: string;
+	displayName: string;
+	prompt: string;
+	scope: "builtin" | "package" | "global" | "project";
 	source: string;
 	sha256: string;
 	defaultModel: ExactModelRequest;
@@ -204,6 +207,11 @@ export async function compileLaunchPlan(input: {
 		runId: input.runId,
 		attemptId: input.attemptId,
 		agent: input.agent.name,
+		agentDisplayName: input.agent.displayName,
+		agentPrompt: input.agent.prompt,
+		agentSource: input.agent.source,
+		agentSha256: input.agent.sha256,
+		agentScope: input.agent.scope,
 		task: input.request.task,
 		contextMode: input.request.contextMode,
 		...(input.forkContext ? { forkContext: input.forkContext } : {}),
