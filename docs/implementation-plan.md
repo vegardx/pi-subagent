@@ -277,7 +277,11 @@ persistence slice adds bounded sequenced JSONL events, fsync-backed atomic
 snapshots, private modes, JSON-roundtrip checks, conservative torn-tail and
 corruption handling, and an atomic owner-scoped operation idempotency index.
 Cross-process run fencing with monotonic generations is implemented and enforced
-by journal appends and snapshots. Session/worktree fencing and worktree creation/handoff remain outstanding.
+by journal appends and snapshots. Session/worktree fencing and explicit branch release remain outstanding. The
+host now reserves deterministic per-attempt branches/worktrees, captures all
+changes in an immutable commit, persists the handoff before cleanup, retains
+dirty work, and removes only clean worktrees whose path, branch, and HEAD match
+the recorded identity.
 Strict package manifests now contribute contained package-scoped agent
 directories with canonical manifest provenance; absolute, missing, non-directory,
 duplicate, and package-escaping sources fail closed. Git workspace preflight now resolves canonical
