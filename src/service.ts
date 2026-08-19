@@ -41,6 +41,7 @@ import {
 	type WorkspacePreflight,
 } from "./preflight/workspace.js";
 import {
+	type AttemptControl,
 	type AttemptExecutionResult,
 	runNativeAttempt,
 } from "./runtime/attempt.js";
@@ -75,6 +76,16 @@ export type RunView = RunReceipt & {
 	result?: AttemptExecutionResult;
 };
 
+export type ControlInput = {
+	operationId: string;
+	text: string;
+};
+
+export type ControlReceipt = {
+	operationId: string;
+	state: "accepted-by-session" | "missed" | "failed";
+};
+
 export type ReconcileResult = {
 	run: RunView;
 	sandboxProcess: "absent" | "present" | "not-started" | "unknown";
@@ -92,6 +103,8 @@ export type SubagentClient = {
 	logs(runId: RunId): Promise<JournalEvent[]>;
 	wait(runId: RunId): Promise<AttemptExecutionResult>;
 	interrupt(runId: RunId): Promise<RunReceipt>;
+	steer(runId: RunId, input: ControlInput): Promise<ControlReceipt>;
+	followUp(runId: RunId, input: ControlInput): Promise<ControlReceipt>;
 	retry(runId: RunId): Promise<RunReceipt>;
 	resume(runId: RunId): Promise<RunReceipt>;
 	reconcile(runId: RunId): Promise<ReconcileResult>;
@@ -123,6 +136,9 @@ type ActiveRun = {
 	promise: Promise<AttemptExecutionResult>;
 	result?: AttemptExecutionResult;
 	status: RunStatus;
+	control?: AttemptControl;
+	controlReceipts: Map<string, ControlReceipt>;
+	controlTail: Promise<void>;
 };
 
 type AttemptExecutor = typeof runNativeAttempt;
@@ -416,6 +432,8 @@ export async function createSubagentService(options: {
 				promise: Promise.resolve(execution),
 				result: execution,
 				status: result.status,
+				controlReceipts: new Map(),
+				controlTail: Promise.resolve(),
 			};
 			runs.set(recoveredPlan.runId, active);
 		} finally {
@@ -484,6 +502,8 @@ export async function createSubagentService(options: {
 				...(worktree ? { worktreeAttemptId: worktree.attemptId } : {}),
 			});
 			const abort = new AbortController();
+			let active: ActiveRun | undefined;
+			let pendingControl: AttemptControl | undefined;
 			const rawPromise = executeAttempt({
 				plan: input.plan,
 				agent: input.agent,
@@ -498,9 +518,14 @@ export async function createSubagentService(options: {
 				...(input.resumeSessionFile
 					? { resumeSessionFile: input.resumeSessionFile }
 					: {}),
+				registerControl(control) {
+					pendingControl = control;
+					if (active && control) active.control = control;
+					else if (active) delete active.control;
+				},
 				signal: abort.signal,
 			});
-			const active: ActiveRun = {
+			active = {
 				ownerId: input.ownerId,
 				plan: input.plan,
 				workspace: input.workspace,
@@ -509,27 +534,31 @@ export async function createSubagentService(options: {
 				abort,
 				promise: rawPromise,
 				status: "active",
+				controlReceipts: new Map(),
+				controlTail: Promise.resolve(),
+				...(pendingControl ? { control: pendingControl } : {}),
 			};
-			active.promise = rawPromise.then(
+			const running = active;
+			running.promise = rawPromise.then(
 				async (result) => {
-					active.result = result;
-					active.status = result.result.status;
+					running.result = result;
+					running.status = result.result.status;
 					if (result.result.status !== "cleanup-blocked") {
 						try {
 							await lease.release();
 						} catch (error) {
-							active.status = "cleanup-blocked";
+							running.status = "cleanup-blocked";
 							throw error;
 						}
 					}
 					return result;
 				},
 				(error: unknown) => {
-					active.status = "cleanup-blocked";
+					running.status = "cleanup-blocked";
 					throw error;
 				},
 			);
-			runs.set(input.plan.runId, active);
+			runs.set(input.plan.runId, running);
 			return {
 				runId: input.plan.runId,
 				attemptId: input.plan.attemptId,
@@ -549,6 +578,63 @@ export async function createSubagentService(options: {
 				const run = runs.get(runId);
 				if (!run || run.ownerId !== owner.id) throw new Error("run not found");
 				return run;
+			};
+
+			const deliverControl = async (
+				runId: RunId,
+				kind: "steer" | "follow-up",
+				input: ControlInput,
+			): Promise<ControlReceipt> => {
+				if (
+					!input.operationId.trim() ||
+					Buffer.byteLength(input.operationId, "utf8") > 256 ||
+					!input.text.trim() ||
+					Buffer.byteLength(input.text, "utf8") > 64 * 1024
+				) {
+					throw new Error("invalid control input");
+				}
+				const run = ownedRun(runId);
+				const requestSha256 = canonicalSha256({ kind, text: input.text });
+				await operationIndex.claim({
+					ownerId: owner.id,
+					operationId: input.operationId,
+					requestSha256,
+					runId,
+				});
+				const operation = run.controlTail.then(async () => {
+					const existing = run.controlReceipts.get(input.operationId);
+					if (existing) return existing;
+					let receipt: ControlReceipt;
+					if (run.status !== "active" || !run.control) {
+						receipt = { operationId: input.operationId, state: "missed" };
+					} else {
+						try {
+							if (kind === "steer") await run.control.steer(input.text);
+							else await run.control.followUp(input.text);
+							receipt = {
+								operationId: input.operationId,
+								state: "accepted-by-session",
+							};
+							await run.journal.append("control-accepted", {
+								kind,
+								...receipt,
+							});
+						} catch {
+							receipt = { operationId: input.operationId, state: "failed" };
+							await run.journal.append("control-failed", {
+								kind,
+								...receipt,
+							});
+						}
+					}
+					run.controlReceipts.set(input.operationId, receipt);
+					return receipt;
+				});
+				run.controlTail = operation.then(
+					() => undefined,
+					() => undefined,
+				);
+				return operation;
 			};
 
 			return {
@@ -697,6 +783,14 @@ export async function createSubagentService(options: {
 
 				async wait(runId) {
 					return ownedRun(runId).promise;
+				},
+
+				async steer(runId, input) {
+					return deliverControl(runId, "steer", input);
+				},
+
+				async followUp(runId, input) {
+					return deliverControl(runId, "follow-up", input);
 				},
 
 				async retry(runId) {

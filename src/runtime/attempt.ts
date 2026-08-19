@@ -42,6 +42,11 @@ import { createFinalAnswerController } from "./structured-output.js";
 
 const MAX_INLINE_OUTPUT_BYTES = 32 * 1024;
 
+export type AttemptControl = {
+	steer(text: string): Promise<void>;
+	followUp(text: string): Promise<void>;
+};
+
 export type AttemptExecutionResult = {
 	result: RunResult;
 	output: string;
@@ -154,6 +159,7 @@ export async function runNativeAttempt(options: {
 	artifactStore: ArtifactStore;
 	sessionRoot: string;
 	resumeSessionFile?: string;
+	registerControl?: (control: AttemptControl | undefined) => void;
 	signal?: AbortSignal;
 }): Promise<AttemptExecutionResult> {
 	if (!Value.Check(AgentLaunchPlanSchema, options.plan)) {
@@ -292,6 +298,14 @@ export async function runNativeAttempt(options: {
 			settingsManager,
 		});
 		session = created.session;
+		options.registerControl?.({
+			steer: (text) =>
+				session?.steer(text) ??
+				Promise.reject(new Error("session unavailable")),
+			followUp: (text) =>
+				session?.followUp(text) ??
+				Promise.reject(new Error("session unavailable")),
+		});
 		sessionFile = session.sessionFile;
 		await options.journal.append("session-started", {
 			sessionId: session.sessionId,
@@ -452,6 +466,7 @@ export async function runNativeAttempt(options: {
 			error: message,
 		};
 	} finally {
+		options.registerControl?.(undefined);
 		runSignal.removeEventListener("abort", abort);
 	}
 }

@@ -226,6 +226,64 @@ describe("foreground subagent service", () => {
 		).rejects.toThrow("workspace changed after preflight");
 	});
 
+	it("delivers ordered idempotent steering and follow-up controls", async () => {
+		const delivered: string[] = [];
+		let finish = () => {};
+		const data = await serviceFor("controls", async (input) => {
+			input.registerControl?.({
+				async steer(text) {
+					delivered.push(`steer:${text}`);
+				},
+				async followUp(text) {
+					delivered.push(`follow:${text}`);
+				},
+			});
+			await new Promise<void>((resolve) => {
+				finish = resolve;
+			});
+			input.registerControl?.(undefined);
+			return {
+				result: result(input.plan.runId, "completed"),
+				output: "done",
+				sessionFile: undefined,
+				handoff: undefined,
+				structuredOutput: undefined,
+				error: undefined,
+			};
+		});
+		const client = data.service.forOwner({ id: "owner-a" });
+		const preflight = await client.preflight(data.request);
+		const receipt = await client.launch(
+			preflight.preflightId,
+			preflight.identitySha256,
+		);
+		expect(
+			await client.steer(receipt.runId, {
+				operationId: "control-steer",
+				text: "focus",
+			}),
+		).toMatchObject({ state: "accepted-by-session" });
+		expect(
+			await client.followUp(receipt.runId, {
+				operationId: "control-follow",
+				text: "summarize",
+			}),
+		).toMatchObject({ state: "accepted-by-session" });
+		await client.steer(receipt.runId, {
+			operationId: "control-steer",
+			text: "focus",
+		});
+		expect(delivered).toEqual(["steer:focus", "follow:summarize"]);
+		finish();
+		await client.wait(receipt.runId);
+		expect(
+			await client.steer(receipt.runId, {
+				operationId: "control-missed",
+				text: "late",
+			}),
+		).toMatchObject({ state: "missed" });
+	});
+
 	it("retries a classified failed attempt with remaining budgets", async () => {
 		let attempts = 0;
 		const data = await serviceFor("retry", async (input) => {
