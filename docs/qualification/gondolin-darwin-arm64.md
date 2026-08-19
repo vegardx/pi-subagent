@@ -125,6 +125,13 @@ Result views lost handoff metadata. The accepted behavior is now:
 
 No qualified drive left a Pi-owned QEMU or runner process.
 
+Global Pi dogfood now loads the local 0.9.0 candidate as a standalone package
+alongside pi-maestro. Maestro no longer bundles a subagent extension, so normal
+package loading requires no path filter. A normal Pi process with no explicit
+`-e` override exposed one `subagent` tool, the `/subagents list` command routed
+to the standalone store without QEMU, and a real `global-cutover` child returned
+exactly `# pi-subagent`. No tool collision or QEMU process remained.
+
 Package qualification built the 0.9.0 candidate into compiled ESM plus
 declarations, produced a bounded npm archive containing no `src`, `test`, or
 `spike` tree, installed that archive into a fresh temporary project, imported
