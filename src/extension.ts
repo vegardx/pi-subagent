@@ -69,6 +69,15 @@ function resolveThinking(
 	return candidate as ExactModelRequest["thinking"];
 }
 
+function formatBytes(bytes: number): string {
+	if (bytes < 1024) return `${bytes} B`;
+	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+	if (bytes < 1024 * 1024 * 1024) {
+		return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+	}
+	return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GiB`;
+}
+
 function parseModel(
 	value: string | undefined,
 	ctx: ExtensionContext,
@@ -164,6 +173,72 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 		service = undefined;
 		servicePromise = undefined;
 		modelRuntime = undefined;
+	});
+
+	pi.registerCommand("subagent-prune", {
+		description:
+			"Preview retention pruning; pass --apply to move selected runs to recoverable trash",
+		async handler(args, ctx) {
+			const apply = args.trim() === "--apply";
+			if (args.trim() && !apply) {
+				ctx.ui.notify("Usage: /subagent-prune [--apply]", "error");
+				return;
+			}
+			if (
+				apply &&
+				ctx.hasUI &&
+				!(await ctx.ui.confirm(
+					"Prune subagent runs?",
+					"Selected runs will move to recoverable trash.",
+				))
+			) {
+				return;
+			}
+			const runtime = await ensureService(ctx);
+			const report = await runtime.prune({ dryRun: !apply });
+			const affected = apply ? report.pruned : report.selected;
+			ctx.ui.notify(
+				`${apply ? "Pruned" : "Would prune"} ${affected.length} run(s), ${formatBytes(affected.reduce((total, run) => total + run.bytes, 0))}; protected ${report.protected.length}.`,
+				affected.length > 0 ? "warning" : "info",
+			);
+		},
+	});
+
+	pi.registerCommand("subagent-pin", {
+		description: "Pin an owned subagent run: /subagent-pin <run-id> [reason]",
+		async handler(args, ctx) {
+			const [runId, ...reasonParts] = args.trim().split(/\s+/);
+			if (!runId) {
+				ctx.ui.notify("Usage: /subagent-pin <run-id> [reason]", "error");
+				return;
+			}
+			const runtime = await ensureService(ctx);
+			const client = runtime.forOwner({
+				id: `pi-session:${ctx.sessionManager.getSessionId()}`,
+			});
+			await client.pin(runId, reasonParts.join(" ") || "operator pin");
+			ctx.ui.notify(`Pinned ${runId}.`, "info");
+		},
+	});
+
+	pi.registerCommand("subagent-unpin", {
+		description: "Remove this session owner's pin from a subagent run",
+		async handler(args, ctx) {
+			const runId = args.trim();
+			if (!runId || runId.includes(" ")) {
+				ctx.ui.notify("Usage: /subagent-unpin <run-id>", "error");
+				return;
+			}
+			const runtime = await ensureService(ctx);
+			const client = runtime.forOwner({
+				id: `pi-session:${ctx.sessionManager.getSessionId()}`,
+			});
+			const removed = await client.unpin(runId);
+			ctx.ui.notify(
+				removed ? `Unpinned ${runId}.` : `${runId} was not pinned.`,
+				"info",
+			);
+		},
 	});
 
 	pi.registerTool({

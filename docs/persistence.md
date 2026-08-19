@@ -10,17 +10,18 @@ owner-scoped operation ID to one request digest and run through create-once hard
 links; identical replay adopts the mapping and conflicting replay fails.
 Cross-process run leases now use OS-owned per-run localhost listeners and
 monotonic durable generations. Fenced journals and worktree lifecycle mutations
-verify the current lease before side effects and receipts. Session leases,
-retention, and
-deep external-side-effect reconciliation remains incomplete. Current
+verify the current lease before side effects and receipts. Session-specific leases and deep external-side-effect reconciliation remain
+incomplete; run and retention leases cover current destructive ownership. Current
 reconciliation reacquires run fencing, observes recorded VM PID presence without
 signaling it, checks retained worktree presence, and persists conservative
 failed/interrupted/cleanup-blocked outcomes. Immutable run
 records persist owner and launch identity before execution. Startup scans them,
 restores proved terminal snapshots and artifact access, skips runs held by a
-live seat, and classifies unproved stale execution as cleanup-blocked. Artifact blobs are content-addressed, privately stored,
-bounded per artifact and store, deduplicated, and rehashed on export; retention
-pins and garbage collection are not implemented yet.
+live seat, and classifies unproved stale execution as cleanup-blocked. Artifact
+blobs are content-addressed, privately stored, bounded per artifact and store,
+deduplicated, and rehashed on export. Retention now uses explicit owner pins, a
+cross-process lease, per-run fencing, dry-run reports, age and byte-budget
+selection, and recoverable trash.
 
 ## Storage
 
@@ -160,6 +161,38 @@ after durable handoff or explicit discard confirmation.
 
 ## Retention
 
-Artifacts and terminal runs have bounded retention. Active, interrupted,
-cleanup-blocked, and retained-worktree records are never removed by ordinary
-retention cleanup.
+The ordinary retention policy is:
+
+```text
+active/queued/stopping:            indefinite
+interrupted/cleanup-blocked:       indefinite
+dirty or otherwise retained tree:  indefinite
+explicit owner pins:               indefinite
+ordinary terminal age:             30 days
+ordinary retained-data budget:     2 GiB
+```
+
+`completed`, `failed`, and `cancelled` runs are ordinary terminal runs. Runs
+older than 30 days are selected first. If younger ordinary runs still exceed the
+2 GiB budget, the oldest are selected until the budget is met. Protected bytes
+are reported separately and never evicted to make the ordinary budget appear
+satisfied.
+
+A run pin protects the full graph: run and attempt records, journal and snapshot,
+artifacts, sessions, operation mappings, lease record, and released worktree
+metadata. Worktree records gain a durable `releasedAt` receipt only after both
+the verified worktree and branch are gone; any unreleased or uncertain worktree
+protects its run.
+
+Retention mutation holds one cross-process OS-owned lease and acquires each
+selected run lease before moving data. A live run lease converts selection into
+a protected result rather than signaling or deleting the run. Dry-run is the
+default. Applied pruning writes and fsyncs a manifest, then renames linked state
+into a timestamped sibling trash directory. It never hard-deletes run data.
+Pin removal is also recoverable through trash.
+
+Operators use `/subagent-prune` for a report and `/subagent-prune --apply` after
+confirmation. The run record moves last as the graph commit marker and a durable
+completion receipt distinguishes finished trash moves from recoverable partial
+intents. `/subagent-pin <run-id> [reason]` and `/subagent-unpin <run-id>`
+manage pins owned by the current Pi session.

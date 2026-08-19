@@ -95,7 +95,11 @@ describe("worktree lifecycle", () => {
 		expect(await git(repositoryRoot, "rev-parse", handoff.branch)).toBe(
 			handoff.handoffCommit,
 		);
-		await releaseWorktreeBranch(handoff, replacement);
+		const released = await releaseWorktreeBranch(handoff, replacement);
+		expect(released.releasedAt).toBeDefined();
+		expect((await readWorktreeRecord(record.recordPath)).releasedAt).toBe(
+			released.releasedAt,
+		);
 		await expect(
 			execFileAsync("git", ["rev-parse", "--verify", handoff.branch], {
 				cwd: repositoryRoot,
@@ -123,7 +127,8 @@ describe("worktree lifecycle", () => {
 			lease,
 		});
 		await removeCleanWorktree(record, lease);
-		await releaseWorktreeBranch(record, lease);
+		const released = await releaseWorktreeBranch(record, lease);
+		expect(released.releasedAt).toBeDefined();
 		await expect(
 			execFileAsync("git", ["rev-parse", "--verify", record.branch], {
 				cwd: repositoryRoot,
