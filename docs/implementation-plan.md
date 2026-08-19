@@ -481,7 +481,10 @@ with a new attempt while decrementing remaining retry/token/cost budgets.
 Interrupted runs can reopen a contained persisted Pi session in a fresh VM while
 decrementing resume/token/cost budgets and reusing a retained worktree when
 present. Deeper VM session-registry reconciliation, retry backoff/classification,
-retention, and release remain outstanding.
+retention remains outstanding. Owner-bound release now reacquires fencing,
+removes every recorded clean worktree without force, deletes only branches that
+still resolve to their baseline/handoff commit, updates cleanup state, and is
+idempotent. Dirty or identity-mismatched work is retained.
 
 ### Build
 

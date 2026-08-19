@@ -104,6 +104,34 @@ describe("worktree lifecycle", () => {
 		await replacement.release();
 	});
 
+	it("releases a clean unchanged worktree branch", async () => {
+		const repositoryRoot = await repository("unchanged");
+		const workspace = await preflightWorkspace({
+			mode: "worktree",
+			cwd: repositoryRoot,
+		});
+		const managerRoot = fixture("manager-unchanged");
+		const lease = await acquireRunLease({
+			root: path.join(managerRoot, "leases"),
+			runId: "run_unchanged",
+		});
+		const record = await createAttemptWorktree({
+			root: managerRoot,
+			runId: "run_unchanged",
+			attemptId: "attempt_unchanged",
+			workspace,
+			lease,
+		});
+		await removeCleanWorktree(record, lease);
+		await releaseWorktreeBranch(record, lease);
+		await expect(
+			execFileAsync("git", ["rev-parse", "--verify", record.branch], {
+				cwd: repositoryRoot,
+			}),
+		).rejects.toBeDefined();
+		await lease.release();
+	});
+
 	it("retains dirty work and rejects duplicate attempt reservations", async () => {
 		const repositoryRoot = await repository("retained");
 		const workspace = await preflightWorkspace({

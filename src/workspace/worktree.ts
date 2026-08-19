@@ -283,9 +283,6 @@ export async function releaseWorktreeBranch(
 		throw new WorktreeError("worktree run lease identity mismatch");
 	}
 	await lease.assertCurrent();
-	if (!record.handoffCommit) {
-		throw new WorktreeError("worktree handoff is not captured");
-	}
 	try {
 		await stat(record.worktreePath);
 		throw new WorktreeError("worktree must be removed before branch release");
@@ -293,12 +290,18 @@ export async function releaseWorktreeBranch(
 		if (error instanceof WorktreeError) throw error;
 		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 	}
+	const listed = (
+		await git(record.repositoryRoot, ["branch", "--list", record.branch])
+	)
+		.toString("utf8")
+		.trim();
+	if (!listed) return;
 	const branchCommit = (
 		await git(record.repositoryRoot, ["rev-parse", "--verify", record.branch])
 	)
 		.toString("utf8")
 		.trim();
-	if (branchCommit !== record.handoffCommit) {
+	if (branchCommit !== (record.handoffCommit ?? record.baselineHead)) {
 		throw new WorktreeError("handoff branch identity mismatch");
 	}
 	await lease.assertCurrent();

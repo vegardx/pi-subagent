@@ -50,6 +50,8 @@ import type { VmCapacityManager } from "./sandbox/capacity.js";
 import {
 	createAttemptWorktree,
 	readWorktreeRecord,
+	releaseWorktreeBranch,
+	removeCleanWorktree,
 	type WorktreeRecord,
 } from "./workspace/worktree.js";
 
@@ -108,6 +110,7 @@ export type SubagentClient = {
 	retry(runId: RunId): Promise<RunReceipt>;
 	resume(runId: RunId): Promise<RunReceipt>;
 	reconcile(runId: RunId): Promise<ReconcileResult>;
+	release(runId: RunId): Promise<RunReceipt>;
 	exportArtifact(
 		runId: RunId,
 		ref: ArtifactRef,
@@ -1048,6 +1051,88 @@ export async function createSubagentService(options: {
 					} finally {
 						await lease.release();
 					}
+				},
+
+				async release(runId) {
+					return runExclusive(async () => {
+						const run = ownedRun(runId);
+						if (run.status === "active" || run.status === "stopping") {
+							throw new Error("active run cannot be released");
+						}
+						const lease = await acquireRunLease({
+							root: path.join(options.root, "leases"),
+							runId,
+						});
+						try {
+							const journal = await RunJournal.open(
+								path.join(options.root, "runs"),
+								runId,
+								lease,
+							);
+							if (run.plan.workspace.mode === "worktree") {
+								const attempts = await attemptRecords.list(runId);
+								const worktreeAttempts = [
+									...new Set(
+										attempts
+											.map((attempt) => attempt.worktreeAttemptId)
+											.filter(
+												(attemptId): attemptId is string =>
+													attemptId !== undefined,
+											),
+									),
+								];
+								if (worktreeAttempts.length === 0) {
+									throw new Error("worktree identity is unavailable");
+								}
+								for (const worktreeAttemptId of worktreeAttempts) {
+									const record = await readWorktreeRecord(
+										path.join(
+											options.root,
+											"workspace",
+											"records",
+											`${worktreeAttemptId}.json`,
+										),
+									);
+									if ((await pathState(record.worktreePath)) === "present") {
+										await removeCleanWorktree(record, lease);
+									}
+									await releaseWorktreeBranch(record, lease);
+								}
+							}
+							if (run.result) {
+								const result: RunResult = {
+									...run.result.result,
+									workspaceCleanup:
+										run.plan.workspace.mode === "read-only"
+											? "not-needed"
+											: "proved",
+								};
+								if (
+									result.status === "cleanup-blocked" &&
+									result.sandboxCleanup === "proved"
+								) {
+									result.status = "failed";
+								}
+								if (!isRunResult(result))
+									throw new Error("release produced invalid result");
+								run.result = { ...run.result, result };
+								run.status = result.status;
+								run.promise = Promise.resolve(run.result);
+							}
+							await journal.append("run-released", {
+								workspace: run.plan.workspace.mode,
+							});
+							if (run.result) await journal.writeSnapshot(run.result);
+							run.journal = journal;
+							return {
+								runId,
+								attemptId: run.plan.attemptId,
+								status: run.status,
+							};
+						} finally {
+							await lease.release();
+						}
+					});
 				},
 
 				async exportArtifact(runId, ref, maxBytes) {
