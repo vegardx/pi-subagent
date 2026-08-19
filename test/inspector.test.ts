@@ -61,7 +61,7 @@ describe("subagent inspector", () => {
 				summary("active"),
 				summary("interrupted", { runId: "run_interrupted" }),
 			]),
-		).toEqual(["subagents: 1 active · 1 interrupted · /subagents"]);
+		).toEqual(["subagents: 1 active · 1 interrupted · alt+shift+s"]);
 	});
 
 	it("bounds every dashboard line to the available width", async () => {

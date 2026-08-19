@@ -1,4 +1,4 @@
-import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
 	Input,
 	Key,
@@ -50,7 +50,7 @@ export type InspectorIntent =
 	| { type: "filter"; state: InspectorState };
 
 type Screen = "runs" | "detail" | "actions" | "input" | "confirm" | "help";
-type Theme = ExtensionCommandContext["ui"]["theme"];
+type Theme = ExtensionContext["ui"]["theme"];
 
 const TABS: InspectorState["tab"][] = [
 	"overview",
@@ -121,7 +121,7 @@ export function attentionWidgetLines(runs: RunSummary[]): string[] | undefined {
 			: undefined,
 	].filter((part): part is string => part !== undefined);
 	return parts.length
-		? [`subagents: ${parts.join(" · ")} · /subagents`]
+		? [`subagents: ${parts.join(" · ")} · alt+shift+s`]
 		: undefined;
 }
 
@@ -406,7 +406,7 @@ function detailBody(
 }
 
 export async function showRetentionReport(options: {
-	ctx: ExtensionCommandContext;
+	ctx: ExtensionContext;
 	report: RetentionReport;
 }): Promise<"apply" | "close"> {
 	let protectedView = false;
@@ -456,7 +456,7 @@ export async function showRetentionReport(options: {
 }
 
 export async function showSubagentInspector(options: {
-	ctx: ExtensionCommandContext;
+	ctx: ExtensionContext;
 	service: SubagentService;
 	repositoryRoot?: string;
 	initialState?: Partial<InspectorState>;
