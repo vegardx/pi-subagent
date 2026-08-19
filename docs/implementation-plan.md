@@ -471,9 +471,13 @@ adopts durable operation IDs. Runs without proved terminal snapshots are
 conservatively rewritten as cleanup-blocked. Active observation of runs still owned by another seat remains outstanding.
 Owner-triggered reconciliation now reacquires fencing, inspects persisted VM PID
 and worktree evidence without signaling unknown processes, and moves stale runs
-to failed, interrupted, or cleanup-blocked with a new durable receipt. Retry,
-resume, deeper VM session-registry reconciliation, retention, and release remain
-outstanding.
+to failed, interrupted, or cleanup-blocked with a new durable receipt. Immutable per-attempt records now preserve ordinal, kind, parent, plan, and
+worktree identity across initial/retry/resume execution. Failed runs can retry
+with a new attempt while decrementing remaining retry/token/cost budgets.
+Interrupted runs can reopen a contained persisted Pi session in a fresh VM while
+decrementing resume/token/cost budgets and reusing a retained worktree when
+present. Deeper VM session-registry reconciliation, retry backoff/classification,
+retention, and release remain outstanding.
 
 ### Build
 

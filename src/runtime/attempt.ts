@@ -153,6 +153,7 @@ export async function runNativeAttempt(options: {
 	journal: RunJournal;
 	artifactStore: ArtifactStore;
 	sessionRoot: string;
+	resumeSessionFile?: string;
 	signal?: AbortSignal;
 }): Promise<AttemptExecutionResult> {
 	if (!Value.Check(AgentLaunchPlanSchema, options.plan)) {
@@ -271,6 +272,12 @@ export async function runNativeAttempt(options: {
 		const activeTools = finalAnswer
 			? [...options.plan.tools, "final_answer"]
 			: options.plan.tools;
+		const sessionManager = options.resumeSessionFile
+			? SessionManager.open(options.resumeSessionFile)
+			: SessionManager.create(
+					GUEST_WORKSPACE,
+					path.join(options.sessionRoot, options.plan.attemptId),
+				);
 		const created = await createAgentSession({
 			cwd: GUEST_WORKSPACE,
 			agentDir: getAgentDir(),
@@ -281,10 +288,7 @@ export async function runNativeAttempt(options: {
 			tools: activeTools,
 			customTools,
 			resourceLoader: loader,
-			sessionManager: SessionManager.create(
-				GUEST_WORKSPACE,
-				path.join(options.sessionRoot, options.plan.attemptId),
-			),
+			sessionManager,
 			settingsManager,
 		});
 		session = created.session;
@@ -293,7 +297,11 @@ export async function runNativeAttempt(options: {
 			sessionId: session.sessionId,
 			sessionFile: session.sessionFile,
 		});
-		await session.prompt(delegatedPrompt(options.plan));
+		await session.prompt(
+			options.resumeSessionFile
+				? "Resume the interrupted task. Revalidate the current workspace state, complete the original goal, and return the required final result."
+				: delegatedPrompt(options.plan),
+		);
 		if (finalAnswer) {
 			for (
 				let repair = 0;

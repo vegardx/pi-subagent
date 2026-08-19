@@ -712,18 +712,19 @@ async function qualifyAttemptRunner(): Promise<string> {
 	const artifactStore = await ArtifactStore.open({
 		root: path.join(root, "runner-artifacts"),
 		maxArtifactBytes: plan.limits.outputBytes,
-		maxTotalBytes: plan.limits.outputBytes,
+		maxTotalBytes: plan.limits.outputBytes * 2,
 		lease,
+	});
+	const runnerCapacity = await createVmCapacityManager({
+		root: path.join(root, "runner-capacity"),
+		maxSlots: 1,
 	});
 	const result = await runNativeAttempt({
 		plan,
 		agent,
 		workspacePath: workspace,
 		modelRuntime,
-		capacity: await createVmCapacityManager({
-			root: path.join(root, "runner-capacity"),
-			maxSlots: 1,
-		}),
+		capacity: runnerCapacity,
 		lease,
 		journal,
 		artifactStore,
@@ -740,7 +741,47 @@ async function qualifyAttemptRunner(): Promise<string> {
 		"runner output artifact mismatch",
 	);
 	assert((await journal.readEvents()).length >= 4, "runner journal incomplete");
-	return `Production runner completed ${attemptId} with a persisted Pi session, terminal result, and proved VM cleanup.`;
+	assert(result.sessionFile !== undefined, "runner session was not persisted");
+	const resumedAttemptId = `attempt_${randomUUID().replaceAll("-", "")}`;
+	const { identitySha256: _identity, ...resumeBase } = plan;
+	const resumeDraft = { ...resumeBase, attemptId: resumedAttemptId };
+	const resumePlan = {
+		...resumeDraft,
+		identitySha256: canonicalSha256(resumeDraft),
+	};
+	const resumeLease = await acquireRunLease({
+		root: path.join(root, "runner-leases"),
+		runId,
+	});
+	const resumeJournal = await RunJournal.open(
+		path.join(root, "runner-runs"),
+		runId,
+		resumeLease,
+	);
+	const resumeArtifacts = await ArtifactStore.open({
+		root: path.join(root, "runner-artifacts"),
+		maxArtifactBytes: plan.limits.outputBytes,
+		maxTotalBytes: plan.limits.outputBytes * 2,
+		lease: resumeLease,
+	});
+	const resumed = await runNativeAttempt({
+		plan: resumePlan,
+		agent,
+		workspacePath: workspace,
+		modelRuntime,
+		capacity: runnerCapacity,
+		lease: resumeLease,
+		journal: resumeJournal,
+		artifactStore: resumeArtifacts,
+		sessionRoot: path.join(root, "runner-sessions"),
+		resumeSessionFile: result.sessionFile,
+	});
+	await resumeLease.release();
+	assert(
+		resumed.result.status === "completed",
+		resumed.error ?? "resume failed",
+	);
+	return `Production runner completed ${attemptId}, reopened its persisted session in a fresh VM as ${resumedAttemptId}, and proved both VM cleanups.`;
 }
 
 async function qualifyNativeSessions(): Promise<string> {

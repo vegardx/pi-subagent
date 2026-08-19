@@ -8,10 +8,12 @@ import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 import type { RunResult } from "../src/contracts.js";
 import type { SubagentRequest } from "../src/launch-contracts.js";
+import { AttemptRecordStore } from "../src/persistence/attempt-record.js";
 import { RunJournal } from "../src/persistence/journal.js";
 import { acquireRunLease } from "../src/persistence/run-lease.js";
 import { RunRecordStore } from "../src/persistence/run-record.js";
 import { digestFileResource } from "../src/preflight/resources.js";
+import { preflightWorkspace } from "../src/preflight/workspace.js";
 import { createVmCapacityManager } from "../src/sandbox/capacity.js";
 import { createSubagentService } from "../src/service.js";
 
@@ -48,8 +50,8 @@ async function fixture(name: string) {
 		cost: 10,
 		outputBytes: 4096,
 		workspaceWriteBytes: 0,
-		retries: 0,
-		resumes: 0,
+		retries: 1,
+		resumes: 1,
 	};
 	const model = {
 		provider: "github-copilot",
@@ -167,6 +169,13 @@ describe("foreground subagent service", () => {
 		).toBe("done");
 		expect((await client.status(first.runId)).status).toBe("completed");
 		expect(await client.logs(first.runId)).toHaveLength(1);
+		expect(
+			await (
+				await AttemptRecordStore.open(
+					path.join(data.root, "state", "attempt-records"),
+				)
+			).list(first.runId),
+		).toHaveLength(1);
 		await expect(
 			data.service.forOwner({ id: "owner-b" }).status(first.runId),
 		).rejects.toThrow("run not found");
@@ -217,6 +226,95 @@ describe("foreground subagent service", () => {
 		).rejects.toThrow("workspace changed after preflight");
 	});
 
+	it("retries a classified failed attempt with remaining budgets", async () => {
+		let attempts = 0;
+		const data = await serviceFor("retry", async (input) => {
+			attempts++;
+			const status = attempts === 1 ? "failed" : "completed";
+			return {
+				result: result(input.plan.runId, status),
+				output: status,
+				sessionFile: undefined,
+				handoff: undefined,
+				structuredOutput: undefined,
+				error: status === "failed" ? "transient" : undefined,
+			};
+		});
+		const client = data.service.forOwner({ id: "owner-a" });
+		const preflight = await client.preflight(data.request);
+		const initial = await client.launch(
+			preflight.preflightId,
+			preflight.identitySha256,
+		);
+		expect((await client.wait(initial.runId)).result.status).toBe("failed");
+		const retry = await client.retry(initial.runId);
+		expect(retry.attemptId).not.toBe(initial.attemptId);
+		expect((await client.wait(initial.runId)).result.status).toBe("completed");
+		const history = await (
+			await AttemptRecordStore.open(
+				path.join(data.root, "state", "attempt-records"),
+			)
+		).list(initial.runId);
+		expect(history.map((attempt) => attempt.kind)).toEqual([
+			"initial",
+			"retry",
+		]);
+		expect(history[1]?.parentAttemptId).toBe(initial.attemptId);
+	});
+
+	it("resumes an interrupted session as a fresh attempt", async () => {
+		let attempts = 0;
+		let retainedSession = "";
+		let dataRoot = "";
+		const data = await serviceFor("resume", async (input) => {
+			attempts++;
+			if (attempts === 1) {
+				retainedSession = path.join(
+					dataRoot,
+					"state",
+					"sessions",
+					"retained",
+					"session.jsonl",
+				);
+				await mkdir(path.dirname(retainedSession), { recursive: true });
+				await writeFile(retainedSession, "session\n");
+			}
+			return {
+				result: result(
+					input.plan.runId,
+					attempts === 1 ? "interrupted" : "completed",
+				),
+				output: "",
+				sessionFile: attempts === 1 ? retainedSession : input.resumeSessionFile,
+				handoff: undefined,
+				structuredOutput: undefined,
+				error: attempts === 1 ? "interrupted" : undefined,
+			};
+		});
+		dataRoot = data.root;
+		const client = data.service.forOwner({ id: "owner-a" });
+		const preflight = await client.preflight(data.request);
+		const initial = await client.launch(
+			preflight.preflightId,
+			preflight.identitySha256,
+		);
+		expect((await client.wait(initial.runId)).result.status).toBe(
+			"interrupted",
+		);
+		const resumed = await client.resume(initial.runId);
+		expect(resumed.attemptId).not.toBe(initial.attemptId);
+		expect((await client.wait(initial.runId)).result.status).toBe("completed");
+		const history = await (
+			await AttemptRecordStore.open(
+				path.join(data.root, "state", "attempt-records"),
+			)
+		).list(initial.runId);
+		expect(history.map((attempt) => attempt.kind)).toEqual([
+			"initial",
+			"resume",
+		]);
+	});
+
 	it("reconciles a stale pre-terminal run conservatively", async () => {
 		const data = await serviceFor("reconcile");
 		const ownerId = "owner-a";
@@ -227,7 +325,11 @@ describe("foreground subagent service", () => {
 		const records = await RunRecordStore.open(
 			path.join(stateRoot, "run-records"),
 		);
-		await records.create(ownerId, preflight.launchPlan);
+		await records.create(
+			ownerId,
+			preflight.launchPlan,
+			await preflightWorkspace(data.request.workspace),
+		);
 		const lease = await acquireRunLease({
 			root: path.join(stateRoot, "leases"),
 			runId: preflight.launchPlan.runId,

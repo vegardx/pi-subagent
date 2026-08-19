@@ -29,6 +29,19 @@ export const RunRecordSchema = Type.Object(
 		contractRevision: Type.Literal(CONTRACT_REVISION),
 		ownerId: Type.String({ minLength: 1, maxLength: 256 }),
 		plan: AgentLaunchPlanSchema,
+		workspace: Type.Object(
+			{
+				mode: Type.Union([Type.Literal("read-only"), Type.Literal("worktree")]),
+				repositoryRoot: Type.String({ minLength: 1, maxLength: 4096 }),
+				cwd: Type.String({ minLength: 1, maxLength: 4096 }),
+				relativeCwd: Type.String({ minLength: 1, maxLength: 4096 }),
+				head: Type.String({ pattern: "^[a-f0-9]{40,64}$" }),
+				dirty: Type.Boolean(),
+				hostPathSha256: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+				baselineSha256: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+			},
+			{ additionalProperties: false },
+		),
 		createdAt: Type.String({ format: "date-time" }),
 	},
 	{ additionalProperties: false },
@@ -62,7 +75,11 @@ export class RunRecordStore {
 		return path.join(this.root, `${runId}.json`);
 	}
 
-	async create(ownerId: string, plan: AgentLaunchPlan): Promise<RunRecord> {
+	async create(
+		ownerId: string,
+		plan: AgentLaunchPlan,
+		workspace: RunRecord["workspace"],
+	): Promise<RunRecord> {
 		if (ownerId !== plan.ownerId || !verifyLaunchPlanIdentity(plan)) {
 			throw new Error("invalid run record identity");
 		}
@@ -71,6 +88,7 @@ export class RunRecordStore {
 			contractRevision: CONTRACT_REVISION,
 			ownerId,
 			plan,
+			workspace,
 			createdAt: new Date().toISOString(),
 		};
 		if (!Value.Check(RunRecordSchema, record)) {
@@ -105,7 +123,8 @@ export class RunRecordStore {
 		const existing = await this.read(plan.runId);
 		if (
 			existing.ownerId !== ownerId ||
-			existing.plan.identitySha256 !== plan.identitySha256
+			existing.plan.identitySha256 !== plan.identitySha256 ||
+			existing.workspace.baselineSha256 !== workspace.baselineSha256
 		) {
 			throw new Error("run record conflicts with existing identity");
 		}
@@ -131,6 +150,11 @@ export class RunRecordStore {
 		if (
 			record.plan.runId !== runId ||
 			record.ownerId !== record.plan.ownerId ||
+			record.workspace.mode !== record.plan.workspace.mode ||
+			record.workspace.hostPathSha256 !==
+				record.plan.workspace.hostPathSha256 ||
+			record.workspace.baselineSha256 !==
+				record.plan.workspace.baselineSha256 ||
 			!verifyLaunchPlanIdentity(record.plan)
 		) {
 			throw new PersistenceCorruptionError("run record identity mismatch");
