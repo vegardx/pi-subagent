@@ -469,7 +469,11 @@ run. Startup now scans immutable run records, acquires replacement fencing, rest
 terminal snapshots and artifact access, rebuilds owner/status/wait routing, and
 adopts durable operation IDs. Runs without proved terminal snapshots are
 conservatively rewritten as cleanup-blocked. Active observation of runs still owned by another seat remains outstanding.
-Owner-triggered reconciliation now reacquires fencing, inspects persisted VM PID
+Active runs now register direct native-session steering and follow-up controls.
+Owner-scoped control operation IDs are durable, delivery is serialized, duplicate
+requests replay one receipt, and outcomes distinguish accepted-by-session,
+missed, and failed without claiming model compliance. Owner-triggered
+reconciliation reacquires fencing, inspects persisted VM PID
 and worktree evidence without signaling unknown processes, and moves stale runs
 to failed, interrupted, or cleanup-blocked with a new durable receipt. Immutable per-attempt records now preserve ordinal, kind, parent, plan, and
 worktree identity across initial/retry/resume execution. Failed runs can retry

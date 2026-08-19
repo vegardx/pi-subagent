@@ -124,6 +124,7 @@ export {
 	WorkspacePreflightError,
 } from "./preflight/workspace.js";
 export {
+	type AttemptControl,
 	type AttemptExecutionResult,
 	boundAttemptOutput,
 	runNativeAttempt,
@@ -156,6 +157,8 @@ export {
 	withWriteBudget,
 } from "./sandbox/write-budget.js";
 export {
+	type ControlInput,
+	type ControlReceipt,
 	createSubagentService,
 	type OwnerRegistration,
 	type ReconcileResult,
