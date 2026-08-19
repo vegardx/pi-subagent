@@ -271,6 +271,11 @@ host fallback.
 
 ## Deliverable 2 — contracts and persistence
 
+The first pure slice defines the exact runtime capability schema, bounded result
+shape, cleanup invariants, and exhaustive run-status transition reducer. Every
+unimplemented feature remains `false`; persistence and the full launch/event
+contracts remain outstanding.
+
 ### Build
 
 - branded owner, operation, run, attempt, session, sandbox, workspace, and
