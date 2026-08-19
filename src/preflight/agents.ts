@@ -136,6 +136,7 @@ async function loadAgent(
 	}
 	return {
 		name: frontmatter.name,
+		displayName: frontmatter.name,
 		source: digest.canonicalPath,
 		sha256: digest.sha256,
 		defaultModel: frontmatter.model,

@@ -200,6 +200,11 @@ export async function runNativeAttempt(options: {
 			: createFinalAnswerController(options.plan.outputSchema);
 	if (
 		options.agent.name !== options.plan.agent ||
+		options.agent.displayName !== options.plan.agentDisplayName ||
+		options.agent.prompt !== options.plan.agentPrompt ||
+		options.agent.source !== options.plan.agentSource ||
+		options.agent.sha256 !== options.plan.agentSha256 ||
+		options.agent.scope !== options.plan.agentScope ||
 		!options.plan.resources.some(
 			(resource) =>
 				resource.kind === "agent" &&

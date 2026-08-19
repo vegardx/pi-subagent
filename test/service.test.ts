@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -63,6 +63,7 @@ async function fixture(name: string) {
 	};
 	const agent = {
 		name: "worker",
+		displayName: "Worker",
 		source: agentDigest.canonicalPath,
 		sha256: agentDigest.sha256,
 		defaultModel: model,
@@ -158,6 +159,10 @@ describe("foreground subagent service", () => {
 			await input.journal.writeSnapshot(execution);
 			return execution;
 		});
+		const observations: string[] = [];
+		const unsubscribe = data.service.subscribe((event) => {
+			observations.push(`${event.runId}:${event.status}`);
+		});
 		const client = data.service.forOwner({ id: "owner-a" });
 		const preflight = await client.preflight(data.request);
 		const [first, duplicate] = await Promise.all([
@@ -176,7 +181,22 @@ describe("foreground subagent service", () => {
 			),
 		).toBe("done");
 		expect((await client.status(first.runId)).status).toBe("completed");
-		expect(await client.logs(first.runId)).toHaveLength(1);
+		expect((await client.logs(first.runId)).events).toHaveLength(1);
+		const page = await data.service.listRuns({
+			repositoryRoot: await realpath(data.repository),
+			limit: 1,
+		});
+		expect(page.total).toBe(1);
+		expect(page.runs[0]).toMatchObject({
+			runId: first.runId,
+			agentDisplayName: "Worker",
+			status: "completed",
+			workspaceMode: "read-only",
+		});
+		expect((await client.listRuns()).runs).toHaveLength(1);
+		expect(observations).toContain(`${first.runId}:active`);
+		expect(observations).toContain(`${first.runId}:completed`);
+		unsubscribe();
 		expect(
 			await (
 				await AttemptRecordStore.open(
@@ -222,6 +242,40 @@ describe("foreground subagent service", () => {
 		expect((await restartedClient.release(first.runId)).status).toBe(
 			"completed",
 		);
+	});
+
+	it("keeps execution dependencies lazy for metadata inspection", async () => {
+		const data = await fixture("lazy-metadata");
+		let loads = 0;
+		const service = await createSubagentService({
+			root: path.join(data.root, "state"),
+			agentDir: path.join(data.root, "agent"),
+			agents: new Map([[data.agent.name, data.agent]]),
+			resolveModel: async (model) => model,
+			async loadExecution() {
+				loads++;
+				return {
+					modelRuntime: {} as ModelRuntime,
+					capacity: await createVmCapacityManager({
+						root: path.join(data.root, "capacity"),
+						maxSlots: 1,
+					}),
+					sandbox: {
+						packageVersion: "0.12.0",
+						imageSha256: hash,
+						mountPolicySha256: hash,
+						networkPolicySha256: hash,
+						capacityPolicySha256: hash,
+						memoryBytes: 512 * 1024 * 1024,
+						guestDiskBytes: 2 * 1024 * 1024 * 1024,
+					},
+				};
+			},
+		});
+		expect((await service.listRuns()).runs).toEqual([]);
+		expect(loads).toBe(0);
+		await service.forOwner({ id: "owner-lazy" }).preflight(data.request);
+		expect(loads).toBe(1);
 	});
 
 	it("rejects workspace drift after preflight", async () => {
@@ -427,19 +481,19 @@ describe("foreground subagent service", () => {
 		).toMatchObject({ state: "missed" });
 	});
 
-	it("retries a classified failed attempt with remaining budgets", async () => {
-		let attempts = 0;
+	it("retries a recovered dynamic agent with remaining budgets", async () => {
 		const data = await serviceFor("retry", async (input) => {
-			attempts++;
-			const status = attempts === 1 ? "failed" : "completed";
-			return {
-				result: result(input.plan.runId, status),
-				output: status,
+			const execution = {
+				result: result(input.plan.runId, "failed"),
+				output: "failed",
 				sessionFile: undefined,
 				handoff: undefined,
 				structuredOutput: undefined,
-				error: status === "failed" ? "transient" : undefined,
+				error: "transient",
 			};
+			await input.journal.append("attempt-failed", { status: "failed" });
+			await input.journal.writeSnapshot(execution);
+			return execution;
 		});
 		const client = data.service.forOwner({ id: "owner-a" });
 		const preflight = await client.preflight(data.request);
@@ -448,9 +502,41 @@ describe("foreground subagent service", () => {
 			preflight.identitySha256,
 		);
 		expect((await client.wait(initial.runId)).result.status).toBe("failed");
-		const retry = await client.retry(initial.runId);
+		await data.service.shutdown();
+		const restarted = await createSubagentService({
+			root: path.join(data.root, "state"),
+			agentDir: path.join(data.root, "agent"),
+			agents: new Map(),
+			modelRuntime: {} as ModelRuntime,
+			capacity: await createVmCapacityManager({
+				root: path.join(data.root, "capacity"),
+				maxSlots: 2,
+			}),
+			sandbox: {
+				packageVersion: "0.12.0",
+				imageSha256: hash,
+				mountPolicySha256: hash,
+				networkPolicySha256: hash,
+				capacityPolicySha256: hash,
+				memoryBytes: 512 * 1024 * 1024,
+				guestDiskBytes: 2 * 1024 * 1024 * 1024,
+			},
+			resolveModel: async (model) => model,
+			executeAttempt: async (input) => ({
+				result: result(input.plan.runId, "completed"),
+				output: input.agent.prompt,
+				sessionFile: undefined,
+				handoff: undefined,
+				structuredOutput: undefined,
+				error: undefined,
+			}),
+		});
+		const restartedClient = restarted.forOwner({ id: "owner-a" });
+		const retry = await restartedClient.retry(initial.runId);
 		expect(retry.attemptId).not.toBe(initial.attemptId);
-		expect((await client.wait(initial.runId)).result.status).toBe("completed");
+		expect((await restartedClient.wait(initial.runId)).output).toBe(
+			"worker prompt",
+		);
 		const history = await (
 			await AttemptRecordStore.open(
 				path.join(data.root, "state", "attempt-records"),

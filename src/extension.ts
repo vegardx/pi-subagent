@@ -107,57 +107,63 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 	): Promise<SubagentService> {
 		if (service) return service;
 		servicePromise ??= (async () => {
-			const [gondolin, capacityModule, serviceModule] = await Promise.all([
-				import("@earendil-works/gondolin"),
-				import("./sandbox/capacity.js"),
-				import("./service.js"),
-			]);
-			modelRuntime = await ModelRuntime.create();
-			for (const providerId of ctx.modelRegistry.getRegisteredProviderIds()) {
-				const provider =
-					ctx.modelRegistry.getRegisteredNativeProvider(providerId) ??
-					ctx.modelRegistry.getProvider(providerId);
-				if (provider) modelRuntime.registerNativeProvider(provider);
-			}
-			if (ctx.model) {
-				const provider = ctx.modelRegistry.getProvider(ctx.model.provider);
-				if (provider) modelRuntime.registerNativeProvider(provider);
-			}
-			const assets = await gondolin.ensureGuestAssets();
-			const manifest = gondolin.loadAssetManifest(
-				path.dirname(assets.kernelPath),
-			);
-			if (!manifest) throw new Error("Gondolin image manifest is unavailable.");
-			const capacity = await capacityModule.createVmCapacityManager({
-				root: path.join(getAgentDir(), "subagents", "capacity"),
-				maxSlots: 4,
-			});
-			const rootfs = await stat(assets.rootfsPath);
+			const serviceModule = await import("./service.js");
 			service = await serviceModule.createSubagentService({
 				root: path.join(getAgentDir(), "subagents", "service"),
 				agents,
 				agentDir: getAgentDir(),
 				isProjectTrusted: (cwd) => cwd === ctx.cwd && ctx.isProjectTrusted(),
-				modelRuntime,
-				capacity,
-				sandbox: {
-					packageVersion: "0.12.0",
-					imageSha256: canonicalSha256(manifest.checksums),
-					mountPolicySha256: canonicalSha256({
-						backend: "gondolin-vfs",
-						version: 1,
-					}),
-					networkPolicySha256: canonicalSha256({
-						mode: "public-egress",
-						blockInternalRanges: true,
-						allowWebSockets: false,
-					}),
-					capacityPolicySha256: canonicalSha256({
-						basePort: capacity.basePort,
-						maxSlots: capacity.maxSlots,
-					}),
-					memoryBytes: 512 * 1024 * 1024,
-					guestDiskBytes: rootfs.size,
+				async loadExecution() {
+					const [gondolin, capacityModule] = await Promise.all([
+						import("@earendil-works/gondolin"),
+						import("./sandbox/capacity.js"),
+					]);
+					modelRuntime = await ModelRuntime.create();
+					for (const providerId of ctx.modelRegistry.getRegisteredProviderIds()) {
+						const provider =
+							ctx.modelRegistry.getRegisteredNativeProvider(providerId) ??
+							ctx.modelRegistry.getProvider(providerId);
+						if (provider) modelRuntime.registerNativeProvider(provider);
+					}
+					if (ctx.model) {
+						const provider = ctx.modelRegistry.getProvider(ctx.model.provider);
+						if (provider) modelRuntime.registerNativeProvider(provider);
+					}
+					const assets = await gondolin.ensureGuestAssets();
+					const manifest = gondolin.loadAssetManifest(
+						path.dirname(assets.kernelPath),
+					);
+					if (!manifest) {
+						throw new Error("Gondolin image manifest is unavailable.");
+					}
+					const capacity = await capacityModule.createVmCapacityManager({
+						root: path.join(getAgentDir(), "subagents", "capacity"),
+						maxSlots: 4,
+					});
+					const rootfs = await stat(assets.rootfsPath);
+					return {
+						modelRuntime,
+						capacity,
+						sandbox: {
+							packageVersion: "0.12.0",
+							imageSha256: canonicalSha256(manifest.checksums),
+							mountPolicySha256: canonicalSha256({
+								backend: "gondolin-vfs",
+								version: 1,
+							}),
+							networkPolicySha256: canonicalSha256({
+								mode: "public-egress",
+								blockInternalRanges: true,
+								allowWebSockets: false,
+							}),
+							capacityPolicySha256: canonicalSha256({
+								basePort: capacity.basePort,
+								maxSlots: capacity.maxSlots,
+							}),
+							memoryBytes: 512 * 1024 * 1024,
+							guestDiskBytes: rootfs.size,
+						},
+					};
 				},
 			});
 			return service;
@@ -274,6 +280,7 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 			});
 			const agent = {
 				name: `dynamic-${agentIdentity.slice(0, 32)}`,
+				displayName: params.agent,
 				source: `<extension-agent:${agentIdentity}>`,
 				sha256: agentIdentity,
 				defaultModel: { ...model, thinking },

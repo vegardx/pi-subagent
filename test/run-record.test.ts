@@ -22,6 +22,11 @@ function plan(): AgentLaunchPlan {
 		runId: "run_record",
 		attemptId: "attempt_record",
 		agent: "worker",
+		agentDisplayName: "Worker",
+		agentPrompt: "Worker prompt",
+		agentSource: "/agent",
+		agentSha256: hash,
+		agentScope: "global" as const,
 		task: { goal: "goal", context: [], instructions: ["instruction"] },
 		contextMode: "fresh" as const,
 		model: {

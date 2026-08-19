@@ -101,6 +101,49 @@ export type RunView = RunReceipt & {
 	result?: AttemptExecutionResult;
 };
 
+export type RunSummary = {
+	runId: RunId;
+	attemptId: AttemptId;
+	ownerId: string;
+	agentName: string;
+	agentDisplayName: string;
+	goalPreview: string;
+	status: RunStatus;
+	repositoryRoot: string;
+	workspaceMode: "read-only" | "worktree";
+	createdAt: string;
+	updatedAt: string;
+	usage?: RunResult["usage"];
+	pinned: boolean;
+	retainedWorktree: boolean;
+	requiresAttention: boolean;
+};
+
+export type RunQuery = {
+	repositoryRoot?: string;
+	ownerId?: string;
+	statuses?: RunStatus[];
+	limit?: number;
+	cursor?: string;
+};
+
+export type RunPage = {
+	runs: RunSummary[];
+	nextCursor?: string;
+	total: number;
+};
+
+export type RunLogPage = {
+	events: JournalEvent[];
+	nextCursor?: string;
+	total: number;
+};
+
+export type RunObservation = {
+	runId: RunId;
+	status: RunStatus;
+};
+
 export type ControlInput = {
 	operationId: string;
 	text: string;
@@ -125,7 +168,11 @@ export type SubagentClient = {
 	): Promise<RunReceipt>;
 	findByOperation(operationId: string): Promise<RunReceipt | undefined>;
 	status(runId: RunId): Promise<RunView>;
-	logs(runId: RunId): Promise<JournalEvent[]>;
+	listRuns(query?: Omit<RunQuery, "ownerId">): Promise<RunPage>;
+	logs(
+		runId: RunId,
+		options?: { cursor?: string; limit?: number; tail?: number },
+	): Promise<RunLogPage>;
 	wait(runId: RunId): Promise<AttemptExecutionResult>;
 	interrupt(runId: RunId): Promise<RunReceipt>;
 	steer(runId: RunId, input: ControlInput): Promise<ControlReceipt>;
@@ -145,6 +192,8 @@ export type SubagentClient = {
 
 export type SubagentService = {
 	forOwner(owner: OwnerRegistration): SubagentClient;
+	listRuns(query?: RunQuery): Promise<RunPage>;
+	subscribe(listener: (event: RunObservation) => void): () => void;
 	prune(options?: {
 		dryRun?: boolean;
 		maxAgeMs?: number;
@@ -176,6 +225,7 @@ type ActiveRun = {
 	promise: Promise<AttemptExecutionResult>;
 	result?: AttemptExecutionResult;
 	status: RunStatus;
+	createdAt: string;
 	control?: AttemptControl;
 	controlReceipts: Map<string, ControlReceipt>;
 	controlTail: Promise<void>;
@@ -325,6 +375,26 @@ function assertSkillProjection(
 	}
 }
 
+function agentFromPlan(plan: AgentLaunchPlan): DiscoveredAgent {
+	return {
+		name: plan.agent,
+		displayName: plan.agentDisplayName,
+		prompt: plan.agentPrompt,
+		scope: plan.agentScope,
+		source: plan.agentSource,
+		sha256: plan.agentSha256,
+		defaultModel: plan.model,
+		allowedModels: [
+			`${plan.model.provider}/${plan.model.id}:${plan.model.thinking}`,
+		],
+		tools: [...plan.tools],
+		preloadSkills: [...plan.preloadSkills],
+		contextScopes: [...plan.contextScopes],
+		workspaceModes: [plan.workspace.mode],
+		limitCeiling: { ...plan.limits },
+	};
+}
+
 function validateOwner(owner: OwnerRegistration): void {
 	if (!owner.id.trim() || Buffer.byteLength(owner.id, "utf8") > 256) {
 		throw new Error("owner ID must contain 1-256 UTF-8 bytes");
@@ -374,12 +444,19 @@ function toolResources(
 	return resources;
 }
 
-export async function createSubagentService(options: {
-	root: string;
-	agents: Map<string, DiscoveredAgent>;
+export type SubagentExecutionDependencies = {
 	modelRuntime: ModelRuntime;
 	capacity: VmCapacityManager;
 	sandbox: ResolvedSandbox;
+};
+
+export async function createSubagentService(options: {
+	root: string;
+	agents: Map<string, DiscoveredAgent>;
+	modelRuntime?: ModelRuntime;
+	capacity?: VmCapacityManager;
+	sandbox?: ResolvedSandbox;
+	loadExecution?: () => Promise<SubagentExecutionDependencies>;
 	preflightTtlMs?: number;
 	agentDir?: string;
 	isProjectTrusted?: (cwd: string) => boolean;
@@ -402,6 +479,16 @@ export async function createSubagentService(options: {
 	const retention = await createRetentionManager({ root: options.root });
 	const preflights = new Map<string, PreparedPreflight>();
 	const runs = new Map<string, ActiveRun>();
+	const observers = new Set<(event: RunObservation) => void>();
+	const emit = (runId: RunId, status: RunStatus) => {
+		for (const observer of observers) {
+			try {
+				observer({ runId, status });
+			} catch {
+				// Observation must not alter lifecycle authority.
+			}
+		}
+	};
 	let launchTail = Promise.resolve();
 	const runExclusive = async <T>(operation: () => Promise<T>): Promise<T> => {
 		const previous = launchTail;
@@ -419,8 +506,32 @@ export async function createSubagentService(options: {
 	const preflightTtlMs = options.preflightTtlMs ?? 5 * 60_000;
 	const agentDir = options.agentDir ?? getAgentDir();
 	const executeAttempt = options.executeAttempt ?? runNativeAttempt;
+	let executionPromise: Promise<SubagentExecutionDependencies> | undefined;
+	const execution = () => {
+		if (!executionPromise) {
+			executionPromise = (
+				options.loadExecution
+					? options.loadExecution()
+					: options.modelRuntime && options.capacity && options.sandbox
+						? Promise.resolve({
+								modelRuntime: options.modelRuntime,
+								capacity: options.capacity,
+								sandbox: options.sandbox,
+							})
+						: Promise.reject(
+								new Error("execution dependencies are unavailable"),
+							)
+			).catch((error) => {
+				executionPromise = undefined;
+				throw error;
+			});
+		}
+		return executionPromise;
+	};
 	const resolveModel =
-		options.resolveModel ?? createExactModelResolver(options.modelRuntime);
+		options.resolveModel ??
+		(async (model: ExactModelRequest) =>
+			createExactModelResolver((await execution()).modelRuntime)(model));
 
 	for (const record of await runRecords.list()) {
 		const recoveredSkills: SkillProjection = {
@@ -512,6 +623,7 @@ export async function createSubagentService(options: {
 				promise: Promise.resolve(execution),
 				result: execution,
 				status: result.status,
+				createdAt: record.createdAt,
 				controlReceipts: new Map(),
 				controlTail: Promise.resolve(),
 			};
@@ -554,9 +666,14 @@ export async function createSubagentService(options: {
 					(input.rootPlan.limits.retries + input.rootPlan.limits.resumes + 1),
 				lease,
 			});
-			if (input.kind === "initial") {
-				await runRecords.create(input.ownerId, input.rootPlan, input.workspace);
-			}
+			const runRecord =
+				input.kind === "initial"
+					? await runRecords.create(
+							input.ownerId,
+							input.rootPlan,
+							input.workspace,
+						)
+					: await runRecords.read(input.plan.runId);
 			let worktree = input.existingWorktree;
 			let workspacePath = input.workspace.cwd;
 			if (input.plan.workspace.mode === "worktree" && !worktree) {
@@ -584,6 +701,7 @@ export async function createSubagentService(options: {
 					: {}),
 				...(worktree ? { worktreeAttemptId: worktree.attemptId } : {}),
 			});
+			const executionDependencies = await execution();
 			const abort = new AbortController();
 			let active: ActiveRun | undefined;
 			let pendingControl: AttemptControl | undefined;
@@ -593,8 +711,8 @@ export async function createSubagentService(options: {
 				workspacePath,
 				workspaceAliases: [input.workspace.cwd],
 				...(worktree ? { worktree } : {}),
-				modelRuntime: options.modelRuntime,
-				capacity: options.capacity,
+				modelRuntime: executionDependencies.modelRuntime,
+				capacity: executionDependencies.capacity,
 				lease,
 				journal,
 				artifactStore: artifacts,
@@ -624,6 +742,7 @@ export async function createSubagentService(options: {
 				abort,
 				promise: rawPromise,
 				status: "active",
+				createdAt: runRecord.createdAt,
 				controlReceipts: new Map(),
 				controlTail: Promise.resolve(),
 				...(pendingControl ? { control: pendingControl } : {}),
@@ -638,17 +757,21 @@ export async function createSubagentService(options: {
 							await lease.release();
 						} catch (error) {
 							running.status = "cleanup-blocked";
+							emit(running.plan.runId, running.status);
 							throw error;
 						}
 					}
+					emit(running.plan.runId, running.status);
 					return result;
 				},
 				(error: unknown) => {
 					running.status = "cleanup-blocked";
+					emit(running.plan.runId, running.status);
 					throw error;
 				},
 			);
 			runs.set(input.plan.runId, running);
+			emit(input.plan.runId, "active");
 			return {
 				runId: input.plan.runId,
 				attemptId: input.plan.attemptId,
@@ -660,32 +783,74 @@ export async function createSubagentService(options: {
 		}
 	};
 
+	const retainedWorktree = async (
+		run: ActiveRun,
+		attempts?: Awaited<ReturnType<AttemptRecordStore["list"]>>,
+	): Promise<boolean> => {
+		const records = attempts ?? (await attemptRecords.list(run.plan.runId));
+		for (const attempt of records) {
+			const worktreeAttemptId = attempt.worktreeAttemptId;
+			if (!worktreeAttemptId) continue;
+			try {
+				const record = await readWorktreeRecord(
+					path.join(
+						options.root,
+						"workspace",
+						"records",
+						`${worktreeAttemptId}.json`,
+					),
+				);
+				if (!record.releasedAt) return true;
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+				throw error;
+			}
+		}
+		return false;
+	};
+
+	const summarizeRun = async (
+		run: ActiveRun,
+		pinnedRuns: Set<RunId>,
+	): Promise<RunSummary> => {
+		const [attempts, events] = await Promise.all([
+			attemptRecords.list(run.plan.runId),
+			run.journal.readEvents(),
+		]);
+		const latestAttempt = attempts.at(-1);
+		const updatedAt = events.at(-1)?.timestamp ?? run.createdAt;
+		const goalPreview = run.plan.task.goal
+			.replaceAll(/\s+/g, " ")
+			.slice(0, 240);
+		return {
+			runId: run.plan.runId,
+			attemptId: latestAttempt?.attemptId ?? run.plan.attemptId,
+			ownerId: run.ownerId,
+			agentName: run.plan.agent,
+			agentDisplayName: run.plan.agentDisplayName,
+			goalPreview,
+			status: run.status,
+			repositoryRoot: run.workspace.repositoryRoot,
+			workspaceMode: run.plan.workspace.mode,
+			createdAt: run.createdAt,
+			updatedAt,
+			...(run.result ? { usage: run.result.result.usage } : {}),
+			pinned: pinnedRuns.has(run.plan.runId),
+			retainedWorktree: await retainedWorktree(run, attempts),
+			requiresAttention: [
+				"active",
+				"stopping",
+				"interrupted",
+				"cleanup-blocked",
+			].includes(run.status),
+		};
+	};
+
 	const retentionRuns = async (): Promise<RetentionRun[]> => {
 		const descriptors: RetentionRun[] = [];
 		for (const run of runs.values()) {
 			const attempts = await attemptRecords.list(run.plan.runId);
-			let retainedWorktree = false;
-			for (const attempt of attempts) {
-				const worktreeAttemptId = attempt.worktreeAttemptId;
-				if (!worktreeAttemptId) continue;
-				try {
-					const record = await readWorktreeRecord(
-						path.join(
-							options.root,
-							"workspace",
-							"records",
-							`${worktreeAttemptId}.json`,
-						),
-					);
-					if (!record.releasedAt) retainedWorktree = true;
-				} catch (error) {
-					if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-						retainedWorktree = true;
-						continue;
-					}
-					throw error;
-				}
-			}
+			const hasRetainedWorktree = await retainedWorktree(run, attempts);
 			const events = await run.journal.readEvents();
 			const terminalEvent = events.findLast((event) =>
 				[
@@ -700,13 +865,86 @@ export async function createSubagentService(options: {
 				status: run.status,
 				...(terminalEvent ? { terminalAt: terminalEvent.timestamp } : {}),
 				attemptIds: attempts.map((attempt) => attempt.attemptId),
-				retainedWorktree,
+				retainedWorktree: hasRetainedWorktree,
 			});
 		}
 		return descriptors;
 	};
 
+	const listRuns = async (query: RunQuery = {}): Promise<RunPage> => {
+		const limit = query.limit ?? 50;
+		if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+			throw new Error("run list limit must be an integer from 1 to 100");
+		}
+		const offset = query.cursor === undefined ? 0 : Number(query.cursor);
+		if (
+			!Number.isSafeInteger(offset) ||
+			offset < 0 ||
+			(query.cursor !== undefined && String(offset) !== query.cursor)
+		) {
+			throw new Error("invalid run list cursor");
+		}
+		const validStatuses = new Set<RunStatus>([
+			"queued",
+			"active",
+			"stopping",
+			"completed",
+			"failed",
+			"cancelled",
+			"interrupted",
+			"cleanup-blocked",
+		]);
+		if (query.statuses?.some((status) => !validStatuses.has(status))) {
+			throw new Error("invalid run status filter");
+		}
+		const pins = new Set((await retention.listPins()).map((pin) => pin.runId));
+		const summaries = await Promise.all(
+			[...runs.values()]
+				.filter(
+					(run) =>
+						(query.repositoryRoot === undefined ||
+							run.workspace.repositoryRoot === query.repositoryRoot) &&
+						(query.ownerId === undefined || run.ownerId === query.ownerId) &&
+						(query.statuses === undefined ||
+							query.statuses.includes(run.status)),
+				)
+				.map((run) => summarizeRun(run, pins)),
+		);
+		const priority: Record<RunStatus, number> = {
+			active: 0,
+			stopping: 1,
+			"cleanup-blocked": 2,
+			interrupted: 3,
+			failed: 4,
+			cancelled: 5,
+			completed: 6,
+			queued: 7,
+		};
+		summaries.sort(
+			(left, right) =>
+				priority[left.status] - priority[right.status] ||
+				Date.parse(right.updatedAt) - Date.parse(left.updatedAt) ||
+				left.runId.localeCompare(right.runId),
+		);
+		const page = summaries.slice(offset, offset + limit);
+		const nextOffset = offset + page.length;
+		return {
+			runs: page,
+			...(nextOffset < summaries.length
+				? { nextCursor: String(nextOffset) }
+				: {}),
+			total: summaries.length,
+		};
+	};
+
 	return {
+		subscribe(listener) {
+			observers.add(listener);
+			return () => observers.delete(listener);
+		},
+
+		listRuns,
+
 		async prune(pruneOptions = {}) {
 			return runExclusive(async () => {
 				const report = await retention.prune({
@@ -740,6 +978,7 @@ export async function createSubagentService(options: {
 			for (const run of runs.values()) {
 				if (run.status !== "active" && run.status !== "stopping") continue;
 				run.status = "stopping";
+				emit(run.plan.runId, run.status);
 				run.abort.abort();
 				pending.push(run.promise);
 			}
@@ -859,6 +1098,7 @@ export async function createSubagentService(options: {
 						});
 					}
 					const ids = deterministicIds(owner.id, request);
+					const executionDependencies = await execution();
 					const launchPlan = await compileLaunchPlan({
 						ownerId: owner.id,
 						runId: ids.runId,
@@ -874,7 +1114,7 @@ export async function createSubagentService(options: {
 						),
 						contextResources: contextFiles.files.map((file) => file.grant),
 						workspace,
-						sandbox: options.sandbox,
+						sandbox: executionDependencies.sandbox,
 						...(forkContext ? { forkContext: forkContext.grant } : {}),
 						resolveModel,
 					});
@@ -1021,6 +1261,10 @@ export async function createSubagentService(options: {
 					};
 				},
 
+				listRuns(query = {}) {
+					return listRuns({ ...query, ownerId: owner.id });
+				},
+
 				async status(runId) {
 					const run = ownedRun(runId);
 					return {
@@ -1031,8 +1275,47 @@ export async function createSubagentService(options: {
 					};
 				},
 
-				async logs(runId) {
-					return ownedRun(runId).journal.readEvents();
+				async logs(runId, logOptions = {}) {
+					if (
+						logOptions.cursor !== undefined &&
+						logOptions.tail !== undefined
+					) {
+						throw new Error("log cursor and tail are mutually exclusive");
+					}
+					const limit = logOptions.limit ?? logOptions.tail ?? 100;
+					if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
+						throw new Error("log limit must be an integer from 1 to 500");
+					}
+					const events = await ownedRun(runId).journal.readEvents();
+					let offset = 0;
+					if (logOptions.tail !== undefined) {
+						if (
+							!Number.isSafeInteger(logOptions.tail) ||
+							logOptions.tail < 1 ||
+							logOptions.tail > 500
+						) {
+							throw new Error("log tail must be an integer from 1 to 500");
+						}
+						offset = Math.max(0, events.length - logOptions.tail);
+					} else if (logOptions.cursor !== undefined) {
+						offset = Number(logOptions.cursor);
+						if (
+							!Number.isSafeInteger(offset) ||
+							offset < 0 ||
+							String(offset) !== logOptions.cursor
+						) {
+							throw new Error("invalid log cursor");
+						}
+					}
+					const page = events.slice(offset, offset + limit);
+					const nextOffset = offset + page.length;
+					return {
+						events: page,
+						...(nextOffset < events.length
+							? { nextCursor: String(nextOffset) }
+							: {}),
+						total: events.length,
+					};
 				},
 
 				async wait(runId) {
@@ -1068,8 +1351,8 @@ export async function createSubagentService(options: {
 						) {
 							throw new Error("workspace changed before retry");
 						}
-						const agent = options.agents.get(run.plan.agent);
-						if (!agent) throw new Error("agent unavailable for retry");
+						const agent =
+							options.agents.get(run.plan.agent) ?? agentFromPlan(run.plan);
 						if (path.isAbsolute(agent.source)) {
 							const digest = await digestFileResource(agent.source);
 							if (digest.sha256 !== agent.sha256) {
@@ -1157,8 +1440,8 @@ export async function createSubagentService(options: {
 						) {
 							throw new Error("workspace changed before resume");
 						}
-						const agent = options.agents.get(run.plan.agent);
-						if (!agent) throw new Error("agent unavailable for resume");
+						const agent =
+							options.agents.get(run.plan.agent) ?? agentFromPlan(run.plan);
 						if (path.isAbsolute(agent.source)) {
 							const digest = await digestFileResource(agent.source);
 							if (digest.sha256 !== agent.sha256) {
@@ -1334,6 +1617,7 @@ export async function createSubagentService(options: {
 						run.result = execution;
 						run.promise = Promise.resolve(execution);
 						run.status = status;
+						emit(runId, run.status);
 						return {
 							run: {
 								runId,
@@ -1413,6 +1697,7 @@ export async function createSubagentService(options: {
 									throw new Error("release produced invalid result");
 								run.result = { ...run.result, result };
 								run.status = result.status;
+								emit(runId, run.status);
 								run.promise = Promise.resolve(run.result);
 							}
 							await journal.append("run-released", {
@@ -1453,6 +1738,7 @@ export async function createSubagentService(options: {
 					const run = ownedRun(runId);
 					if (run.status === "active") {
 						run.status = "stopping";
+						emit(runId, run.status);
 						run.abort.abort();
 					}
 					return {

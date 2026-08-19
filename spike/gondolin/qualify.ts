@@ -546,6 +546,7 @@ async function qualifyForegroundService(): Promise<string> {
 	};
 	const agent = {
 		name: "qualification-service",
+		displayName: "Qualification service",
 		source: "<qualification-service-agent>",
 		sha256: agentHash,
 		defaultModel: {
@@ -641,7 +642,7 @@ async function qualifyForegroundService(): Promise<string> {
 		"service structured artifact missing",
 	);
 	assert(
-		(await client.logs(receipt.runId)).length >= 4,
+		(await client.logs(receipt.runId)).events.length >= 4,
 		"service logs missing",
 	);
 	const restartedService = await createSubagentService({
@@ -689,6 +690,7 @@ async function qualifyAttemptRunner(): Promise<string> {
 	const toolHash = canonicalSha256("builtin-read");
 	const agent = {
 		name: "qualification-runner",
+		displayName: "Qualification runner",
 		source: "<qualification-agent>",
 		sha256: agentHash,
 		defaultModel: {
