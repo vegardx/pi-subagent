@@ -412,6 +412,17 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 						`model: ${detail.plan.model.provider}/${detail.plan.model.id}:${detail.plan.model.thinking}`,
 						`workspace: ${detail.summary.workspaceMode}${detail.summary.retainedWorktree ? " retained" : ""}`,
 						`attempts: ${detail.attempts.length}`,
+						...(detail.result
+							? [
+									`runtime: ${detail.result.result.runtimeMs} ms`,
+									...(detail.result.result.failure
+										? [
+												`failure: ${detail.result.result.failure.code} (${detail.result.result.failure.retry})`,
+												`guidance: ${detail.result.result.failure.guidance}`,
+											]
+										: []),
+								]
+							: []),
 					].join("\n"),
 				);
 				return;

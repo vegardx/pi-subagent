@@ -73,6 +73,17 @@ type WorkspaceRequest =
 	| { mode: "read-only"; cwd: string }
 	| { mode: "worktree"; cwd: string };
 
+interface RunLimits {
+	runtimeMs: number;        // cumulative across every attempt
+	attemptRuntimeMs: number; // deadline for one attempt; <= runtimeMs
+	tokens: number;
+	cost: number;
+	outputBytes: number;
+	workspaceWriteBytes: number;
+	retries: number;
+	resumes: number;
+}
+
 interface SubagentPreflight {
 	preflightId: string;
 	launchPlan: AgentLaunchPlan;

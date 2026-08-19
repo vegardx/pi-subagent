@@ -36,9 +36,11 @@ for a validated persisted Pi session whose failure disposition is `resume`.
 Both operations create a fresh Gondolin VM. Neither operation erases prior
 evidence, reuses live guest state, or resets run-wide budgets.
 
-Runtime is a run-wide budget alongside tokens, cost, retry count, and resume
-count. Every terminal attempt records measured wall-clock milliseconds. Retry or
-resume subtracts that duration before compiling the next immutable plan and
+`runtimeMs` is a cumulative run-wide budget alongside tokens, cost, retry count,
+and resume count. `attemptRuntimeMs` is the per-attempt deadline and may not
+exceed the remaining run-wide runtime. Every terminal attempt records measured
+wall-clock milliseconds, including startup and cleanup. Retry or resume subtracts
+that duration, clamps the next attempt deadline to the remaining runtime, and
 fails before execution when fewer than 1,000 milliseconds remain.
 
 A filesystem escape or denied host/internal-network destination is a boundary
