@@ -107,8 +107,12 @@ approval are intentionally out of scope.
 ## Lifecycle and denial of service
 
 One VM belongs to one active attempt and closes on completion, cancellation,
-seat exit, or reload. A fenced cross-process lease prevents another seat from
-mutating the same run or worktree. The runtime records host-process and QEMU
+seat exit, or reload. Before creation it holds one OS-owned capacity slot backed
+by a deterministic localhost TCP listener. Socket binding is atomic across seat
+processes and the OS releases it on owner death; occupied unrelated ports reduce
+capacity rather than widening it. Gondolin's internal-range policy prevents the
+guest from connecting to lease listeners. A separate fenced cross-process lease
+prevents another seat from mutating the same run or worktree. The runtime records host-process and QEMU
 identity; a replacement seat cannot resume or reuse the worktree until the prior
 writer and VM are proved terminal. Active work does not survive loss of its
 seat.

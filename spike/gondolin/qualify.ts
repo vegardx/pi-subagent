@@ -12,6 +12,10 @@ import {
 } from "@earendil-works/gondolin";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import {
+	createVmCapacityManager,
+	VmCapacityExhaustedError,
+} from "../../src/sandbox/capacity.js";
+import {
 	driveNativeSession,
 	type NativeSessionDrive,
 } from "./session-drive.js";
@@ -102,11 +106,6 @@ async function check(name: string, operation: () => Promise<string>) {
 		});
 		process.stdout.write(`FAIL ${name}: ${details}\n`);
 	}
-}
-
-function blocked(name: string, details: string): void {
-	checks.push({ name, status: "blocked", durationMs: 0, details });
-	process.stdout.write(`BLOCKED ${name}: ${details}\n`);
 }
 
 async function createVm(workspace: string, readOnly = false): Promise<VM> {
@@ -405,6 +404,37 @@ async function qualifyConcurrentIsolation() {
 	return "Two 512M/1-vCPU VMs booted concurrently and wrote only their own mounts.";
 }
 
+async function qualifyGlobalCapacity(): Promise<string> {
+	const manager = await createVmCapacityManager({
+		root: path.join(root, "capacity"),
+		maxSlots: 1,
+	});
+	const first = await manager.acquire("qualification-first");
+	try {
+		await assertRejectsCapacity(() => manager.acquire("qualification-second"));
+	} finally {
+		await first.release();
+	}
+	const replacement = await manager.acquire("qualification-replacement");
+	await replacement.release();
+	return `A host socket lease enforced one global slot at 127.0.0.1:${manager.basePort} and released it for replacement.`;
+}
+
+async function assertRejectsCapacity(
+	operation: () => Promise<unknown>,
+): Promise<void> {
+	try {
+		await operation();
+	} catch (error) {
+		assert(
+			error instanceof VmCapacityExhaustedError,
+			`unexpected capacity error: ${String(error)}`,
+		);
+		return;
+	}
+	throw new Error("capacity acquisition unexpectedly succeeded");
+}
+
 async function qualifyNativeSessions(): Promise<string> {
 	const modelRuntime = await ModelRuntime.create();
 	const available = await modelRuntime.getAvailable();
@@ -442,12 +472,8 @@ async function main() {
 	await check("tool routing and host boundary", qualifyToolsAndBoundary);
 	await check("workspace write budget", qualifyWriteBudget);
 	await check("concurrent VM isolation", qualifyConcurrentIsolation);
+	await check("global VM capacity lease", qualifyGlobalCapacity);
 	await check("concurrent native AgentSessions", qualifyNativeSessions);
-
-	blocked(
-		"global VM concurrency limit",
-		"Gondolin configures per-VM CPU and memory but does not coordinate capacity across Pi seat processes.",
-	);
 	const summary = checks.reduce<Record<CheckStatus, number>>(
 		(result, item) => {
 			result[item.status]++;

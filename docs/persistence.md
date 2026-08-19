@@ -64,8 +64,11 @@ fencing generation. A stale writer cannot commit state after replacement. Run,
 session, worktree, and global VM-capacity locks use documented ordering.
 
 Operation indexes and leases make duplicate launch idempotent across concurrent
-seats and seat replacement. They do not provide detached execution. There is no
-external supervisor, detached control channel, or live VM adoption.
+seats and seat replacement. Global VM capacity uses OS-owned localhost listener
+slots; per-slot JSON records are diagnostics, not authority. The OS releases a
+listener on process death, so capacity does not depend on heartbeat expiry or
+stale-file deletion. These mechanisms do not provide detached execution. There
+is no external supervisor, detached control channel, or live VM adoption.
 
 ## Seat shutdown
 

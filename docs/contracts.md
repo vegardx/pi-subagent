@@ -42,6 +42,8 @@ interface SandboxIdentity {
 	gondolinVersion: string;
 	imageIdentity: string;
 	policySha256: string;
+	capacityLeaseId: string;
+	capacitySlot: number;
 }
 ```
 
@@ -133,6 +135,7 @@ interface GondolinGrant {
 	memoryBytes: number;
 	guestDiskBytes: number;
 	workspaceWriteBytes: number;
+	capacityPolicySha256: string;
 }
 
 interface NetworkGrant {
