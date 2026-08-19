@@ -272,9 +272,12 @@ host fallback.
 ## Deliverable 2 — contracts and persistence
 
 The first pure slice defines the exact runtime capability schema, bounded result
-shape, cleanup invariants, and exhaustive run-status transition reducer. Every
-unimplemented feature remains `false`; persistence and the full launch/event
-contracts remain outstanding.
+shape, cleanup invariants, and exhaustive run-status transition reducer. The
+persistence slice adds bounded sequenced JSONL events, fsync-backed atomic
+snapshots, private modes, JSON-roundtrip checks, and conservative torn-tail and
+corruption handling. Cross-process run fencing, operation indexes, and the full
+launch/event contracts remain outstanding. Every unimplemented runtime feature
+remains `false`.
 
 ### Build
 

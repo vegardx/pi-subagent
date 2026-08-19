@@ -1,5 +1,14 @@
 # Persistence and recovery
 
+## Implementation status
+
+The current store primitive implements private run directories, bounded
+sequenced JSONL events, fsync-backed appends, atomic snapshots, exact contract
+revision validation, JSON-roundtrip validation, and repair of one unterminated
+tail. Interior corruption fails closed. Cross-process run leases, operation
+indexes, retention, and external-side-effect reconciliation remain design
+contracts rather than implemented behavior.
+
 ## Storage
 
 Authoritative host state lives outside every mounted workspace:
