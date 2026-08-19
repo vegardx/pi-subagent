@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, stat } from "node:fs/promises";
+import { mkdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
@@ -19,6 +19,7 @@ import type {
 	ResourceGrant,
 	SubagentRequest,
 } from "./launch-contracts.js";
+import { AttemptRecordStore } from "./persistence/attempt-record.js";
 import { type JournalEvent, RunJournal } from "./persistence/journal.js";
 import { OperationIndex } from "./persistence/operation-index.js";
 import {
@@ -47,6 +48,7 @@ import { createFinalAnswerController } from "./runtime/structured-output.js";
 import type { VmCapacityManager } from "./sandbox/capacity.js";
 import {
 	createAttemptWorktree,
+	readWorktreeRecord,
 	type WorktreeRecord,
 } from "./workspace/worktree.js";
 
@@ -90,6 +92,8 @@ export type SubagentClient = {
 	logs(runId: RunId): Promise<JournalEvent[]>;
 	wait(runId: RunId): Promise<AttemptExecutionResult>;
 	interrupt(runId: RunId): Promise<RunReceipt>;
+	retry(runId: RunId): Promise<RunReceipt>;
+	resume(runId: RunId): Promise<RunReceipt>;
 	reconcile(runId: RunId): Promise<ReconcileResult>;
 	exportArtifact(
 		runId: RunId,
@@ -112,6 +116,7 @@ type PreparedPreflight = SubagentPreflight & {
 type ActiveRun = {
 	ownerId: string;
 	plan: AgentLaunchPlan;
+	workspace: WorkspacePreflight;
 	journal: RunJournal;
 	artifacts: ArtifactStore;
 	abort: AbortController;
@@ -174,6 +179,80 @@ async function pathState(
 	}
 }
 
+function retryPlan(
+	current: AgentLaunchPlan,
+	result: AttemptExecutionResult,
+	ordinal: number,
+): AgentLaunchPlan {
+	if (current.limits.retries < 1) throw new Error("retry budget exhausted");
+	const remainingTokens =
+		current.limits.tokens - result.result.usage.totalTokens;
+	const remainingCost = current.limits.cost - result.result.usage.cost;
+	if (remainingTokens < 1 || remainingCost <= 0) {
+		throw new Error("retry run-wide usage budget exhausted");
+	}
+	const attemptId = `attempt_${canonicalSha256({
+		runId: current.runId,
+		parentAttemptId: current.attemptId,
+		ordinal,
+		kind: "retry",
+	}).slice(0, 48)}`;
+	const { identitySha256: _identity, ...base } = current;
+	const draft = {
+		...base,
+		attemptId,
+		limits: {
+			...current.limits,
+			tokens: remainingTokens,
+			cost: remainingCost,
+			retries: current.limits.retries - 1,
+		},
+	};
+	return { ...draft, identitySha256: canonicalSha256(draft) };
+}
+
+function resumePlan(
+	current: AgentLaunchPlan,
+	result: AttemptExecutionResult,
+	ordinal: number,
+): AgentLaunchPlan {
+	if (current.limits.resumes < 1) throw new Error("resume budget exhausted");
+	const remainingTokens =
+		current.limits.tokens - result.result.usage.totalTokens;
+	const remainingCost = current.limits.cost - result.result.usage.cost;
+	if (remainingTokens < 1 || remainingCost <= 0) {
+		throw new Error("resume run-wide usage budget exhausted");
+	}
+	const attemptId = `attempt_${canonicalSha256({
+		runId: current.runId,
+		parentAttemptId: current.attemptId,
+		ordinal,
+		kind: "resume",
+	}).slice(0, 48)}`;
+	const { identitySha256: _identity, ...base } = current;
+	const draft = {
+		...base,
+		attemptId,
+		limits: {
+			...current.limits,
+			tokens: remainingTokens,
+			cost: remainingCost,
+			resumes: current.limits.resumes - 1,
+		},
+	};
+	return { ...draft, identitySha256: canonicalSha256(draft) };
+}
+
+function isInsidePath(root: string, candidate: string): boolean {
+	const relative = path.relative(root, candidate);
+	return (
+		relative === "" ||
+		(relative !== ".." &&
+			!relative.startsWith(`..${path.sep}`) &&
+			!path.isAbsolute(relative))
+	);
+}
+
 function validateOwner(owner: OwnerRegistration): void {
 	if (!owner.id.trim() || Buffer.byteLength(owner.id, "utf8") > 256) {
 		throw new Error("owner ID must contain 1-256 UTF-8 bytes");
@@ -230,6 +309,9 @@ export async function createSubagentService(options: {
 	const runRecords = await RunRecordStore.open(
 		path.join(options.root, "run-records"),
 	);
+	const attemptRecords = await AttemptRecordStore.open(
+		path.join(options.root, "attempt-records"),
+	);
 	const preflights = new Map<string, PreparedPreflight>();
 	const runs = new Map<string, ActiveRun>();
 	let launchTail = Promise.resolve();
@@ -252,11 +334,13 @@ export async function createSubagentService(options: {
 		options.resolveModel ?? createExactModelResolver(options.modelRuntime);
 
 	for (const record of await runRecords.list()) {
+		const latestAttempt = await attemptRecords.latest(record.plan.runId);
+		const recoveredPlan = latestAttempt?.plan ?? record.plan;
 		let lease: RunLease;
 		try {
 			lease = await acquireRunLease({
 				root: path.join(options.root, "leases"),
-				runId: record.plan.runId,
+				runId: recoveredPlan.runId,
 			});
 		} catch (error) {
 			if (error instanceof RunLeaseUnavailableError) continue;
@@ -265,13 +349,13 @@ export async function createSubagentService(options: {
 		try {
 			const journal = await RunJournal.open(
 				path.join(options.root, "runs"),
-				record.plan.runId,
+				recoveredPlan.runId,
 				lease,
 			);
 			const artifacts = await ArtifactStore.open({
-				root: path.join(options.root, "runs", record.plan.runId, "artifacts"),
-				maxArtifactBytes: record.plan.limits.outputBytes,
-				maxTotalBytes: record.plan.limits.outputBytes,
+				root: path.join(options.root, "runs", recoveredPlan.runId, "artifacts"),
+				maxArtifactBytes: recoveredPlan.limits.outputBytes,
+				maxTotalBytes: recoveredPlan.limits.outputBytes,
 				lease,
 			});
 			const snapshot = await journal.readSnapshot();
@@ -290,13 +374,13 @@ export async function createSubagentService(options: {
 				result = persistedResult;
 			} else {
 				result = {
-					runId: record.plan.runId,
+					runId: recoveredPlan.runId,
 					status: "cleanup-blocked",
 					usage: emptyUsage(),
 					usageComplete: false,
 					sandboxCleanup: "unknown",
 					workspaceCleanup:
-						record.plan.workspace.mode === "read-only"
+						recoveredPlan.workspace.mode === "read-only"
 							? "not-needed"
 							: "unknown",
 					truncated: false,
@@ -324,7 +408,8 @@ export async function createSubagentService(options: {
 			const abort = new AbortController();
 			const active: ActiveRun = {
 				ownerId: record.ownerId,
-				plan: record.plan,
+				plan: recoveredPlan,
+				workspace: record.workspace,
 				journal,
 				artifacts,
 				abort,
@@ -332,11 +417,129 @@ export async function createSubagentService(options: {
 				result: execution,
 				status: result.status,
 			};
-			runs.set(record.plan.runId, active);
+			runs.set(recoveredPlan.runId, active);
 		} finally {
 			await lease.release();
 		}
 	}
+
+	const startAttempt = async (input: {
+		ownerId: string;
+		plan: AgentLaunchPlan;
+		agent: DiscoveredAgent;
+		workspace: WorkspacePreflight;
+		kind: "initial" | "retry" | "resume";
+		ordinal: number;
+		parentAttemptId?: AttemptId;
+		rootPlan: AgentLaunchPlan;
+		resumeSessionFile?: string;
+		existingWorktree?: WorktreeRecord;
+	}): Promise<RunReceipt> => {
+		const lease = await acquireRunLease({
+			root: path.join(options.root, "leases"),
+			runId: input.plan.runId,
+		});
+		try {
+			const journal = await RunJournal.open(
+				path.join(options.root, "runs"),
+				input.plan.runId,
+				lease,
+			);
+			const artifacts = await ArtifactStore.open({
+				root: path.join(options.root, "runs", input.plan.runId, "artifacts"),
+				maxArtifactBytes: input.rootPlan.limits.outputBytes,
+				maxTotalBytes:
+					input.rootPlan.limits.outputBytes *
+					(input.rootPlan.limits.retries + input.rootPlan.limits.resumes + 1),
+				lease,
+			});
+			if (input.kind === "initial") {
+				await runRecords.create(input.ownerId, input.rootPlan, input.workspace);
+			}
+			let worktree = input.existingWorktree;
+			let workspacePath = input.workspace.cwd;
+			if (input.plan.workspace.mode === "worktree" && !worktree) {
+				worktree = await createAttemptWorktree({
+					root: path.join(options.root, "workspace"),
+					runId: input.plan.runId,
+					attemptId: input.plan.attemptId,
+					workspace: input.workspace,
+					lease,
+				});
+			}
+			if (worktree) {
+				workspacePath =
+					input.workspace.relativeCwd === "."
+						? worktree.worktreePath
+						: path.join(worktree.worktreePath, input.workspace.relativeCwd);
+			}
+			await attemptRecords.create({
+				ownerId: input.ownerId,
+				plan: input.plan,
+				ordinal: input.ordinal,
+				kind: input.kind,
+				...(input.parentAttemptId
+					? { parentAttemptId: input.parentAttemptId }
+					: {}),
+				...(worktree ? { worktreeAttemptId: worktree.attemptId } : {}),
+			});
+			const abort = new AbortController();
+			const rawPromise = executeAttempt({
+				plan: input.plan,
+				agent: input.agent,
+				workspacePath,
+				...(worktree ? { worktree } : {}),
+				modelRuntime: options.modelRuntime,
+				capacity: options.capacity,
+				lease,
+				journal,
+				artifactStore: artifacts,
+				sessionRoot: path.join(options.root, "sessions"),
+				...(input.resumeSessionFile
+					? { resumeSessionFile: input.resumeSessionFile }
+					: {}),
+				signal: abort.signal,
+			});
+			const active: ActiveRun = {
+				ownerId: input.ownerId,
+				plan: input.plan,
+				workspace: input.workspace,
+				journal,
+				artifacts,
+				abort,
+				promise: rawPromise,
+				status: "active",
+			};
+			active.promise = rawPromise.then(
+				async (result) => {
+					active.result = result;
+					active.status = result.result.status;
+					if (result.result.status !== "cleanup-blocked") {
+						try {
+							await lease.release();
+						} catch (error) {
+							active.status = "cleanup-blocked";
+							throw error;
+						}
+					}
+					return result;
+				},
+				(error: unknown) => {
+					active.status = "cleanup-blocked";
+					throw error;
+				},
+			);
+			runs.set(input.plan.runId, active);
+			return {
+				runId: input.plan.runId,
+				attemptId: input.plan.attemptId,
+				status: "active",
+			};
+		} catch (error) {
+			await lease.release();
+			throw error;
+		}
+	};
 
 	return {
 		forOwner(owner) {
@@ -454,98 +657,15 @@ export async function createSubagentService(options: {
 							requestSha256: prepared.requestSha256,
 							runId: prepared.launchPlan.runId,
 						});
-						const lease = await acquireRunLease({
-							root: path.join(options.root, "leases"),
-							runId: prepared.launchPlan.runId,
+						return startAttempt({
+							ownerId: owner.id,
+							plan: prepared.launchPlan,
+							agent: prepared.agent,
+							workspace: prepared.workspace,
+							kind: "initial",
+							ordinal: 0,
+							rootPlan: prepared.launchPlan,
 						});
-						try {
-							const journal = await RunJournal.open(
-								path.join(options.root, "runs"),
-								prepared.launchPlan.runId,
-								lease,
-							);
-							const artifacts = await ArtifactStore.open({
-								root: path.join(
-									options.root,
-									"runs",
-									prepared.launchPlan.runId,
-									"artifacts",
-								),
-								maxArtifactBytes: prepared.launchPlan.limits.outputBytes,
-								maxTotalBytes: prepared.launchPlan.limits.outputBytes,
-								lease,
-							});
-							await runRecords.create(owner.id, prepared.launchPlan);
-							let worktree: WorktreeRecord | undefined;
-							let workspacePath = prepared.workspace.cwd;
-							if (prepared.launchPlan.workspace.mode === "worktree") {
-								worktree = await createAttemptWorktree({
-									root: path.join(options.root, "workspace"),
-									runId: prepared.launchPlan.runId,
-									attemptId: prepared.launchPlan.attemptId,
-									workspace: prepared.workspace,
-									lease,
-								});
-								workspacePath =
-									prepared.workspace.relativeCwd === "."
-										? worktree.worktreePath
-										: path.join(
-												worktree.worktreePath,
-												prepared.workspace.relativeCwd,
-											);
-							}
-							const abort = new AbortController();
-							const rawPromise = executeAttempt({
-								plan: prepared.launchPlan,
-								agent: prepared.agent,
-								workspacePath,
-								...(worktree ? { worktree } : {}),
-								modelRuntime: options.modelRuntime,
-								capacity: options.capacity,
-								lease,
-								journal,
-								artifactStore: artifacts,
-								sessionRoot: path.join(options.root, "sessions"),
-								signal: abort.signal,
-							});
-							const active: ActiveRun = {
-								ownerId: owner.id,
-								plan: prepared.launchPlan,
-								journal,
-								artifacts,
-								abort,
-								promise: rawPromise,
-								status: "active",
-							};
-							active.promise = rawPromise.then(
-								async (result) => {
-									active.result = result;
-									active.status = result.result.status;
-									if (result.result.status !== "cleanup-blocked") {
-										try {
-											await lease.release();
-										} catch (error) {
-											active.status = "cleanup-blocked";
-											throw error;
-										}
-									}
-									return result;
-								},
-								(error: unknown) => {
-									active.status = "cleanup-blocked";
-									throw error;
-								},
-							);
-							runs.set(prepared.launchPlan.runId, active);
-							return {
-								runId: prepared.launchPlan.runId,
-								attemptId: prepared.launchPlan.attemptId,
-								status: "active",
-							};
-						} catch (error) {
-							await lease.release();
-							throw error;
-						}
 					});
 				},
 
@@ -577,6 +697,114 @@ export async function createSubagentService(options: {
 
 				async wait(runId) {
 					return ownedRun(runId).promise;
+				},
+
+				async retry(runId) {
+					return runExclusive(async () => {
+						const run = ownedRun(runId);
+						if (run.status !== "failed" || !run.result) {
+							throw new Error("run is not retryable");
+						}
+						const latest = await attemptRecords.latest(runId);
+						if (!latest || latest.attemptId !== run.plan.attemptId) {
+							throw new Error("attempt history mismatch");
+						}
+						const rootRecord = await runRecords.read(runId);
+						const workspace = await preflightWorkspace({
+							mode: run.workspace.mode,
+							cwd: run.workspace.cwd,
+						});
+						if (
+							workspace.hostPathSha256 !== run.workspace.hostPathSha256 ||
+							workspace.baselineSha256 !== run.workspace.baselineSha256
+						) {
+							throw new Error("workspace changed before retry");
+						}
+						const agent = options.agents.get(run.plan.agent);
+						if (!agent) throw new Error("agent unavailable for retry");
+						if (path.isAbsolute(agent.source)) {
+							const digest = await digestFileResource(agent.source);
+							if (digest.sha256 !== agent.sha256) {
+								throw new Error("agent changed before retry");
+							}
+						}
+						await resolveModel(run.plan.model);
+						const plan = retryPlan(run.plan, run.result, latest.ordinal + 1);
+						return startAttempt({
+							ownerId: owner.id,
+							plan,
+							agent,
+							workspace,
+							kind: "retry",
+							ordinal: latest.ordinal + 1,
+							parentAttemptId: latest.attemptId,
+							rootPlan: rootRecord.plan,
+						});
+					});
+				},
+
+				async resume(runId) {
+					return runExclusive(async () => {
+						const run = ownedRun(runId);
+						if (run.status !== "interrupted" || !run.result?.sessionFile) {
+							throw new Error("run is not resumable");
+						}
+						const latest = await attemptRecords.latest(runId);
+						if (!latest || latest.attemptId !== run.plan.attemptId) {
+							throw new Error("attempt history mismatch");
+						}
+						const rootRecord = await runRecords.read(runId);
+						const sessionsRoot = await realpath(
+							path.join(options.root, "sessions"),
+						);
+						const sessionFile = await realpath(run.result.sessionFile);
+						if (!isInsidePath(sessionsRoot, sessionFile)) {
+							throw new Error("retained session escapes session root");
+						}
+						const workspace = await preflightWorkspace({
+							mode: run.workspace.mode,
+							cwd: run.workspace.cwd,
+						});
+						if (
+							workspace.hostPathSha256 !== run.workspace.hostPathSha256 ||
+							workspace.baselineSha256 !== run.workspace.baselineSha256
+						) {
+							throw new Error("workspace changed before resume");
+						}
+						const agent = options.agents.get(run.plan.agent);
+						if (!agent) throw new Error("agent unavailable for resume");
+						if (path.isAbsolute(agent.source)) {
+							const digest = await digestFileResource(agent.source);
+							if (digest.sha256 !== agent.sha256) {
+								throw new Error("agent changed before resume");
+							}
+						}
+						await resolveModel(run.plan.model);
+						const plan = resumePlan(run.plan, run.result, latest.ordinal + 1);
+						let existingWorktree: WorktreeRecord | undefined;
+						if (run.plan.workspace.mode === "worktree") {
+							existingWorktree = await readWorktreeRecord(
+								path.join(
+									options.root,
+									"workspace",
+									"records",
+									`${latest.worktreeAttemptId ?? latest.attemptId}.json`,
+								),
+							);
+						}
+						return startAttempt({
+							ownerId: owner.id,
+							plan,
+							agent,
+							workspace,
+							kind: "resume",
+							ordinal: latest.ordinal + 1,
+							parentAttemptId: latest.attemptId,
+							rootPlan: rootRecord.plan,
+							resumeSessionFile: sessionFile,
+							...(existingWorktree ? { existingWorktree } : {}),
+						});
+					});
 				},
 
 				async reconcile(runId) {
@@ -619,11 +847,12 @@ export async function createSubagentService(options: {
 								: typeof hostPid === "number"
 									? processState(hostPid)
 									: "unknown";
+						const latestAttempt = await attemptRecords.latest(runId);
 						const worktreePath = path.join(
 							options.root,
 							"workspace",
 							"worktrees",
-							run.plan.attemptId,
+							latestAttempt?.worktreeAttemptId ?? run.plan.attemptId,
 						);
 						const observedWorktree =
 							run.plan.workspace.mode === "read-only"

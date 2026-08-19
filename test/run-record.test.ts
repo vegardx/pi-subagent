@@ -73,12 +73,23 @@ function plan(): AgentLaunchPlan {
 	return { ...draft, identitySha256: canonicalSha256(draft) };
 }
 
+const workspace = {
+	mode: "read-only" as const,
+	repositoryRoot: "/repository",
+	cwd: "/repository",
+	relativeCwd: ".",
+	head: "b".repeat(40),
+	dirty: false,
+	hostPathSha256: hash,
+	baselineSha256: hash,
+};
+
 describe("run record store", () => {
 	it("creates, replays, and lists immutable run identities", async () => {
 		const store = await RunRecordStore.open(root("basic"));
 		const launch = plan();
-		const first = await store.create("owner", launch);
-		const replay = await store.create("owner", launch);
+		const first = await store.create("owner", launch, workspace);
+		const replay = await store.create("owner", launch, workspace);
 		expect(replay).toEqual(first);
 		expect(await store.list()).toEqual([first]);
 	});
@@ -86,9 +97,13 @@ describe("run record store", () => {
 	it("rejects conflicting and corrupt identities", async () => {
 		const store = await RunRecordStore.open(root("conflict"));
 		const launch = plan();
-		await store.create("owner", launch);
+		await store.create("owner", launch, workspace);
 		await expect(
-			store.create("other-owner", { ...launch, ownerId: "other-owner" }),
+			store.create(
+				"other-owner",
+				{ ...launch, ownerId: "other-owner" },
+				workspace,
+			),
 		).rejects.toThrow();
 		await writeFile(path.join(store.root, `${launch.runId}.json`), "{broken");
 		await expect(store.read(launch.runId)).rejects.toBeInstanceOf(

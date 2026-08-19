@@ -24,7 +24,7 @@ describe("runtime contracts", () => {
 			structuredOutput: true,
 			preflight: true,
 			idempotentLaunch: true,
-			resume: false,
+			resume: true,
 			worktrees: true,
 			publicNetworkEgress: true,
 			explicitResources: true,

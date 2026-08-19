@@ -50,6 +50,11 @@ export {
 	transitionRunStatus,
 } from "./lifecycle/reducer.js";
 export {
+	type AttemptRecord,
+	AttemptRecordSchema,
+	AttemptRecordStore,
+} from "./persistence/attempt-record.js";
+export {
 	type JournalEvent,
 	JournalEventSchema,
 	PersistenceCorruptionError,
