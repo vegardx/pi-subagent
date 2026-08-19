@@ -35,6 +35,12 @@ export {
 	RunSnapshotSchema,
 } from "./persistence/journal.js";
 export {
+	OperationConflictError,
+	OperationIndex,
+	type OperationRecord,
+	OperationRecordSchema,
+} from "./persistence/operation-index.js";
+export {
 	createVmCapacityManager,
 	VmCapacityExhaustedError,
 	type VmCapacityLease,

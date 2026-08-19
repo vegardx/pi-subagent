@@ -274,9 +274,10 @@ host fallback.
 The first pure slice defines the exact runtime capability schema, bounded result
 shape, cleanup invariants, and exhaustive run-status transition reducer. The
 persistence slice adds bounded sequenced JSONL events, fsync-backed atomic
-snapshots, private modes, JSON-roundtrip checks, and conservative torn-tail and
-corruption handling. Cross-process run fencing, operation indexes, and the full
-launch/event contracts remain outstanding. Every unimplemented runtime feature
+snapshots, private modes, JSON-roundtrip checks, conservative torn-tail and
+corruption handling, and an atomic owner-scoped operation idempotency index.
+Cross-process run fencing and the full launch/event contracts remain
+outstanding. Every unimplemented runtime feature
 remains `false`.
 
 ### Build
