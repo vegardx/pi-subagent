@@ -1,0 +1,54 @@
+{
+	"name": "@vegardx/pi-subagent",
+	"version": "0.1.0",
+	"description": "Native subagent runtime for Pi.",
+	"type": "module",
+	"license": "MIT",
+	"keywords": [
+		"pi-package",
+		"pi-extension",
+		"subagent"
+	],
+	"files": [
+		"src",
+		"docs",
+		"README.md",
+		"LICENSE"
+	],
+	"exports": {
+		".": "./src/index.ts",
+		"./extension": "./src/extension.ts"
+	},
+	"pi": {
+		"extensions": [
+			"./src/extension.ts"
+		]
+	},
+	"scripts": {
+		"check": "biome check . && tsc --noEmit && vitest run && npm run pack:check",
+		"lint": "biome check .",
+		"lint:fix": "biome check --write .",
+		"typecheck": "tsc --noEmit",
+		"test": "vitest run",
+		"pack:check": "npm pack --dry-run --json >/dev/null"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-ai": ">=0.84.2 <0.85",
+		"@earendil-works/pi-coding-agent": ">=0.84.2 <0.85",
+		"@earendil-works/pi-tui": ">=0.84.2 <0.85",
+		"typebox": "*"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.5.4",
+		"@earendil-works/pi-ai": "0.84.2",
+		"@earendil-works/pi-coding-agent": "0.84.2",
+		"@earendil-works/pi-tui": "0.84.2",
+		"@types/node": "^24.13.3",
+		"typebox": "^1.1.39",
+		"typescript": "^7.0.2",
+		"vitest": "^4.1.0"
+	}
+}
