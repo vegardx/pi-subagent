@@ -5,9 +5,11 @@
 The current store primitive implements private run directories, bounded
 sequenced JSONL events, fsync-backed appends, atomic snapshots, exact contract
 revision validation, JSON-roundtrip validation, and repair of one unterminated
-tail. Interior corruption fails closed. Cross-process run leases, operation
-indexes, retention, and external-side-effect reconciliation remain design
-contracts rather than implemented behavior.
+tail. Interior corruption fails closed. The operation index atomically binds an
+owner-scoped operation ID to one request digest and run through create-once hard
+links; identical replay adopts the mapping and conflicting replay fails.
+Cross-process run leases, retention, and external-side-effect reconciliation
+remain design contracts rather than implemented behavior.
 
 ## Storage
 
