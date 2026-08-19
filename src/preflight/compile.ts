@@ -178,7 +178,11 @@ export async function compileLaunchPlan(input: {
 				const rightKey = `${right.kind}:${right.name}:${right.source}`;
 				return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
 			}),
-		workspace: { ...input.workspace },
+		workspace: {
+			mode: input.workspace.mode,
+			hostPathSha256: input.workspace.hostPathSha256,
+			baselineSha256: input.workspace.baselineSha256,
+		},
 		sandbox: {
 			backend: "gondolin" as const,
 			...input.sandbox,
@@ -198,7 +202,12 @@ export async function compileLaunchPlan(input: {
 		identitySha256: canonicalSha256(draft),
 	};
 	if (!Value.Check(AgentLaunchPlanSchema, plan)) {
-		throw new PreflightError("compiled launch plan violates schema");
+		const details = [...Value.Errors(AgentLaunchPlanSchema, plan)]
+			.map((error) => `${error.instancePath || "/"}: ${error.message}`)
+			.join("; ");
+		throw new PreflightError(
+			`compiled launch plan violates schema${details ? `: ${details}` : ""}`,
+		);
 	}
 	return plan;
 }

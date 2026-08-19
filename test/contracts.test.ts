@@ -15,20 +15,20 @@ describe("runtime contracts", () => {
 		).toBe(true);
 		expect(SUBAGENT_RUNTIME_CONTRACT.contractRevision).toBe(CONTRACT_REVISION);
 		expect(SUBAGENT_RUNTIME_CONTRACT.features).toEqual({
-			nativeSessionBackend: false,
-			gondolinSandbox: false,
+			nativeSessionBackend: true,
+			gondolinSandbox: true,
 			background: false,
 			survivesSeatExit: false,
 			steering: false,
 			followUp: false,
 			structuredOutput: false,
-			preflight: false,
+			preflight: true,
 			idempotentLaunch: false,
 			resume: false,
-			worktrees: false,
-			publicNetworkEgress: false,
-			explicitResources: false,
-			ambientExtensionsControl: false,
+			worktrees: true,
+			publicNetworkEgress: true,
+			explicitResources: true,
+			ambientExtensionsControl: true,
 		});
 	});
 

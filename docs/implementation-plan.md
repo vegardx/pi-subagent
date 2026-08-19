@@ -449,6 +449,14 @@ boundaries with verifiable handoff.
 
 ## Deliverable 6 — service lifecycle and resume
 
+The standalone owner-bound foreground service now provides preflight, launch,
+status, logs, wait, and interrupt. It deterministically derives run identity,
+revalidates agent/model/workspace state at launch, claims the durable operation
+index, acquires fenced run ownership, prepares worktrees, and delegates to the
+production attempt runner. Duplicate launch in the live seat adopts the same
+run. Cross-seat adoption, retry, resume, reconciliation, artifacts, and release
+remain outstanding.
+
 ### Build
 
 - `createSubagentService()` and opaque owner-bound clients;
