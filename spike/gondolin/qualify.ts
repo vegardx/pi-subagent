@@ -22,6 +22,7 @@ import {
 	VmCapacityExhaustedError,
 } from "../../src/sandbox/capacity.js";
 import { createGondolinAttemptSandbox } from "../../src/sandbox/gondolin.js";
+import { createSubagentService } from "../../src/service.js";
 import {
 	driveNativeSession,
 	type NativeSessionDrive,
@@ -183,6 +184,7 @@ async function setupFixtures() {
 		"quota",
 		"adapter",
 		"runner",
+		"service",
 	]) {
 		await mkdir(path.join(root, name), { mode: 0o700 });
 	}
@@ -477,6 +479,97 @@ async function assertRejectsCapacity(
 	throw new Error("capacity acquisition unexpectedly succeeded");
 }
 
+async function qualifyForegroundService(): Promise<string> {
+	const workspace = path.join(root, "service");
+	await writeFile(path.join(workspace, "task.txt"), "SERVICE_OK\n");
+	const modelRuntime = await ModelRuntime.create();
+	const agentHash = canonicalSha256("qualification-service-agent");
+	const limits = {
+		runtimeMs: 60_000,
+		tokens: 100_000,
+		cost: 10,
+		outputBytes: 4096,
+		workspaceWriteBytes: 0,
+		retries: 0,
+		resumes: 0,
+	};
+	const agent = {
+		name: "qualification-service",
+		source: "<qualification-service-agent>",
+		sha256: agentHash,
+		defaultModel: {
+			provider: "github-copilot",
+			id: "gpt-5.6-luna",
+			thinking: "low" as const,
+		},
+		allowedModels: ["github-copilot/gpt-5.6-luna:low"],
+		tools: ["read"],
+		skills: [],
+		workspaceModes: ["read-only" as const],
+		limitCeiling: limits,
+		prompt:
+			"Read task.txt with the read tool, then respond with exactly its single-line content and nothing else.",
+		scope: "builtin" as const,
+	};
+	const service = await createSubagentService({
+		root: path.join(root, "service-state"),
+		agents: new Map([[agent.name, agent]]),
+		modelRuntime,
+		capacity: await createVmCapacityManager({
+			root: path.join(root, "service-capacity"),
+			maxSlots: 1,
+		}),
+		sandbox: {
+			packageVersion: "0.12.0",
+			imageSha256: canonicalSha256("qualification-image"),
+			mountPolicySha256: canonicalSha256("qualification-mount"),
+			networkPolicySha256: canonicalSha256("qualification-network"),
+			capacityPolicySha256: canonicalSha256("qualification-capacity"),
+			memoryBytes: 512 * 1024 * 1024,
+			guestDiskBytes: 2 * 1024 * 1024 * 1024,
+		},
+	});
+	const client = service.forOwner({ id: "qualification-service-owner" });
+	const preflight = await client.preflight({
+		operationId: "qualification-service-operation",
+		agent: agent.name,
+		task: {
+			goal: "Read task.txt and return its exact content",
+			context: [],
+			instructions: ["Use read", "Return only the marker"],
+		},
+		contextMode: "fresh",
+		model: agent.defaultModel,
+		tools: ["read"],
+		skills: [],
+		workspace: { mode: "read-only", cwd: workspace },
+		limits,
+	});
+	const receipt = await client.launch(
+		preflight.preflightId,
+		preflight.identitySha256,
+	);
+	const duplicate = await client.launch(
+		preflight.preflightId,
+		preflight.identitySha256,
+	);
+	assert(
+		duplicate.runId === receipt.runId,
+		"service launch was not idempotent",
+	);
+	const result = await client.wait(receipt.runId);
+	assert(
+		result.result.status === "completed",
+		result.error ?? "service failed",
+	);
+	assert(result.output.trim() === "SERVICE_OK", "service output mismatch");
+	assert(
+		(await client.logs(receipt.runId)).length >= 4,
+		"service logs missing",
+	);
+	return `Foreground service preflighted, launched idempotently, waited for, and observed ${receipt.runId}.`;
+}
+
 async function qualifyAttemptRunner(): Promise<string> {
 	const workspace = path.join(root, "runner");
 	await writeFile(path.join(workspace, "task.txt"), "RUNNER_OK\n");
@@ -631,6 +724,7 @@ async function main() {
 	await check("global VM capacity lease", qualifyGlobalCapacity);
 	await check("production Gondolin adapter", qualifyProductionAdapter);
 	await check("production native attempt runner", qualifyAttemptRunner);
+	await check("foreground SubagentService", qualifyForegroundService);
 	await check("concurrent native AgentSessions", qualifyNativeSessions);
 	const summary = checks.reduce<Record<CheckStatus, number>>(
 		(result, item) => {

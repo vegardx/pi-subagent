@@ -134,6 +134,15 @@ export {
 	withWriteBudget,
 } from "./sandbox/write-budget.js";
 export {
+	createSubagentService,
+	type OwnerRegistration,
+	type RunReceipt,
+	type RunView,
+	type SubagentClient,
+	type SubagentPreflight,
+	type SubagentService,
+} from "./service.js";
+export {
 	captureWorktreeHandoff,
 	createAttemptWorktree,
 	readWorktreeRecord,
