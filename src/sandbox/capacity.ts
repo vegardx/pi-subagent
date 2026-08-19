@@ -30,7 +30,7 @@ export type VmCapacityLeaseRecord = {
 	slot: number;
 	port: number;
 	acquiredAt: string;
-	releasedAt?: string;
+	releaseRequestedAt?: string;
 };
 
 export type VmCapacityLease = {
@@ -219,7 +219,7 @@ export async function createVmCapacityManager(options: {
 							try {
 								await writeRecord(recordPath, {
 									...record,
-									releasedAt: new Date().toISOString(),
+									releaseRequestedAt: new Date().toISOString(),
 								});
 							} catch (error) {
 								recordError = error;
