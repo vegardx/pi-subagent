@@ -10,6 +10,7 @@ describe("Pi extension adapter", () => {
 		let tool: ToolDefinition | undefined;
 		const events: string[] = [];
 		const commands: string[] = [];
+		const shortcuts: string[] = [];
 		const api = {
 			registerTool(definition: ToolDefinition) {
 				tool = definition;
@@ -20,11 +21,15 @@ describe("Pi extension adapter", () => {
 			registerCommand(name: string) {
 				commands.push(name);
 			},
+			registerShortcut(shortcut: string) {
+				shortcuts.push(shortcut);
+			},
 		} as unknown as ExtensionAPI;
 		piSubagentExtension(api);
 		expect(tool?.name).toBe("subagent");
 		expect(tool?.description).toContain("Gondolin VM");
 		expect(events).toEqual(["session_start", "session_shutdown"]);
 		expect(commands).toEqual(["subagents"]);
+		expect(shortcuts).toEqual(["alt+shift+s"]);
 	});
 });

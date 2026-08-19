@@ -4,7 +4,6 @@ import path from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
 import {
 	type ExtensionAPI,
-	type ExtensionCommandContext,
 	type ExtensionContext,
 	getAgentDir,
 	ModelRuntime,
@@ -264,7 +263,7 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 	function ownerClient(
 		runtime: SubagentService,
 		run: RunSummary,
-		ctx: ExtensionCommandContext,
+		ctx: ExtensionContext,
 	) {
 		const parentSessionFile = ctx.sessionManager.getSessionFile();
 		return runtime.forOwner({
@@ -281,7 +280,7 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 	async function performAction(
 		action: InspectorAction,
 		run: RunSummary,
-		ctx: ExtensionCommandContext,
+		ctx: ExtensionContext,
 		runtime: SubagentService,
 		providedText?: string,
 		confirmed = false,
@@ -361,7 +360,7 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 	}
 
 	async function retention(
-		ctx: ExtensionCommandContext,
+		ctx: ExtensionContext,
 		runtime: SubagentService,
 		apply = false,
 	): Promise<void> {
@@ -396,7 +395,7 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 	}
 
 	async function inspector(
-		ctx: ExtensionCommandContext,
+		ctx: ExtensionContext,
 		initialState?: Partial<InspectorState>,
 	): Promise<void> {
 		const runtime = await ensureService(ctx);
@@ -617,6 +616,12 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 					: undefined,
 			);
 		},
+	});
+
+	pi.registerShortcut("alt+shift+s", {
+		description:
+			"Open the subagent inspector without interrupting active input",
+		handler: inspector,
 	});
 
 	pi.registerTool({
