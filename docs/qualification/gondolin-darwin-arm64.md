@@ -38,8 +38,9 @@ provide. This is a qualification result, not production acceptance.
 | VM shutdown | Pass | Every recorded QEMU PID was absent after `vm.close()`; no Gondolin/QEMU runner remained after the drive. |
 | Global cross-process VM limit | Pass | A pi-subagent host-socket lease enforced capacity across worker processes and recovered automatically after a killed owner. |
 | Production sandbox adapter | Pass | The promoted adapter acquired capacity, booted QEMU, mounted a budgeted workspace, routed a guest write, closed the VM, proved its PID released, and returned capacity. |
+| Production native attempt runner | Pass | A validated launch plan drove exact model/auth resolution, a persistent native Pi session, isolated resources, VM-backed tools, bounded result collection, journal events, snapshot, and proved cleanup. |
 
-The final drive completed seven executable checks with no failures or blocked
+The final drive completed eight executable checks with no failures or blocked
 requirements. Warm QEMU boots were approximately 0.5–1.0 seconds at 512 MB and
 one vCPU. Two concurrent native model sessions completed in approximately 4.9
 seconds.

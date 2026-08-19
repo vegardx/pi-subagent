@@ -4,6 +4,7 @@ import {
 	type AgentDefinition,
 	compileLaunchPlan,
 	PreflightError,
+	verifyLaunchPlanIdentity,
 } from "../src/preflight/compile.js";
 
 const a = "a".repeat(64);
@@ -104,6 +105,10 @@ describe("semantic preflight", () => {
 			resources: [...resources].reverse(),
 		});
 		expect(first.identitySha256).toBe(second.identitySha256);
+		expect(verifyLaunchPlanIdentity(first)).toBe(true);
+		expect(
+			verifyLaunchPlanIdentity({ ...first, ownerId: "mutated-owner" }),
+		).toBe(false);
 		expect(first.tools).toEqual(["read", "write"]);
 		expect(first.cwd).toBe("/workspace");
 		expect(first.network.blockInternalRanges).toBe(true);

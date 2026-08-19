@@ -78,6 +78,7 @@ export {
 	PreflightError,
 	type ResolvedSandbox,
 	type ResolvedWorkspace,
+	verifyLaunchPlanIdentity,
 } from "./preflight/compile.js";
 export {
 	createExactModelResolver,
@@ -105,6 +106,11 @@ export {
 	type WorkspacePreflight,
 	WorkspacePreflightError,
 } from "./preflight/workspace.js";
+export {
+	type AttemptExecutionResult,
+	boundAttemptOutput,
+	runNativeAttempt,
+} from "./runtime/attempt.js";
 export {
 	createVmCapacityManager,
 	VmCapacityExhaustedError,

@@ -11,6 +11,12 @@ import {
 	VM,
 } from "@earendil-works/gondolin";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { RunJournal } from "../../src/persistence/journal.js";
+import { acquireRunLease } from "../../src/persistence/run-lease.js";
+import { canonicalSha256 } from "../../src/preflight/canonical.js";
+import { compileLaunchPlan } from "../../src/preflight/compile.js";
+import { createExactModelResolver } from "../../src/preflight/models.js";
+import { runNativeAttempt } from "../../src/runtime/attempt.js";
 import {
 	createVmCapacityManager,
 	VmCapacityExhaustedError,
@@ -176,6 +182,7 @@ async function setupFixtures() {
 		"agent-b",
 		"quota",
 		"adapter",
+		"runner",
 	]) {
 		await mkdir(path.join(root, name), { mode: 0o700 });
 	}
@@ -470,6 +477,120 @@ async function assertRejectsCapacity(
 	throw new Error("capacity acquisition unexpectedly succeeded");
 }
 
+async function qualifyAttemptRunner(): Promise<string> {
+	const workspace = path.join(root, "runner");
+	await writeFile(path.join(workspace, "task.txt"), "RUNNER_OK\n");
+	const modelRuntime = await ModelRuntime.create();
+	const runId = `run_${randomUUID().replaceAll("-", "")}`;
+	const attemptId = `attempt_${randomUUID().replaceAll("-", "")}`;
+	const agentHash = canonicalSha256("qualification-runner-agent");
+	const toolHash = canonicalSha256("builtin-read");
+	const agent = {
+		name: "qualification-runner",
+		source: "<qualification-agent>",
+		sha256: agentHash,
+		defaultModel: {
+			provider: "github-copilot",
+			id: "gpt-5.6-luna",
+			thinking: "low" as const,
+		},
+		allowedModels: ["github-copilot/gpt-5.6-luna:low"],
+		tools: ["read"],
+		skills: [],
+		workspaceModes: ["read-only" as const],
+		limitCeiling: {
+			runtimeMs: 60_000,
+			tokens: 100_000,
+			cost: 10,
+			outputBytes: 4096,
+			workspaceWriteBytes: 0,
+			retries: 0,
+			resumes: 0,
+		},
+		prompt:
+			"Read task.txt with the read tool, then respond with exactly its single-line content and nothing else.",
+		scope: "builtin" as const,
+	};
+	const workspaceIdentity = canonicalSha256(workspace);
+	const plan = await compileLaunchPlan({
+		ownerId: "qualification-owner",
+		runId,
+		attemptId,
+		request: {
+			operationId: "qualification-runner",
+			agent: agent.name,
+			task: {
+				goal: "Read task.txt and return its exact content",
+				context: [],
+				instructions: ["Use read", "Return only the marker"],
+			},
+			contextMode: "fresh",
+			model: agent.defaultModel,
+			tools: ["read"],
+			skills: [],
+			workspace: { mode: "read-only", cwd: workspace },
+			limits: agent.limitCeiling,
+		},
+		agent,
+		resources: [
+			{
+				kind: "agent",
+				name: agent.name,
+				source: agent.source,
+				sha256: agentHash,
+			},
+			{
+				kind: "tool",
+				name: "read",
+				source: "<builtin:read>",
+				sha256: toolHash,
+			},
+		],
+		workspace: {
+			mode: "read-only",
+			hostPathSha256: workspaceIdentity,
+			baselineSha256: workspaceIdentity,
+		},
+		sandbox: {
+			packageVersion: "0.12.0",
+			imageSha256: canonicalSha256("qualification-image"),
+			mountPolicySha256: canonicalSha256("qualification-mount"),
+			networkPolicySha256: canonicalSha256("qualification-network"),
+			capacityPolicySha256: canonicalSha256("qualification-capacity"),
+			memoryBytes: 512 * 1024 * 1024,
+			guestDiskBytes: 2 * 1024 * 1024 * 1024,
+		},
+		resolveModel: createExactModelResolver(modelRuntime),
+	});
+	const lease = await acquireRunLease({
+		root: path.join(root, "runner-leases"),
+		runId,
+	});
+	const journal = await RunJournal.open(
+		path.join(root, "runner-runs"),
+		runId,
+		lease,
+	);
+	const result = await runNativeAttempt({
+		plan,
+		agent,
+		workspacePath: workspace,
+		modelRuntime,
+		capacity: await createVmCapacityManager({
+			root: path.join(root, "runner-capacity"),
+			maxSlots: 1,
+		}),
+		lease,
+		journal,
+		sessionRoot: path.join(root, "runner-sessions"),
+	});
+	await lease.release();
+	assert(result.result.status === "completed", result.error ?? "runner failed");
+	assert(result.output.trim() === "RUNNER_OK", "runner output mismatch");
+	assert((await journal.readEvents()).length >= 4, "runner journal incomplete");
+	return `Production runner completed ${attemptId} with a persisted Pi session, terminal result, and proved VM cleanup.`;
+}
+
 async function qualifyNativeSessions(): Promise<string> {
 	const modelRuntime = await ModelRuntime.create();
 	const available = await modelRuntime.getAvailable();
@@ -509,6 +630,7 @@ async function main() {
 	await check("concurrent VM isolation", qualifyConcurrentIsolation);
 	await check("global VM capacity lease", qualifyGlobalCapacity);
 	await check("production Gondolin adapter", qualifyProductionAdapter);
+	await check("production native attempt runner", qualifyAttemptRunner);
 	await check("concurrent native AgentSessions", qualifyNativeSessions);
 	const summary = checks.reduce<Record<CheckStatus, number>>(
 		(result, item) => {
