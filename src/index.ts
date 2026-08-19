@@ -20,6 +20,20 @@ export {
 	UsageSchema,
 } from "./contracts.js";
 export {
+	type AgentLaunchPlan,
+	AgentLaunchPlanSchema,
+	type DelegatedTask,
+	DelegatedTaskSchema,
+	type ExactModelRequest,
+	ExactModelRequestSchema,
+	type RunLimits,
+	RunLimitsSchema,
+	type SubagentRequest,
+	SubagentRequestSchema,
+	type WorkspaceRequest,
+	WorkspaceRequestSchema,
+} from "./launch-contracts.js";
+export {
 	InvalidRunTransitionError,
 	isRunStatus,
 	type RunTransitionEvent,
