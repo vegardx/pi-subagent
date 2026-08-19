@@ -389,8 +389,12 @@ identity and current ownership, resolves exact authenticated models, creates a
 persistent isolated native session, enforces runtime/output/token/cost bounds,
 closes the VM, captures worktree handoff, and persists terminal journal/snapshot
 receipts. Foreground service orchestration and structured output are integrated;
-normal skill discovery and forced startup preloads are integrated; explicit
-context and fork projection remain outstanding.
+normal skill discovery and forced startup preloads are integrated. Fork mode now
+authorizes an owner-bound parent session file, projects the active
+compaction-aware context under message/byte limits, binds source and projection
+digests plus message IDs into launch identity, persists parent provenance, and
+seeds only fresh child attempts. Explicit non-transcript context resources remain
+outstanding.
 
 ### Build
 

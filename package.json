@@ -34,6 +34,7 @@
 		"node": ">=23.6.0"
 	},
 	"peerDependencies": {
+		"@earendil-works/pi-agent-core": ">=0.84.2 <0.85",
 		"@earendil-works/pi-ai": ">=0.84.2 <0.85",
 		"@earendil-works/pi-coding-agent": ">=0.84.2 <0.85",
 		"@earendil-works/pi-tui": ">=0.84.2 <0.85",
@@ -46,6 +47,7 @@
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.5.8",
+		"@earendil-works/pi-agent-core": "0.84.2",
 		"@earendil-works/pi-ai": "0.84.2",
 		"@earendil-works/pi-coding-agent": "0.84.2",
 		"@earendil-works/pi-tui": "0.84.2",

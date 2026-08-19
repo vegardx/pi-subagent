@@ -98,6 +98,12 @@ export {
 	verifyLaunchPlanIdentity,
 } from "./preflight/compile.js";
 export {
+	ContextProjectionError,
+	type ForkContextGrant,
+	type ForkContextProjection,
+	projectForkContext,
+} from "./preflight/context.js";
+export {
 	createExactModelResolver,
 	ModelPreflightError,
 	type ModelPreflightRuntime,

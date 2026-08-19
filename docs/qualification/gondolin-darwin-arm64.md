@@ -70,6 +70,16 @@ SKILL_OK # pi-subagent
 
 The temporary qualification skill was then moved to recoverable trash.
 
+A third real CLI drive placed `FORK_CONTEXT_731` only in the parent conversation,
+launched the child with `contextMode: "fork"`, and received exactly:
+
+```text
+FORK_CONTEXT_731
+```
+
+The bounded parent projection was source/digest-bound and persisted as child
+session provenance.
+
 ## Important behavior
 
 `VM.create()` resolves assets and constructs the controller, but measurements
