@@ -87,6 +87,13 @@ export {
 	resolveExactPiModel,
 } from "./preflight/models.js";
 export {
+	discoverPackageAgentSources,
+	type PackageAgentManifest,
+	PackageAgentManifestError,
+	PackageAgentManifestSchema,
+	type PackageAgentSources,
+} from "./preflight/package-manifest.js";
+export {
 	digestFileResource,
 	digestTreeResource,
 	type ResourceDigest,
