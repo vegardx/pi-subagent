@@ -158,7 +158,7 @@ export const SUBAGENT_RUNTIME_CONTRACT: SubagentRuntimeContract = {
 		followUp: false,
 		structuredOutput: true,
 		preflight: true,
-		idempotentLaunch: false,
+		idempotentLaunch: true,
 		resume: false,
 		worktrees: true,
 		publicNetworkEgress: true,

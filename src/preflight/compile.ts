@@ -9,7 +9,7 @@ import {
 	type SubagentRequest,
 	SubagentRequestSchema,
 } from "../launch-contracts.js";
-import { canonicalSha256 } from "./canonical.js";
+import { canonicalJson, canonicalSha256 } from "./canonical.js";
 
 export type AgentDefinition = {
 	name: string;
@@ -201,6 +201,9 @@ export async function compileLaunchPlan(input: {
 		...draft,
 		identitySha256: canonicalSha256(draft),
 	};
+	if (Buffer.byteLength(canonicalJson(plan), "utf8") > 768 * 1024) {
+		throw new PreflightError("compiled launch plan exceeds byte limit");
+	}
 	if (!Value.Check(AgentLaunchPlanSchema, plan)) {
 		const details = [...Value.Errors(AgentLaunchPlanSchema, plan)]
 			.map((error) => `${error.instancePath || "/"}: ${error.message}`)

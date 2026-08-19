@@ -91,6 +91,30 @@ export class OperationIndex {
 		return new OperationIndex(await realpath(root));
 	}
 
+	async find(
+		ownerId: string,
+		operationId: string,
+	): Promise<OperationRecord | undefined> {
+		if (
+			!Value.Check(IdentitySchema, ownerId) ||
+			!Value.Check(IdentitySchema, operationId)
+		) {
+			throw new Error("invalid operation lookup");
+		}
+		try {
+			const record = await readRecord(
+				path.join(this.root, `${recordKey(ownerId, operationId)}.json`),
+			);
+			if (record.ownerId !== ownerId || record.operationId !== operationId) {
+				throw new PersistenceCorruptionError("operation record key mismatch");
+			}
+			return record;
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+			throw error;
+		}
+	}
+
 	async claim(input: {
 		ownerId: string;
 		operationId: string;

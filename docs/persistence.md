@@ -12,8 +12,10 @@ Cross-process run leases now use OS-owned per-run localhost listeners and
 monotonic durable generations. Fenced journals and worktree lifecycle mutations
 verify the current lease before side effects and receipts. Session leases,
 retention, and
-external-side-effect reconciliation remain design contracts rather than
-implemented behavior. Artifact blobs are content-addressed, privately stored,
+deep external-side-effect reconciliation remains incomplete. Immutable run
+records persist owner and launch identity before execution. Startup scans them,
+restores proved terminal snapshots and artifact access, skips runs held by a
+live seat, and classifies unproved stale execution as cleanup-blocked. Artifact blobs are content-addressed, privately stored,
 bounded per artifact and store, deduplicated, and rehashed on export; retention
 pins and garbage collection are not implemented yet.
 

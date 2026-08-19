@@ -72,6 +72,11 @@ export {
 	RunLeaseUnavailableError,
 } from "./persistence/run-lease.js";
 export {
+	type RunRecord,
+	RunRecordSchema,
+	RunRecordStore,
+} from "./persistence/run-record.js";
+export {
 	AgentDiscoveryError,
 	type AgentSource,
 	type AgentSourceScope,
