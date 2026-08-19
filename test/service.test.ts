@@ -49,6 +49,7 @@ async function fixture(name: string) {
 	const agentDigest = await digestFileResource(agentPath);
 	const limits = {
 		runtimeMs: 60_000,
+		attemptRuntimeMs: 30_000,
 		tokens: 100_000,
 		cost: 10,
 		outputBytes: 4096,

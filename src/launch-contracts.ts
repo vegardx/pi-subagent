@@ -66,6 +66,10 @@ export type WorkspaceRequest = Static<typeof WorkspaceRequestSchema>;
 export const RunLimitsSchema = Type.Object(
 	{
 		runtimeMs: Type.Integer({ minimum: 1_000, maximum: 3_600_000 }),
+		attemptRuntimeMs: Type.Integer({
+			minimum: 1_000,
+			maximum: 3_600_000,
+		}),
 		tokens: Type.Integer({ minimum: 1, maximum: 10_000_000 }),
 		cost: Type.Number({ minimum: 0, maximum: 10_000 }),
 		outputBytes: Type.Integer({ minimum: 1, maximum: 16 * 1024 * 1024 }),

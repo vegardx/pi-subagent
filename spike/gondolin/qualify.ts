@@ -537,6 +537,7 @@ async function qualifyForegroundService(): Promise<string> {
 	const agentHash = canonicalSha256("qualification-service-agent");
 	const limits = {
 		runtimeMs: 60_000,
+		attemptRuntimeMs: 30_000,
 		tokens: 100_000,
 		cost: 10,
 		outputBytes: 4096,
@@ -705,6 +706,7 @@ async function qualifyAttemptRunner(): Promise<string> {
 		workspaceModes: ["read-only" as const],
 		limitCeiling: {
 			runtimeMs: 60_000,
+			attemptRuntimeMs: 30_000,
 			tokens: 100_000,
 			cost: 10,
 			outputBytes: 4096,

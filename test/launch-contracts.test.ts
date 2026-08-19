@@ -8,6 +8,7 @@ import {
 const hash = "a".repeat(64);
 const limits = {
 	runtimeMs: 60_000,
+	attemptRuntimeMs: 30_000,
 	tokens: 100_000,
 	cost: 10,
 	outputBytes: 1024 * 1024,

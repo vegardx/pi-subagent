@@ -356,6 +356,10 @@ function retryPlan(
 		limits: {
 			...current.limits,
 			runtimeMs: remainingRuntimeMs,
+			attemptRuntimeMs: Math.min(
+				current.limits.attemptRuntimeMs,
+				remainingRuntimeMs,
+			),
 			tokens: remainingTokens,
 			cost: remainingCost,
 			retries: current.limits.retries - 1,
@@ -393,6 +397,10 @@ function resumePlan(
 		limits: {
 			...current.limits,
 			runtimeMs: remainingRuntimeMs,
+			attemptRuntimeMs: Math.min(
+				current.limits.attemptRuntimeMs,
+				remainingRuntimeMs,
+			),
 			tokens: remainingTokens,
 			cost: remainingCost,
 			resumes: current.limits.resumes - 1,

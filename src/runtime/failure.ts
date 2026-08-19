@@ -72,7 +72,7 @@ export function classifyAttemptFailure(options: {
 			"seat-interruption",
 			"operator",
 			"resume",
-			message,
+			"Seat shutdown interrupted the active attempt",
 			"Resume the retained Pi session in a fresh VM after validation.",
 		);
 	}
@@ -81,7 +81,7 @@ export function classifyAttemptFailure(options: {
 			"cancellation",
 			"operator",
 			"never",
-			message,
+			"The operator cancelled the active attempt",
 			"Start a new run if the cancelled task is still required.",
 		);
 	}
@@ -90,7 +90,7 @@ export function classifyAttemptFailure(options: {
 			"timeout",
 			"service",
 			"manual",
-			message,
+			"Attempt runtime limit exceeded",
 			"Inspect partial output and explicitly retry only if repeating the task is safe.",
 		);
 	}
