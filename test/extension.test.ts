@@ -30,6 +30,6 @@ describe("Pi extension adapter", () => {
 		expect(tool?.description).toContain("Gondolin VM");
 		expect(events).toEqual(["session_start", "session_shutdown"]);
 		expect(commands).toEqual(["subagents"]);
-		expect(shortcuts).toEqual(["alt+shift+s"]);
+		expect(shortcuts).toEqual(["alt+s"]);
 	});
 });

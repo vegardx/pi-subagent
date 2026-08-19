@@ -120,9 +120,7 @@ export function attentionWidgetLines(runs: RunSummary[]): string[] | undefined {
 			? `${counts.get("cleanup-blocked")} cleanup-blocked`
 			: undefined,
 	].filter((part): part is string => part !== undefined);
-	return parts.length
-		? [`subagents: ${parts.join(" · ")} · alt+shift+s`]
-		: undefined;
+	return parts.length ? [`subagents: ${parts.join(" · ")} · alt+s`] : undefined;
 }
 
 export function actionsForRun(run: RunSummary): InspectorAction[] {
