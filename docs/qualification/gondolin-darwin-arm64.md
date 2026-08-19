@@ -91,6 +91,13 @@ CONTEXT_OK
 The temporary context fixture was moved to recoverable trash. No QEMU process
 remained.
 
+The operator UX was also driven through a real Pi TUI. `/subagents` rendered the
+current-project dashboard, opened a run's tabbed detail and state-valid action
+palette, and opened the retention selected/protected report. A separate
+metadata-only invocation initialized and rendered the inspector without starting
+QEMU. A real `ux-smoke` child then returned exactly `UX_OK`, persisted its display
+metadata, and remained inspectable from a replacement Pi session.
+
 ## Important behavior
 
 `VM.create()` resolves assets and constructs the controller, but measurements

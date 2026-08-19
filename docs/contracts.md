@@ -169,6 +169,10 @@ authority is committed.
 interface SubagentService {
 	readonly contract: SubagentRuntimeContract;
 	forOwner(owner: OwnerRegistration): SubagentClient;
+	listRuns(query?: RunQuery): Promise<RunPage>;
+	inspectRun(runId: RunId): Promise<RunInspection>;
+	runLogs(runId: RunId, options?: LogOptions): Promise<RunLogPage>;
+	subscribe(listener: (event: RunObservation) => void): () => void;
 	prune(options?: PruneOptions): Promise<RetentionReport>;
 }
 
@@ -180,8 +184,9 @@ interface SubagentClient {
 		expectedIdentitySha256: string,
 	): Promise<RunReceipt>;
 	findByOperation(operationId: OperationId): Promise<RunReceipt | undefined>;
+	listRuns(query?: OwnerRunQuery): Promise<RunPage>;
 	status(runId: RunId): Promise<RunStatus>;
-	logs(runId: RunId, options?: LogOptions): Promise<RunLogs>;
+	logs(runId: RunId, options?: LogOptions): Promise<RunLogPage>;
 	wait(runId: RunId, options?: WaitOptions): Promise<RunResult>;
 	steer(
 		context: MutationContext,

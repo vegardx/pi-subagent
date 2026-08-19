@@ -49,6 +49,27 @@ weakened and host execution must not be used as fallback.
 - project resources follow Pi trust;
 - custom provider models work without mounting host provider credentials.
 
+## Operator UX
+
+- metadata inspection does not initialize model providers, Gondolin assets, VM
+  capacity, or QEMU;
+- current-project listing includes prior-session owners and can explicitly toggle
+  all projects;
+- run listing, search, lifecycle logs, and detail views are bounded and
+  paginated;
+- full-screen rendering never exceeds terminal width and remains usable without
+  color;
+- Overview, Activity, Result, and Technical tabs preserve selection across live
+  status events;
+- only state-valid actions appear, and destructive/costly actions require
+  confirmation;
+- the attention widget is absent when no run is active, interrupted, stopping,
+  or cleanup-blocked;
+- reload can inspect and retry/resume a dynamic agent from persisted authority
+  without an in-memory agent definition;
+- non-TUI command paths return bounded summaries without opening custom UI;
+- operator inspection or refresh never starts a VM.
+
 ## Accidental-damage containment
 
 Inside a disposable fixture, test commands equivalent to:

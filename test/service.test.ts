@@ -182,6 +182,12 @@ describe("foreground subagent service", () => {
 		).toBe("done");
 		expect((await client.status(first.runId)).status).toBe("completed");
 		expect((await client.logs(first.runId)).events).toHaveLength(1);
+		expect(
+			(await data.service.runLogs(first.runId, { tail: 1 })).events,
+		).toHaveLength(1);
+		expect((await data.service.inspectRun(first.runId)).plan.agentPrompt).toBe(
+			"worker prompt",
+		);
 		const page = await data.service.listRuns({
 			repositoryRoot: await realpath(data.repository),
 			limit: 1,
@@ -194,6 +200,11 @@ describe("foreground subagent service", () => {
 			workspaceMode: "read-only",
 		});
 		expect((await client.listRuns()).runs).toHaveLength(1);
+		expect((await data.service.listRuns({ search: "worker" })).total).toBe(1);
+		expect((await data.service.listRuns({ search: "missing" })).total).toBe(0);
+		await expect(data.service.listRuns({ cursor: "invalid" })).rejects.toThrow(
+			"invalid run list cursor",
+		);
 		expect(observations).toContain(`${first.runId}:active`);
 		expect(observations).toContain(`${first.runId}:completed`);
 		unsubscribe();

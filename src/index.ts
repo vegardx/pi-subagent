@@ -189,11 +189,13 @@ export {
 	withWriteBudget,
 } from "./sandbox/write-budget.js";
 export {
+	type AttemptSummary,
 	type ControlInput,
 	type ControlReceipt,
 	createSubagentService,
 	type OwnerRegistration,
 	type ReconcileResult,
+	type RunInspection,
 	type RunLogPage,
 	type RunObservation,
 	type RunPage,

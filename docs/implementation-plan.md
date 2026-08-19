@@ -538,12 +538,19 @@ fresh-VM recovery without the Pi extension adapter.
 
 ## Deliverable 7 — Pi extension and UI
 
-The package extension now lazily initializes one production service, synchronizes
-registered Pi providers into its host `ModelRuntime`, creates bounded ephemeral
-agent ceilings from the tool call, runs preflight/launch/wait, maps cancellation
-to interrupt, returns usage/artifact/handoff details, and shuts down active runs
-on session replacement or reload. Commands, persistent UI, and static named-agent
-selection remain outstanding.
+The package extension now initializes metadata/recovery without loading models,
+Gondolin assets, capacity, or VMs, and lazily resolves execution dependencies
+only for preflight/launch,
+synchronizes registered Pi providers into its host `ModelRuntime`, creates
+bounded ephemeral agent ceilings from the tool call, runs preflight/launch/wait,
+maps cancellation to interrupt, returns usage/artifact/handoff details, and
+shuts down active runs on session replacement or reload. Resolved dynamic agent
+metadata is persisted so retry/resume survives reload without an in-memory agent
+catalog. A unified `/subagents` surface now provides bounded current-project/all
+run discovery, direct subcommands, a full-screen inspector with four detail
+tabs and action palette, retention report, lifecycle event updates, an
+attention-only widget, and progressive tool-row status. Static named-agent
+selection remains outstanding.
 
 ### Build
 
