@@ -109,6 +109,11 @@ function validateResources(
 	}
 }
 
+export function verifyLaunchPlanIdentity(plan: AgentLaunchPlan): boolean {
+	const { identitySha256, ...draft } = plan;
+	return canonicalSha256(draft) === identitySha256;
+}
+
 export async function compileLaunchPlan(input: {
 	ownerId: string;
 	runId: RunId;

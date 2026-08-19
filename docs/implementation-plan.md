@@ -377,7 +377,12 @@ uses explicit QEMU with bounded memory/CPU/network settings, mounts either a
 read-only or write-budgeted canonical workspace, exposes the promoted seven-tool
 operation set, and releases capacity only after VM closure proves its host PID
 gone. Cancellation closes the entire per-attempt VM. Native session service
-integration and durable sandbox receipts remain outstanding.
+integration now has a production foreground attempt runner: it verifies launch
+identity and current ownership, resolves exact authenticated models, creates a
+persistent isolated native session, enforces runtime/output/token/cost bounds,
+closes the VM, captures worktree handoff, and persists terminal journal/snapshot
+receipts. Standalone service orchestration, explicit skills/context, structured
+output, and resume remain outstanding.
 
 ### Build
 
