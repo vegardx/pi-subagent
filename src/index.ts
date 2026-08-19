@@ -113,6 +113,21 @@ export {
 	type VmCapacityManager,
 } from "./sandbox/capacity.js";
 export {
+	createGondolinAttemptSandbox,
+	type GondolinAttemptSandbox,
+	GondolinSandboxError,
+	type GondolinSandboxRecord,
+} from "./sandbox/gondolin.js";
+export {
+	createGondolinTools,
+	GUEST_WORKSPACE,
+	toGuestPath,
+} from "./sandbox/tools.js";
+export {
+	type WriteBudget,
+	withWriteBudget,
+} from "./sandbox/write-budget.js";
+export {
 	captureWorktreeHandoff,
 	createAttemptWorktree,
 	readWorktreeRecord,
