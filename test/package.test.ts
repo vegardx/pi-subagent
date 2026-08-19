@@ -18,6 +18,6 @@ describe("package contract", () => {
 		);
 		expect(
 			packageJson.peerDependencies?.["@earendil-works/pi-coding-agent"],
-		).toBe("0.84.2");
+		).toBe(">=0.84.2 <0.85");
 	});
 });
