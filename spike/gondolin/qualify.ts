@@ -11,6 +11,7 @@ import {
 	VM,
 } from "@earendil-works/gondolin";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { ArtifactStore } from "../../src/artifacts/store.js";
 import { RunJournal } from "../../src/persistence/journal.js";
 import { acquireRunLease } from "../../src/persistence/run-lease.js";
 import { canonicalSha256 } from "../../src/preflight/canonical.js";
@@ -664,6 +665,12 @@ async function qualifyAttemptRunner(): Promise<string> {
 		runId,
 		lease,
 	);
+	const artifactStore = await ArtifactStore.open({
+		root: path.join(root, "runner-artifacts"),
+		maxArtifactBytes: plan.limits.outputBytes,
+		maxTotalBytes: plan.limits.outputBytes,
+		lease,
+	});
 	const result = await runNativeAttempt({
 		plan,
 		agent,
@@ -675,11 +682,19 @@ async function qualifyAttemptRunner(): Promise<string> {
 		}),
 		lease,
 		journal,
+		artifactStore,
 		sessionRoot: path.join(root, "runner-sessions"),
 	});
 	await lease.release();
 	assert(result.result.status === "completed", result.error ?? "runner failed");
 	assert(result.output.trim() === "RUNNER_OK", "runner output mismatch");
+	assert(result.result.output !== undefined, "runner output artifact missing");
+	assert(
+		(await artifactStore.export(result.result.output)).content
+			.toString("utf8")
+			.trim() === "RUNNER_OK",
+		"runner output artifact mismatch",
+	);
 	assert((await journal.readEvents()).length >= 4, "runner journal incomplete");
 	return `Production runner completed ${attemptId} with a persisted Pi session, terminal result, and proved VM cleanup.`;
 }

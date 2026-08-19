@@ -10,7 +10,13 @@ import {
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { Value } from "typebox/value";
-import { isRunResult, type RunResult, type Usage } from "../contracts.js";
+import type { ArtifactStore } from "../artifacts/store.js";
+import {
+	type ArtifactRef,
+	isRunResult,
+	type RunResult,
+	type Usage,
+} from "../contracts.js";
 import {
 	type AgentLaunchPlan,
 	AgentLaunchPlanSchema,
@@ -112,10 +118,12 @@ function terminalResult(input: {
 	sandboxCleanup: RunResult["sandboxCleanup"];
 	workspaceCleanup: RunResult["workspaceCleanup"];
 	truncated: boolean;
+	output?: ArtifactRef;
 }): RunResult {
 	const result: RunResult = {
 		runId: input.plan.runId,
 		status: input.status,
+		...(input.output ? { output: input.output } : {}),
 		usage: input.usage,
 		usageComplete: input.usageComplete,
 		sandboxCleanup: input.sandboxCleanup,
@@ -136,6 +144,7 @@ export async function runNativeAttempt(options: {
 	capacity: VmCapacityManager;
 	lease: RunLease;
 	journal: RunJournal;
+	artifactStore: ArtifactStore;
 	sessionRoot: string;
 	signal?: AbortSignal;
 }): Promise<AttemptExecutionResult> {
@@ -196,6 +205,7 @@ export async function runNativeAttempt(options: {
 		cost: 0,
 	};
 	let output = "";
+	let outputRef: ArtifactRef | undefined;
 	let truncated = false;
 	const timeoutSignal = AbortSignal.timeout(options.plan.limits.runtimeMs);
 	const runSignal = options.signal
@@ -272,12 +282,20 @@ export async function runNativeAttempt(options: {
 		await session.prompt(delegatedPrompt(options.plan));
 		await session.agent.waitForIdle();
 		collectedUsage = usage(session);
-		const bounded = boundAttemptOutput(
+		const artifactOutput = boundAttemptOutput(
 			assistantOutput(session),
-			Math.min(options.plan.limits.outputBytes, MAX_INLINE_OUTPUT_BYTES),
+			options.plan.limits.outputBytes,
 		);
-		output = bounded.output;
-		truncated = bounded.truncated;
+		outputRef = await options.artifactStore.put(
+			artifactOutput.output,
+			"text/plain",
+		);
+		const inlineOutput = boundAttemptOutput(
+			artifactOutput.output,
+			MAX_INLINE_OUTPUT_BYTES,
+		);
+		output = inlineOutput.output;
+		truncated = artifactOutput.truncated || inlineOutput.truncated;
 		if (
 			collectedUsage.totalTokens > options.plan.limits.tokens ||
 			collectedUsage.cost > options.plan.limits.cost
@@ -308,6 +326,7 @@ export async function runNativeAttempt(options: {
 			sandboxCleanup,
 			workspaceCleanup,
 			truncated,
+			...(outputRef ? { output: outputRef } : {}),
 		});
 		await options.journal.append("attempt-completed", {
 			result,
