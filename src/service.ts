@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { AttemptId, RunId, RunStatus } from "./contracts.js";
 import type {
@@ -93,6 +94,16 @@ type ActiveRun = {
 
 type AttemptExecutor = typeof runNativeAttempt;
 
+const IMPLEMENTED_TOOLS = new Set([
+	"read",
+	"write",
+	"edit",
+	"bash",
+	"grep",
+	"find",
+	"ls",
+]);
+
 function deterministicIds(ownerId: string, request: SubagentRequest) {
 	const identity = canonicalSha256({ ownerId, request });
 	return {
@@ -108,7 +119,11 @@ function validateOwner(owner: OwnerRegistration): void {
 	}
 }
 
-function toolResources(agent: DiscoveredAgent, request: SubagentRequest) {
+function toolResources(
+	agent: DiscoveredAgent,
+	request: SubagentRequest,
+	implementation: { canonicalPath: string; sha256: string },
+) {
 	const resources: ResourceGrant[] = [
 		{
 			kind: "agent",
@@ -118,11 +133,17 @@ function toolResources(agent: DiscoveredAgent, request: SubagentRequest) {
 		},
 	];
 	for (const tool of request.tools) {
+		if (!IMPLEMENTED_TOOLS.has(tool)) {
+			throw new Error(`tool implementation unavailable: ${tool}`);
+		}
 		resources.push({
 			kind: "tool",
 			name: tool,
-			source: `<builtin:${tool}>`,
-			sha256: canonicalSha256({ pi: "0.84.2", tool }),
+			source: `${implementation.canonicalPath}#${tool}`,
+			sha256: canonicalSha256({
+				implementationSha256: implementation.sha256,
+				tool,
+			}),
 		});
 	}
 	return resources;
@@ -139,6 +160,9 @@ export async function createSubagentService(options: {
 	executeAttempt?: AttemptExecutor;
 }): Promise<SubagentService> {
 	await mkdir(options.root, { recursive: true, mode: 0o700 });
+	const toolImplementation = await digestFileResource(
+		fileURLToPath(new URL("./sandbox/tools.ts", import.meta.url)),
+	);
 	const operationIndex = await OperationIndex.open(
 		path.join(options.root, "operations"),
 	);
@@ -195,7 +219,7 @@ export async function createSubagentService(options: {
 						attemptId: ids.attemptId,
 						request,
 						agent,
-						resources: toolResources(agent, request),
+						resources: toolResources(agent, request, toolImplementation),
 						workspace,
 						sandbox: options.sandbox,
 						resolveModel,
