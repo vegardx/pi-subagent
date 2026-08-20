@@ -216,7 +216,12 @@ Using bounded disposable fixtures:
 - transient retry delay grows exponentially from durable attempt ordinal and is
   capped at five minutes;
 - numerical output, log, event, artifact, cumulative runtime, retry, resume,
-  token, and cost bounds produce documented truncation or terminal outcomes;
+  uncached input/output token, and cost bounds produce documented truncation or
+  terminal outcomes; cache reads/writes remain telemetry rather than consuming
+  the token ceiling;
+- whichever of token, run-runtime, or attempt-runtime pressure first reaches
+  70% and 90% persists one unified receipt per attempt stage and queues
+  progressively stronger convergence steering;
 - retry/resume subtract each attempt's measured runtime before compiling the next
   immutable plan and reject less than one second remaining;
 - resumed sessions account only messages, tokens, cost, and output added after

@@ -365,8 +365,10 @@ interface ClassifiedFailure {
 
 Unknown failures fail closed to `reconcile`. Explicit retry accepts only `manual`
 or elapsed `backoff`; resume accepts only `resume`. Every attempt records
-`runtimeMs`, and retry/resume subtract runtime, tokens, and cost from the current
-remaining plan before creating a fresh attempt.
+`runtimeMs`, and retry/resume subtract runtime, uncached input/output tokens, and
+cost from the current remaining plan before creating a fresh attempt. Cache reads
+and writes remain in usage telemetry and provider cost but do not consume the
+token ceiling.
 
 A run may be `completed` only when VM cleanup is proved and workspace cleanup is
 `proved` or `not-needed`. A deliberately retained worktree is represented as
@@ -412,6 +414,12 @@ interface RunResult {
 }
 ```
 
-Limits define per-attempt and per-run runtime, tokens, cost, output, logs,
-events, artifact bytes, retries, and resume count. Partial usage and truncation
-remain visible after failure.
+Limits define per-attempt and per-run runtime, uncached input/output tokens,
+cost, output, logs, events, artifact bytes, retries, and resume count. Cache
+reads/writes and total provider tokens remain visible telemetry. At 70% and 90%
+of either token, run-runtime, or attempt-runtime pressure, the runtime persists a
+single stage receipt per attempt and queues progressively stronger convergence
+steering.
+Runtime stages are scheduled by wall clock; token stages are evaluated after
+turn usage is recorded. Partial usage and truncation remain visible after
+failure.

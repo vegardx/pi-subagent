@@ -48,6 +48,16 @@ describe("attempt failure classification", () => {
 			retry: "manual",
 		},
 		{
+			name: "token or cost budget",
+			input: {
+				error: new Error("attempt usage limit exceeded"),
+				timedOut: false,
+				...cleanup,
+			},
+			code: "validation",
+			retry: "never",
+		},
+		{
 			name: "provider rate limit",
 			input: {
 				error: new Error("status 429 rate limit"),

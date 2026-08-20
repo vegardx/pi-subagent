@@ -45,6 +45,13 @@ import {
 	removeCleanWorktree,
 	type WorktreeRecord,
 } from "../workspace/worktree.js";
+import {
+	type BudgetSteeringStage,
+	type BudgetSteeringTrigger,
+	budgetStagesForPressure,
+	budgetSteeringMessage,
+	uncachedTokens,
+} from "./budget.js";
 import { classifyAttemptFailure } from "./failure.js";
 import { createFinalAnswerController } from "./structured-output.js";
 
@@ -265,6 +272,7 @@ export async function runNativeAttempt(options: {
 	let outputRef: ArtifactRef | undefined;
 	let structuredOutput: unknown | undefined;
 	let truncated = false;
+	let stopBudgetSteering: () => Promise<void> = async () => {};
 	const timeoutSignal = AbortSignal.timeout(
 		options.plan.limits.attemptRuntimeMs,
 	);
@@ -388,6 +396,125 @@ export async function runNativeAttempt(options: {
 		session = created.session;
 		baselineUsage = usage(session);
 		baselineMessageIndex = session.messages.length;
+		const priorBudgetEvents = await options.journal.readEvents();
+		const priorResults = priorBudgetEvents
+			.filter(
+				(event) =>
+					event.type === "attempt-completed" || event.type === "attempt-failed",
+			)
+			.map((event) => (event.data as { result?: unknown } | undefined)?.result)
+			.filter(isRunResult);
+		const priorRuntimeMs = priorResults.reduce(
+			(total, result) => total + result.runtimeMs,
+			0,
+		);
+		const priorUncachedTokens = priorResults.reduce(
+			(total, result) => total + uncachedTokens(result.usage),
+			0,
+		);
+		const runRuntimeLimit = options.plan.limits.runtimeMs + priorRuntimeMs;
+		const tokenLimit = options.plan.limits.tokens + priorUncachedTokens;
+		let highestBudgetStage = priorBudgetEvents.reduce<BudgetSteeringStage | 0>(
+			(highest, event) => {
+				if (event.type !== "budget-steering") return highest;
+				const data = event.data as
+					| { attemptId?: unknown; stage?: unknown }
+					| undefined;
+				if (data?.attemptId !== options.plan.attemptId) return highest;
+				const stage = data.stage;
+				return (stage === 0.7 || stage === 0.9) && stage > highest
+					? stage
+					: highest;
+			},
+			0,
+		);
+		let budgetTail = Promise.resolve();
+		const budgetTimers: NodeJS.Timeout[] = [];
+		const queueBudgetSteering = (
+			stage: BudgetSteeringStage,
+			trigger: BudgetSteeringTrigger,
+			used: number,
+			limit: number,
+		) => {
+			if (stage <= highestBudgetStage || runSignal.aborted) return;
+			highestBudgetStage = stage;
+			const text = budgetSteeringMessage({ stage, trigger, used, limit });
+			budgetTail = budgetTail
+				.then(async () => {
+					await options.journal.append("budget-steering", {
+						attemptId: options.plan.attemptId,
+						stage,
+						trigger,
+						used,
+						limit,
+						text,
+					});
+					await session?.steer(text);
+				})
+				.catch(() => {});
+		};
+		const scheduleRuntimeStage = (
+			stage: BudgetSteeringStage,
+			trigger: Extract<
+				BudgetSteeringTrigger,
+				"run-runtime" | "attempt-runtime"
+			>,
+			limit: number,
+			alreadyUsed: number,
+		) => {
+			const delay = Math.max(
+				0,
+				Math.floor(limit * stage) - alreadyUsed - elapsedRuntimeMs(),
+			);
+			const timer = setTimeout(() => {
+				const used =
+					trigger === "run-runtime"
+						? priorRuntimeMs + elapsedRuntimeMs()
+						: elapsedRuntimeMs();
+				queueBudgetSteering(stage, trigger, used, limit);
+			}, delay);
+			timer.unref?.();
+			budgetTimers.push(timer);
+		};
+		for (const stage of [0.7, 0.9] as const) {
+			scheduleRuntimeStage(
+				stage,
+				"run-runtime",
+				runRuntimeLimit,
+				priorRuntimeMs,
+			);
+			scheduleRuntimeStage(
+				stage,
+				"attempt-runtime",
+				options.plan.limits.attemptRuntimeMs,
+				0,
+			);
+		}
+		const unsubscribeBudget = session.subscribe((event) => {
+			if (event.type !== "turn_end") return;
+			const current = subtractUsage(
+				usage(session as AgentSession),
+				baselineUsage,
+			);
+			budgetTail = budgetTail
+				.then(() =>
+					options.journal.append("usage-checkpoint", {
+						attemptId: options.plan.attemptId,
+						usage: current,
+						runtimeMs: elapsedRuntimeMs(),
+					}),
+				)
+				.then(() => undefined)
+				.catch(() => {});
+			const used = priorUncachedTokens + uncachedTokens(current);
+			for (const stage of budgetStagesForPressure(used / tokenLimit))
+				queueBudgetSteering(stage, "tokens", used, tokenLimit);
+		});
+		stopBudgetSteering = async () => {
+			for (const timer of budgetTimers) clearTimeout(timer);
+			unsubscribeBudget();
+			await budgetTail;
+		};
 		options.registerControl?.({
 			steer: (text) =>
 				session?.steer(text) ??
@@ -422,6 +549,8 @@ export async function runNativeAttempt(options: {
 			}
 		}
 		await session.agent.waitForIdle();
+		runSignal.throwIfAborted();
+		await stopBudgetSteering();
 		collectedUsage = subtractUsage(usage(session), baselineUsage);
 		const rawOutput =
 			structuredOutput === undefined
@@ -444,7 +573,7 @@ export async function runNativeAttempt(options: {
 		output = inlineOutput.output;
 		truncated = artifactOutput.truncated || inlineOutput.truncated;
 		if (
-			collectedUsage.totalTokens > options.plan.limits.tokens ||
+			uncachedTokens(collectedUsage) > options.plan.limits.tokens ||
 			collectedUsage.cost > options.plan.limits.cost
 		) {
 			throw new Error("attempt usage limit exceeded");
@@ -498,6 +627,7 @@ export async function runNativeAttempt(options: {
 			error: undefined,
 		};
 	} catch (error) {
+		await stopBudgetSteering().catch(() => {});
 		if (session) {
 			collectedUsage = subtractUsage(usage(session), baselineUsage);
 			const bounded = boundAttemptOutput(
@@ -573,6 +703,7 @@ export async function runNativeAttempt(options: {
 			error: message,
 		};
 	} finally {
+		await stopBudgetSteering().catch(() => {});
 		options.registerControl?.(undefined);
 		runSignal.removeEventListener("abort", abort);
 	}

@@ -687,7 +687,7 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 				limitCeiling: {
 					runtimeMs: runRuntimeMs,
 					attemptRuntimeMs,
-					tokens: 1_000_000,
+					tokens: 10_000_000,
 					cost: 100,
 					outputBytes: 1024 * 1024,
 					workspaceWriteBytes: 512 * 1024 * 1024,
