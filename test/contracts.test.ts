@@ -35,6 +35,7 @@ describe("runtime contracts", () => {
 			publicNetworkEgress: true,
 			explicitResources: true,
 			ambientExtensionsControl: true,
+			hostBrokeredTools: true,
 		});
 	});
 

@@ -1,7 +1,7 @@
 import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
 
-export const CONTRACT_REVISION = 2 as const;
+export const CONTRACT_REVISION = 3 as const;
 
 export class IncompatibleContractRevisionError extends Error {
 	constructor(
@@ -241,6 +241,7 @@ export const SubagentRuntimeContractSchema = Type.Object(
 				publicNetworkEgress: Type.Boolean(),
 				explicitResources: Type.Boolean(),
 				ambientExtensionsControl: Type.Boolean(),
+				hostBrokeredTools: Type.Boolean(),
 			},
 			{ additionalProperties: false },
 		),
@@ -273,5 +274,6 @@ export const SUBAGENT_RUNTIME_CONTRACT: SubagentRuntimeContract = {
 		publicNetworkEgress: true,
 		explicitResources: true,
 		ambientExtensionsControl: true,
+		hostBrokeredTools: true,
 	},
 };

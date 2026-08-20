@@ -176,6 +176,14 @@ export {
 } from "./runtime/attempt.js";
 export { classifyAttemptFailure } from "./runtime/failure.js";
 export {
+	discoverWebHostTools,
+	executeBoundedHostTool,
+	type HostToolDeclaration,
+	type HostToolOwner,
+	HostToolProviderError,
+	hostToolMap,
+} from "./runtime/host-tools.js";
+export {
 	createFinalAnswerController,
 	type FinalAnswerController,
 	StructuredOutputError,

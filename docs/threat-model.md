@@ -28,6 +28,8 @@ other repositories, Pi state, or host processes.
 - Guest processes cannot signal or manipulate host processes.
 - Guest network traffic cannot reach localhost, private networks, link-local
   services, or cloud metadata endpoints.
+- Host-brokered web tools expose no API keys to the guest and their text/details
+  are re-bounded before entering the child session.
 - VM shutdown is proved before an attempt reports successful cleanup.
 - VM memory, runtime, concurrency, guest-disk growth, workspace writes, and
   captured output have enforceable bounds or fail qualification.

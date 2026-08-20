@@ -130,8 +130,12 @@ Using bounded disposable fixtures:
 
 ## Filesystem and tools
 
-- every granted built-in operation is VM-backed;
-- denied or undeclared host-backed tools cannot be invoked;
+- every granted built-in filesystem/process operation is VM-backed;
+- host-brokered `search` and `fetch` require the exact pi-web provider contract,
+  declaration digest, public-network-read authority, and launch-plan grant;
+- Exa and Context7 credentials remain host-side and never enter Gondolin;
+- denied, unavailable, incompatible, or undeclared host-backed tools cannot be
+  invoked;
 - read-only checkout mounts reject all writes;
 - writing attempts use distinct private worktrees;
 - traversal, absolute host paths, symlink escape, and VFS-provider escape fail;
@@ -256,6 +260,7 @@ Using bounded disposable fixtures:
 - an incomplete trash manifest resumes under retention and run leases before new
   prune selection, moving the run-record commit marker last;
 - incompatible persisted contract revisions are rejected with discard guidance;
+- retry and resume reject host-tool provider or declaration identity drift;
   no migration or compatibility path is provided.
 
 ## Distribution
