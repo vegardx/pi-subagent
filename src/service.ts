@@ -7,6 +7,7 @@ import {
 	type ModelRuntime,
 	SessionManager,
 } from "@earendil-works/pi-coding-agent";
+import { Value } from "typebox/value";
 import { type ArtifactExport, ArtifactStore } from "./artifacts/store.js";
 import {
 	type ArtifactRef,
@@ -16,6 +17,7 @@ import {
 	type RunResult,
 	type RunStatus,
 	type Usage,
+	UsageSchema,
 } from "./contracts.js";
 import type {
 	AgentLaunchPlan,
@@ -74,6 +76,7 @@ import {
 	type AttemptExecutionResult,
 	runNativeAttempt,
 } from "./runtime/attempt.js";
+import { remainingUncachedTokens } from "./runtime/budget.js";
 import { createFinalAnswerController } from "./runtime/structured-output.js";
 import type { VmCapacityManager } from "./sandbox/capacity.js";
 import {
@@ -335,8 +338,10 @@ function retryPlan(
 		throw new Error("failure classification does not permit retry");
 	}
 	const remainingRuntimeMs = current.limits.runtimeMs - result.result.runtimeMs;
-	const remainingTokens =
-		current.limits.tokens - result.result.usage.totalTokens;
+	const remainingTokens = remainingUncachedTokens(
+		current.limits.tokens,
+		result.result.usage,
+	);
 	const remainingCost = current.limits.cost - result.result.usage.cost;
 	if (remainingRuntimeMs < 1_000 || remainingTokens < 1 || remainingCost <= 0) {
 		throw new Error("retry run-wide budget exhausted");
@@ -376,8 +381,10 @@ function resumePlan(
 		throw new Error("failure classification does not permit resume");
 	}
 	const remainingRuntimeMs = current.limits.runtimeMs - result.result.runtimeMs;
-	const remainingTokens =
-		current.limits.tokens - result.result.usage.totalTokens;
+	const remainingTokens = remainingUncachedTokens(
+		current.limits.tokens,
+		result.result.usage,
+	);
 	const remainingCost = current.limits.cost - result.result.usage.cost;
 	if (remainingRuntimeMs < 1_000 || remainingTokens < 1 || remainingCost <= 0) {
 		throw new Error("resume run-wide budget exhausted");
@@ -671,6 +678,24 @@ export async function createSubagentService(options: {
 				maxTotalBytes: recoveredPlan.limits.outputBytes,
 				lease,
 			});
+			const recoveryEvents = await journal.readEvents();
+			const usageCheckpoint = [...recoveryEvents].reverse().find((event) => {
+				if (event.type !== "usage-checkpoint") return false;
+				const data = event.data as { attemptId?: unknown } | undefined;
+				return data?.attemptId === recoveredPlan.attemptId;
+			});
+			const checkpointData = usageCheckpoint?.data as
+				| { usage?: unknown; runtimeMs?: unknown }
+				| undefined;
+			const checkpointUsage = Value.Check(UsageSchema, checkpointData?.usage)
+				? (checkpointData?.usage as Usage)
+				: emptyUsage();
+			const checkpointRuntimeMs =
+				typeof checkpointData?.runtimeMs === "number" &&
+				Number.isSafeInteger(checkpointData.runtimeMs) &&
+				checkpointData.runtimeMs >= 0
+					? checkpointData.runtimeMs
+					: 0;
 			const snapshot = await journal.readSnapshot();
 			const state = snapshot?.state as
 				| {
@@ -689,9 +714,9 @@ export async function createSubagentService(options: {
 				result = {
 					runId: recoveredPlan.runId,
 					status: "cleanup-blocked",
-					usage: emptyUsage(),
+					usage: checkpointUsage,
 					usageComplete: false,
-					runtimeMs: 0,
+					runtimeMs: checkpointRuntimeMs,
 					failure: {
 						code: "unknown",
 						origin: "service",
@@ -965,8 +990,9 @@ export async function createSubagentService(options: {
 				: undefined;
 		const remainingRuntime =
 			run.plan.limits.runtimeMs - (run.result?.result.runtimeMs ?? 0);
-		const remainingTokens =
-			run.plan.limits.tokens - (run.result?.result.usage.totalTokens ?? 0);
+		const remainingTokens = run.result
+			? remainingUncachedTokens(run.plan.limits.tokens, run.result.result.usage)
+			: run.plan.limits.tokens;
 		const remainingCost =
 			run.plan.limits.cost - (run.result?.result.usage.cost ?? 0);
 		const goalPreview = run.plan.task.goal

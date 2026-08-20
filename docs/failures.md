@@ -36,15 +36,24 @@ for a validated persisted Pi session whose failure disposition is `resume`.
 Both operations create a fresh Gondolin VM. Neither operation erases prior
 evidence, reuses live guest state, or resets run-wide budgets.
 
-`runtimeMs` is a cumulative run-wide budget alongside tokens, cost, retry count,
-and resume count. `attemptRuntimeMs` is the per-attempt deadline and may not
+`runtimeMs` is a cumulative run-wide budget alongside uncached input/output
+tokens, cost, retry count, and resume count. Cache read/write tokens are reported
+but do not consume the ceiling. `attemptRuntimeMs` is the per-attempt deadline and may not
 exceed the remaining run-wide runtime. Every terminal attempt records measured
 wall-clock milliseconds, including startup and cleanup. Retry or resume subtracts
 that duration, clamps the next attempt deadline to the remaining runtime, and
 fails before execution when fewer than 1,000 milliseconds remain. Resume records
 the retained session's message count and accumulated usage before prompting, then
-accounts and returns only assistant output, tokens, and cost added by the new
+accounts and returns only assistant output, usage, and cost added by the new
 attempt; prior session usage is not charged twice.
+
+Each attempt queues convergence steering once at 70% and urgent finalization
+steering once at 90% when either cumulative uncached token usage, cumulative run
+runtime, or that attempt's wall-clock runtime reaches the threshold. The stage is
+persisted before steering is queued. A fresh retry or resume attempt receives its
+own reminders against the remaining budgets. Steering and its advisory receipt
+are best-effort and never turn otherwise successful task work into a failure;
+a missing receipt permits the reminder to be sent again.
 
 A filesystem escape or denied host/internal-network destination is a boundary
 result, not a transient infrastructure failure. The runtime must not retry it

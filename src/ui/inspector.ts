@@ -7,6 +7,7 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 import type { RetentionReport } from "../persistence/retention.js";
+import { uncachedTokens } from "../runtime/budget.js";
 import type {
 	RunInspection,
 	RunLogPage,
@@ -302,7 +303,7 @@ function detailBody(
 			keyValue(
 				"Usage",
 				summary.usage
-					? `${formatTokens(summary.usage.totalTokens)} tokens · $${summary.usage.cost.toFixed(4)}`
+					? `${formatTokens(uncachedTokens(summary.usage))} input/output · ${formatTokens(summary.usage.totalTokens)} total · $${summary.usage.cost.toFixed(4)}`
 					: "unavailable",
 				width,
 			),

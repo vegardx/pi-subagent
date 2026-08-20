@@ -104,6 +104,15 @@ export function classifyAttemptFailure(options: {
 			"Inspect partial output and explicitly retry only if repeating the task is safe.",
 		);
 	}
+	if (normalized.includes("usage limit exceeded")) {
+		return failure(
+			"validation",
+			"service",
+			"never",
+			"Attempt token or cost budget exceeded",
+			"Reduce the task scope or launch a new run with an intentionally larger budget.",
+		);
+	}
 	if (
 		normalized.includes("runleasefenced") ||
 		normalized.includes("lease fenced")
