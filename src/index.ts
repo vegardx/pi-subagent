@@ -232,11 +232,13 @@ export {
 export {
 	captureWorktreeHandoff,
 	createAttemptWorktree,
+	finalizeWorktreeHandoff,
 	observeWorktree,
 	readWorktreeRecord,
 	releaseWorktreeBranch,
 	removeCleanWorktree,
 	WorktreeError,
+	WorktreeNoChangesError,
 	type WorktreeObservation,
 	type WorktreeRecord,
 	WorktreeRecordSchema,
