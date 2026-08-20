@@ -70,10 +70,15 @@ weakened and host execution must not be used as fallback.
   rather than relying on nested Pi dialogs;
 - retry/resume appear only when count budgets and durable result/session
   prerequisites prove eligibility;
+- inspector and direct commands consume the same service-owned action
+  projection; no second status-to-action table can drift;
 - only state-valid actions appear, and destructive/costly actions require
   confirmation;
-- the attention widget is absent when no run is active, interrupted, stopping,
-  or cleanup-blocked;
+- pin/unpin appear only for ordinary terminal history where they change
+  retention behavior;
+- the widget separates ongoing work from interrupted/cleanup-blocked runs that
+  need action, and is absent when neither group is present;
+- abandoned runs remain in history but are absent from the widget;
 - graceful seat shutdown classifies active work as interrupted while explicit
   operator stop remains cancelled;
 - reload can inspect and retry/resume a dynamic agent from persisted authority
@@ -165,6 +170,11 @@ Using bounded disposable fixtures:
 - seat reload/exit marks active work interrupted rather than completed;
 - explicit resume validates the retained session and workspace, then creates a
   fresh VM;
+- explicit abandon accepts only interrupted runs with proved sandbox cleanup,
+  safely releases verified retained workspaces, removes resume/retry authority,
+  and records an immutable operator-abandoned result;
+- abandonment races with resume, reconcile, and workspace release have one
+  fenced winner;
 - no contract claims detached execution or survival across seat exit;
 - run-wide limits survive retry and resume.
 
@@ -176,7 +186,9 @@ Using bounded disposable fixtures:
 - no completion is reported while VM shutdown is unproved;
 - cancellation preserves uncaptured worktree changes;
 - closing one VM does not terminate another attempt's VM;
-- repeated cleanup is idempotent.
+- repeated cleanup is idempotent;
+- cleanup-blocked runs cannot be abandoned or forgotten; they must reconcile to
+  proved cleanup first.
 
 ## Workspaces and handoff
 
@@ -228,6 +240,9 @@ Using bounded disposable fixtures:
   the retained-session baseline; prior assistant usage is not charged twice;
 - retention never selects active, interrupted, cleanup-blocked, pinned, or
   unreleased-worktree runs;
+- completed, failed, cancelled, and abandoned runs are ordinary terminal
+  history; abandoned runs reconstruct without session recovery authority after
+  restart;
 - ordinary terminal runs older than 30 days are selected;
 - the oldest ordinary runs are selected until retained ordinary data is within
   the 2 GiB budget;

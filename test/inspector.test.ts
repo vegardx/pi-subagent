@@ -31,39 +31,21 @@ function summary(
 		retainedWorktree: false,
 		requiresAttention: status === "active" || status === "interrupted",
 		...overrides,
+		availableActions: overrides.availableActions ?? [],
 	};
 }
 
 describe("subagent inspector", () => {
-	it("offers only state-valid actions through the palette", () => {
-		expect(actionsForRun(summary("active"))).toEqual([
-			"steer",
-			"follow-up",
-			"stop",
-			"pin",
-		]);
-		expect(
-			actionsForRun(
-				summary("interrupted", {
-					retainedWorktree: true,
-					pinned: true,
-				}),
-			),
-		).toEqual(["resume", "release", "unpin"]);
-		expect(
-			actionsForRun(
-				summary("failed", {
-					retryAt: new Date(Date.now() + 60_000).toISOString(),
-				}),
-			),
-		).toEqual(["pin"]);
-		expect(actionsForRun(summary("interrupted", { resumable: false }))).toEqual(
-			["pin"],
+	it("renders exactly the service-owned action projection", () => {
+		const availableActions = [
+			"resume",
+			"abandon",
+			"release-workspace",
+		] as const;
+		expect(actionsForRun(summary("interrupted", { availableActions }))).toEqual(
+			availableActions,
 		);
-		expect(actionsForRun(summary("cleanup-blocked"))).toEqual([
-			"reconcile",
-			"pin",
-		]);
+		expect(actionsForRun(summary("abandoned"))).toEqual([]);
 	});
 
 	it("hides the ambient widget unless a run needs attention", () => {
@@ -73,7 +55,10 @@ describe("subagent inspector", () => {
 				summary("active"),
 				summary("interrupted", { runId: "run_interrupted" }),
 			]),
-		).toEqual(["subagents: 1 active · 1 interrupted · alt+s"]);
+		).toEqual([
+			"subagents ongoing: 1 active",
+			"subagents need action: 1 interrupted · alt+s",
+		]);
 	});
 
 	it("bounds every dashboard line to the available width", async () => {

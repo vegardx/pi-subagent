@@ -13,7 +13,12 @@ import { Type } from "typebox";
 import type { ExactModelRequest } from "./launch-contracts.js";
 import type { DiscoveredAgent } from "./preflight/agents.js";
 import { canonicalSha256 } from "./preflight/canonical.js";
-import type { RunSummary, SubagentService } from "./service.js";
+import {
+	isRunAction,
+	RUN_ACTIONS,
+	type RunSummary,
+	type SubagentService,
+} from "./service.js";
 import { registerSubagentServiceProvider } from "./service-provider.js";
 import { formatBytes } from "./ui/format.js";
 import {
@@ -34,24 +39,13 @@ const THINKING_LEVELS = [
 	"xhigh",
 ] as const;
 const MUTATING_TOOLS = new Set(["write", "edit", "bash"]);
-const OPERATOR_ACTIONS: Record<string, InspectorAction> = {
-	steer: "steer",
-	"follow-up": "follow-up",
-	stop: "stop",
-	retry: "retry",
-	resume: "resume",
-	reconcile: "reconcile",
-	release: "release",
-	pin: "pin",
-	unpin: "unpin",
-};
 const OPERATOR_SUBCOMMANDS = [
 	"list",
 	"show",
 	"status",
 	"logs",
 	"wait",
-	...Object.keys(OPERATOR_ACTIONS),
+	...RUN_ACTIONS,
 	"prune",
 ];
 
@@ -305,13 +299,20 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 		confirmed = false,
 	): Promise<void> {
 		const client = ownerClient(runtime, run, ctx);
-		if (!confirmed && ["stop", "retry", "resume", "release"].includes(action)) {
+		if (
+			!confirmed &&
+			["stop", "retry", "resume", "release-workspace", "abandon"].includes(
+				action,
+			)
+		) {
 			const descriptions: Record<string, string> = {
 				stop: "The active model session will stop and its VM will close.",
 				retry: "A new attempt and fresh VM will consume remaining budgets.",
 				resume: "The retained Pi session will continue in a fresh VM.",
-				release:
+				"release-workspace":
 					"The verified worktree and reservation branch will be removed.",
+				abandon:
+					"Resume and retry will be permanently disabled; verified retained workspace resources will be released.",
 			};
 			if (
 				ctx.hasUI &&
@@ -335,18 +336,29 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 				action === "steer"
 					? await client.steer(run.runId, input)
 					: await client.followUp(run.runId, input);
-			ctx.ui.notify(`${action}: ${receipt.state}`, "info");
+			operatorOutput(ctx, `${action}: ${receipt.state}`);
 			return;
 		}
 		if (action === "export-output") {
 			const inspection = await runtime.inspectRun(run.runId);
 			const ref = inspection.result?.result.output;
 			if (!ref) throw new Error("run has no output artifact");
-			const destination = await ctx.ui.input(
-				"Export output artifact",
-				path.join(ctx.cwd, `${run.agentDisplayName}-output.txt`),
-			);
-			if (!destination?.trim()) return;
+			const destination =
+				providedText ??
+				(ctx.hasUI
+					? await ctx.ui.input(
+							"Export output artifact",
+							path.join(ctx.cwd, `${run.agentDisplayName}-output.txt`),
+						)
+					: undefined);
+			if (!destination?.trim()) {
+				if (!ctx.hasUI) {
+					throw new Error(
+						"export-output requires a destination path in non-interactive mode",
+					);
+				}
+				return;
+			}
 			const target = path.resolve(ctx.cwd, destination.trim());
 			if (
 				ctx.hasUI &&
@@ -359,23 +371,27 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 			}
 			const artifact = await client.exportArtifact(run.runId, ref);
 			await writeFile(target, artifact.content, { flag: "w" });
-			ctx.ui.notify(`Exported ${target}.`, "info");
+			operatorOutput(ctx, `Exported ${target}.`);
 			return;
 		}
 		if (action === "stop") await client.interrupt(run.runId);
 		else if (action === "retry") await client.retry(run.runId);
 		else if (action === "resume") await client.resume(run.runId);
 		else if (action === "reconcile") await client.reconcile(run.runId);
-		else if (action === "release") await client.release(run.runId);
+		else if (action === "release-workspace") await client.release(run.runId);
+		else if (action === "abandon") await client.abandon(run.runId);
 		else if (action === "pin") {
 			const reason =
-				providedText ?? (await ctx.ui.input("Pin run", "Reason (optional)"));
+				providedText ??
+				(ctx.hasUI
+					? await ctx.ui.input("Protect from pruning", "Reason (optional)")
+					: "");
 			if (reason === undefined) return;
 			await client.pin(run.runId, reason.trim() || "operator pin");
 		} else if (action === "unpin") {
 			await client.unpin(run.runId);
 		}
-		ctx.ui.notify(`${action} accepted for ${run.runId}.`, "info");
+		operatorOutput(ctx, `${action} accepted for ${run.runId}.`);
 	}
 
 	async function retention(
@@ -447,7 +463,13 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 				return;
 			}
 			const page = await runtime.listRuns({
-				...(repositoryRoot ? { repositoryRoot } : {}),
+				...(initialState?.allProjects || !repositoryRoot
+					? {}
+					: { repositoryRoot }),
+				...(initialState?.statuses ? { statuses: initialState.statuses } : {}),
+				...(initialState?.search?.trim()
+					? { search: initialState.search.trim() }
+					: {}),
 				limit: 20,
 			});
 			operatorOutput(
@@ -484,26 +506,19 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 			if (intent.type === "filter") {
 				const filter = await ctx.ui.select("Filter subagent runs", [
 					"All",
-					"Needs attention",
-					"Active",
+					"Ongoing",
+					"Needs action",
 					"Interrupted",
 					"Cleanup blocked",
-					"Failed",
-					"Completed",
+					"Terminal history",
 				]);
 				const filters: Record<string, RunSummary["status"][] | undefined> = {
 					All: undefined,
-					"Needs attention": [
-						"active",
-						"stopping",
-						"interrupted",
-						"cleanup-blocked",
-					],
-					Active: ["active", "stopping"],
+					Ongoing: ["queued", "active", "stopping"],
+					"Needs action": ["interrupted", "cleanup-blocked"],
 					Interrupted: ["interrupted"],
 					"Cleanup blocked": ["cleanup-blocked"],
-					Failed: ["failed"],
-					Completed: ["completed"],
+					"Terminal history": ["completed", "failed", "cancelled", "abandoned"],
 				};
 				if (filter) {
 					const statuses = filters[filter];
@@ -603,9 +618,19 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 				operatorOutput(ctx, `${run.runId}: ${result.result.status}`);
 				return;
 			}
-			const action = OPERATOR_ACTIONS[subcommand];
-			if (!action) throw new Error(`Unknown subagents command: ${subcommand}`);
-			if (rest.length > 0 && !["steer", "follow-up", "pin"].includes(action)) {
+			if (!isRunAction(subcommand)) {
+				throw new Error(`Unknown subagents command: ${subcommand}`);
+			}
+			const action: InspectorAction = subcommand;
+			if (!run.availableActions.includes(action)) {
+				throw new Error(
+					`${subcommand} is unavailable while the run is ${run.status}`,
+				);
+			}
+			if (
+				rest.length > 0 &&
+				!["steer", "follow-up", "pin", "export-output"].includes(action)
+			) {
 				throw new Error(`Unexpected arguments for ${subcommand}.`);
 			}
 			await performAction(
@@ -613,7 +638,7 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 				run,
 				ctx,
 				runtime,
-				["steer", "follow-up", "pin"].includes(action)
+				["steer", "follow-up", "pin", "export-output"].includes(action)
 					? rest.join(" ") || undefined
 					: undefined,
 			);

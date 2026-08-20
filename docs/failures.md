@@ -20,6 +20,7 @@ transient.
 | Tool | Guest tool failed; fatal command timeout closed the VM | Manual only after inspecting partial effects |
 | Timeout | Attempt or settlement deadline | New attempt only by policy |
 | Cancellation | Caller stop won before completion | Never |
+| Operator abandonment | Operator permanently gave up an interrupted run after cleanup proof | Never; terminal and prune-eligible |
 | Seat interruption | Seat exited or reloaded during an active attempt | Explicit validated resume |
 | Lease loss | Seat lost fenced ownership of run/session/worktree | Abort local work; reconcile before retry |
 | Sandbox cleanup | VM closure or QEMU identity cannot be proved | Reconcile; cleanup blocked |
@@ -34,7 +35,10 @@ an explicit operator retry. `backoff` additionally enforces
 `never`, `resume`, and `reconcile` cannot enter the retry path. Resume is reserved
 for a validated persisted Pi session whose failure disposition is `resume`.
 Both operations create a fresh Gondolin VM. Neither operation erases prior
-evidence, reuses live guest state, or resets run-wide budgets.
+evidence, reuses live guest state, or resets run-wide budgets. Abandonment is
+not retry or cancellation: it removes recovery authority from an interrupted
+run, records operator-origin `operator-abandoned` evidence, and preserves the
+run graph until ordinary retention selects it.
 
 `runtimeMs` is a cumulative run-wide budget alongside uncached input/output
 tokens, cost, retry count, and resume count. Cache read/write tokens are reported

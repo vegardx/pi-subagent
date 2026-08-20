@@ -16,6 +16,7 @@ const statuses: RunStatus[] = [
 	"completed",
 	"failed",
 	"cancelled",
+	"abandoned",
 	"interrupted",
 	"cleanup-blocked",
 ];
@@ -39,6 +40,11 @@ const events = {
 	blockCleanup: { type: "cleanup-blocked" },
 	retry: { type: "retry" },
 	resume: { type: "resume" },
+	abandon: {
+		type: "abandon",
+		sandboxCleanup: "proved",
+		workspaceCleanup: "not-needed",
+	},
 	cleanupProved: {
 		type: "cleanup-proved",
 		terminalStatus: "completed",
@@ -49,6 +55,12 @@ const events = {
 		type: "cleanup-proved",
 		terminalStatus: "completed",
 		sandboxCleanup: "unknown",
+		workspaceCleanup: "proved",
+	},
+	cleanupProvedAbandoned: {
+		type: "cleanup-proved",
+		terminalStatus: "abandoned",
+		sandboxCleanup: "proved",
 		workspaceCleanup: "proved",
 	},
 } satisfies Record<string, RunTransitionEvent>;
@@ -67,8 +79,10 @@ const expected = new Map<string, RunStatus>([
 	["stopping:blockCleanup", "cleanup-blocked"],
 	["failed:retry", "queued"],
 	["interrupted:resume", "queued"],
+	["interrupted:abandon", "abandoned"],
 	["cleanup-blocked:cleanupProved", "completed"],
 	["cleanup-blocked:cleanupStillBlocked", "cleanup-blocked"],
+	["cleanup-blocked:cleanupProvedAbandoned", "abandoned"],
 ]);
 
 describe("run status reducer", () => {
@@ -87,6 +101,16 @@ describe("run status reducer", () => {
 				}
 			}
 		}
+	});
+
+	it("requires cleanup proof before abandonment", () => {
+		expect(() =>
+			transitionRunStatus("interrupted", {
+				type: "abandon",
+				sandboxCleanup: "unknown",
+				workspaceCleanup: "proved",
+			}),
+		).toThrow(InvalidRunTransitionError);
 	});
 
 	it("rejects unknown event fields", () => {

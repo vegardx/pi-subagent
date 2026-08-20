@@ -1,7 +1,36 @@
 import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
 
-export const CONTRACT_REVISION = 1 as const;
+export const CONTRACT_REVISION = 2 as const;
+
+export class IncompatibleContractRevisionError extends Error {
+	constructor(
+		readonly found: number,
+		readonly expected = CONTRACT_REVISION,
+		label = "persisted state",
+	) {
+		super(
+			`${label} uses contract revision ${found}; expected ${expected}. Discard incompatible persisted state before continuing.`,
+		);
+		this.name = "IncompatibleContractRevisionError";
+	}
+}
+
+export function assertContractRevision(value: unknown, label: string): void {
+	if (
+		typeof value === "object" &&
+		value !== null &&
+		"contractRevision" in value &&
+		typeof value.contractRevision === "number" &&
+		value.contractRevision !== CONTRACT_REVISION
+	) {
+		throw new IncompatibleContractRevisionError(
+			value.contractRevision,
+			undefined,
+			label,
+		);
+	}
+}
 
 export const RunIdSchema = Type.String({
 	pattern: "^run_[a-z0-9]+$",
@@ -24,6 +53,7 @@ export const RunStatusSchema = Type.Union([
 	Type.Literal("completed"),
 	Type.Literal("failed"),
 	Type.Literal("cancelled"),
+	Type.Literal("abandoned"),
 	Type.Literal("interrupted"),
 	Type.Literal("cleanup-blocked"),
 ]);
@@ -80,6 +110,7 @@ export type ArtifactRef = Static<typeof ArtifactRefSchema>;
 export const FailureCodeSchema = Type.Union([
 	Type.Literal("authentication"),
 	Type.Literal("cancellation"),
+	Type.Literal("operator-abandoned"),
 	Type.Literal("lease-loss"),
 	Type.Literal("model-output"),
 	Type.Literal("mount-policy"),
@@ -137,6 +168,7 @@ export const RunResultSchema = Type.Object(
 			Type.Literal("completed"),
 			Type.Literal("failed"),
 			Type.Literal("cancelled"),
+			Type.Literal("abandoned"),
 			Type.Literal("interrupted"),
 			Type.Literal("cleanup-blocked"),
 		]),
@@ -156,7 +188,8 @@ export type RunResult = Static<typeof RunResultSchema>;
 
 function cleanupIsProved(result: RunResult): boolean {
 	return (
-		result.sandboxCleanup === "proved" &&
+		(result.sandboxCleanup === "proved" ||
+			result.sandboxCleanup === "not-needed") &&
 		(result.workspaceCleanup === "proved" ||
 			result.workspaceCleanup === "not-needed")
 	);
@@ -171,6 +204,16 @@ export function isRunResult(value: unknown): value is RunResult {
 	}
 	if (result.failure === undefined) return false;
 	if (result.status === "cleanup-blocked") return !proved;
+	if (result.status === "abandoned") {
+		return (
+			proved &&
+			result.failure.code === "operator-abandoned" &&
+			result.failure.origin === "operator" &&
+			result.failure.retry === "never" &&
+			result.output === undefined &&
+			result.structuredOutput === undefined
+		);
+	}
 	return true;
 }
 

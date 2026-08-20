@@ -52,7 +52,10 @@ blocked until the stable-version decision.
 ## Phase 4 — product surface
 
 - steering and follow-up while the seat is active;
-- bounded widget and inspector;
+- explicit durable abandonment of interrupted runs after cleanup proof;
+- service-owned action eligibility shared by inspector and direct commands;
+- bounded widget and inspector with separate ongoing and needs-action status
+  groups;
 - packed-package smoke tests;
 - real QEMU acceptance on macOS Apple Silicon;
 - first stable API.

@@ -15,6 +15,7 @@ import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
 import {
 	AttemptIdSchema,
+	assertContractRevision,
 	CONTRACT_REVISION,
 	RunIdSchema,
 } from "../contracts.js";
@@ -89,6 +90,7 @@ export class AttemptRecordStore {
 		} catch {
 			throw new PersistenceCorruptionError("invalid attempt record JSON");
 		}
+		assertContractRevision(value, "attempt record");
 		if (!Value.Check(AttemptRecordSchema, value)) {
 			throw new PersistenceCorruptionError("invalid attempt record schema");
 		}

@@ -9,6 +9,7 @@ import {
 import type { RetentionReport } from "../persistence/retention.js";
 import { uncachedTokens } from "../runtime/budget.js";
 import type {
+	RunAction,
 	RunInspection,
 	RunLogPage,
 	RunSummary,
@@ -16,17 +17,7 @@ import type {
 } from "../service.js";
 import { formatBytes } from "./format.js";
 
-export type InspectorAction =
-	| "steer"
-	| "follow-up"
-	| "stop"
-	| "retry"
-	| "resume"
-	| "reconcile"
-	| "release"
-	| "pin"
-	| "unpin"
-	| "export-output";
+export type InspectorAction = RunAction;
 
 export type InspectorState = {
 	allProjects: boolean;
@@ -70,6 +61,7 @@ const STATUS_ICON: Record<RunSummary["status"], string> = {
 	cancelled: "−",
 	interrupted: "!",
 	"cleanup-blocked": "✕",
+	abandoned: "◇",
 };
 
 function formatAge(timestamp: string, now = Date.now()): string {
@@ -103,38 +95,31 @@ export function attentionWidgetLines(runs: RunSummary[]): string[] | undefined {
 		if (!run.requiresAttention) continue;
 		counts.set(run.status, (counts.get(run.status) ?? 0) + 1);
 	}
-	const parts = [
+	const ongoing = [
 		counts.get("active") ? `${counts.get("active")} active` : undefined,
 		counts.get("stopping") ? `${counts.get("stopping")} stopping` : undefined,
+	].filter((part): part is string => part !== undefined);
+	const needsAction = [
 		counts.get("interrupted")
 			? `${counts.get("interrupted")} interrupted`
 			: undefined,
 		counts.get("cleanup-blocked")
-			? `${counts.get("cleanup-blocked")} cleanup-blocked`
+			? `${counts.get("cleanup-blocked")} cleanup blocked`
 			: undefined,
 	].filter((part): part is string => part !== undefined);
-	return parts.length ? [`subagents: ${parts.join(" · ")} · alt+s`] : undefined;
+	const lines = [
+		ongoing.length ? `subagents ongoing: ${ongoing.join(" · ")}` : undefined,
+		needsAction.length
+			? `subagents need action: ${needsAction.join(" · ")}`
+			: undefined,
+	].filter((line): line is string => line !== undefined);
+	if (lines.length === 0) return undefined;
+	lines[lines.length - 1] = `${lines.at(-1)} · alt+s`;
+	return lines;
 }
 
 export function actionsForRun(run: RunSummary): InspectorAction[] {
-	const actions: InspectorAction[] = [];
-	if (run.status === "active") {
-		if (run.controllable) actions.push("steer", "follow-up");
-		actions.push("stop");
-	}
-	if (
-		run.retryable &&
-		(!run.retryAt || Date.parse(run.retryAt) <= Date.now())
-	) {
-		actions.push("retry");
-	}
-	if (run.resumable) actions.push("resume");
-	if (run.status === "cleanup-blocked") actions.push("reconcile");
-	if (run.retainedWorktree && !["active", "stopping"].includes(run.status)) {
-		actions.push("release");
-	}
-	actions.push(run.pinned ? "unpin" : "pin");
-	return actions;
+	return [...run.availableActions];
 }
 
 function labelAction(action: InspectorAction): string {
@@ -145,9 +130,10 @@ function labelAction(action: InspectorAction): string {
 		retry: "Retry in a fresh VM",
 		resume: "Resume in a fresh VM",
 		reconcile: "Reconcile external state",
-		release: "Release retained worktree",
-		pin: "Pin run",
-		unpin: "Unpin run",
+		"release-workspace": "Release retained workspace",
+		abandon: "Abandon interrupted run",
+		pin: "Protect from pruning",
+		unpin: "Allow normal pruning",
 		"export-output": "Export output artifact",
 	}[action];
 }
@@ -589,8 +575,20 @@ export async function showSubagentInspector(options: {
 		if (state.selectedRunId === event.runId) void loadDetail(event.runId);
 	});
 	const clock = setInterval(() => {
-		if (!disposed && runs.some((run) => run.status === "active"))
-			requestRender();
+		if (disposed) return;
+		if (runs.some((run) => run.status === "active")) requestRender();
+		if (
+			runs.some(
+				(run) =>
+					run.retryable &&
+					run.retryAt !== undefined &&
+					Date.parse(run.retryAt) <= Date.now() &&
+					!run.availableActions.includes("retry"),
+			)
+		) {
+			void loadRuns();
+			if (state.selectedRunId) void loadDetail(state.selectedRunId);
+		}
 	}, 1000);
 	clock.unref();
 
@@ -644,7 +642,10 @@ export async function showSubagentInspector(options: {
 								retry:
 									"A new attempt and fresh VM will consume remaining budgets.",
 								resume: "The retained session will continue in a fresh VM.",
-								release: "The verified worktree and branch will be removed.",
+								"release-workspace":
+									"The verified worktree and reservation branch will be removed.",
+								abandon:
+									"Resume and retry will be permanently disabled; verified retained workspace resources will be released.",
 							};
 							return bordered(
 								`Confirm ${pendingAction} · ${inspection.summary.agentDisplayName}`,
@@ -807,7 +808,13 @@ export async function showSubagentInspector(options: {
 										actionInput.setValue("");
 										screen = "input";
 									} else if (
-										["stop", "retry", "resume", "release"].includes(action)
+										[
+											"stop",
+											"retry",
+											"resume",
+											"release-workspace",
+											"abandon",
+										].includes(action)
 									) {
 										screen = "confirm";
 									} else {
@@ -862,9 +869,6 @@ export async function showSubagentInspector(options: {
 								);
 							} else if (matchesKey(data, Key.space) && inspection) {
 								actions = actionsForRun(inspection.summary);
-								if (inspection.result?.result.output) {
-									actions.push("export-output");
-								}
 								actionSelected = 0;
 								screen = "actions";
 							}

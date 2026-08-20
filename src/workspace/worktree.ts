@@ -15,6 +15,7 @@ import { Value } from "typebox/value";
 import {
 	type AttemptId,
 	AttemptIdSchema,
+	assertContractRevision,
 	CONTRACT_REVISION,
 	type RunId,
 	RunIdSchema,
@@ -434,6 +435,7 @@ export async function readWorktreeRecord(
 	filePath: string,
 ): Promise<WorktreeRecord> {
 	const value = JSON.parse(await readFile(filePath, "utf8")) as unknown;
+	assertContractRevision(value, "worktree record");
 	if (!Value.Check(WorktreeRecordSchema, value)) {
 		throw new WorktreeError("invalid worktree record");
 	}

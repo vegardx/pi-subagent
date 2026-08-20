@@ -13,7 +13,12 @@ import {
 import path from "node:path";
 import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
-import { CONTRACT_REVISION, type RunId, RunIdSchema } from "../contracts.js";
+import {
+	assertContractRevision,
+	CONTRACT_REVISION,
+	type RunId,
+	RunIdSchema,
+} from "../contracts.js";
 import { PersistenceCorruptionError } from "./journal.js";
 
 const MAX_RECORD_BYTES = 16 * 1024;
@@ -63,6 +68,7 @@ async function readRecord(filePath: string): Promise<OperationRecord> {
 	} catch {
 		throw new PersistenceCorruptionError("invalid operation record JSON");
 	}
+	assertContractRevision(value, "operation record");
 	if (!Value.Check(OperationRecordSchema, value)) {
 		throw new PersistenceCorruptionError("invalid operation record schema");
 	}

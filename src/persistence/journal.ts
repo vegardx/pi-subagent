@@ -3,7 +3,13 @@ import { chmod, mkdir, open, readFile, rename, stat } from "node:fs/promises";
 import path from "node:path";
 import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
-import { CONTRACT_REVISION, type RunId, RunIdSchema } from "../contracts.js";
+import {
+	assertContractRevision,
+	CONTRACT_REVISION,
+	IncompatibleContractRevisionError,
+	type RunId,
+	RunIdSchema,
+} from "../contracts.js";
 import type { RunLease } from "./run-lease.js";
 
 const MAX_EVENT_BYTES = 64 * 1024;
@@ -105,6 +111,7 @@ function parseJournal(content: string, runId: RunId): JournalEvent[] {
 				`invalid interior journal record at line ${index + 1}`,
 			);
 		}
+		assertContractRevision(value, `journal record at line ${index + 1}`);
 		if (!Value.Check(JournalEventSchema, value)) {
 			throw new PersistenceCorruptionError(
 				`invalid journal schema at line ${index + 1}`,
@@ -277,6 +284,7 @@ export class RunJournal {
 				throw new PersistenceCorruptionError("snapshot exceeds size limit");
 			}
 			const value = JSON.parse(await readFile(this.snapshotPath, "utf8"));
+			assertContractRevision(value, "run snapshot");
 			if (!Value.Check(RunSnapshotSchema, value)) {
 				throw new PersistenceCorruptionError("invalid snapshot schema");
 			}
@@ -292,7 +300,12 @@ export class RunJournal {
 			return snapshot;
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-			if (error instanceof PersistenceCorruptionError) throw error;
+			if (
+				error instanceof PersistenceCorruptionError ||
+				error instanceof IncompatibleContractRevisionError
+			) {
+				throw error;
+			}
 			throw new PersistenceCorruptionError("invalid snapshot JSON");
 		}
 	}

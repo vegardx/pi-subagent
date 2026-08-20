@@ -24,6 +24,7 @@ these definitions rather than redefine them.
 | Follow-up | Input delivered to the active session after its current turn settles. |
 | Cancellation | Caller-requested termination of a run. |
 | Interruption | Loss of active execution, including seat exit, that may retain a resumable Pi session and workspace. |
+| Abandonment | Explicit irreversible operator decision to give up an interrupted run after cleanup is proved; retry and resume authority are removed while durable evidence remains until pruning. |
 | Control receipt | Acknowledgement that an active session accepted, missed, or rejected a control operation. It is not a detached queue. |
 | Agent settled | Pi has no pending retry, compaction retry, tool continuation, steering, or follow-up for the attempt. |
 | Workspace | Filesystem root exposed at `/workspace` inside the VM. |
@@ -39,7 +40,7 @@ these definitions rather than redefine them.
 | Context scope | Explicit `global` or trusted `project` selection of Pi context files, separate from transcript fork mode. |
 | Ambient resource | Resource discovered from normal global or project configuration. |
 | Explicit resource | Resource deliberately granted in an attempt's launch plan. |
-| Retention pin | Owner-scoped durable protection for a run's complete linked persistence graph. |
+| Retention pin | Owner-scoped durable protection for an ordinary terminal run's complete linked persistence graph. It does not pause, resume, stop, or remove a run. |
 | Recoverable trash | Timestamped sibling storage receiving pruned state by rename; ordinary pruning never hard-deletes run data. |
 | Artifact | Durable bounded output associated with a run or attempt. |
 | Handoff | Host-captured commit or artifact preserving worktree changes before cleanup. |
@@ -48,6 +49,6 @@ these definitions rather than redefine them.
 | Seat lease | Cross-process claim allowing one seat instance to mutate a run, session, VM, or worktree. |
 | Fencing generation | Monotonic value attached to state changes so a superseded seat cannot commit stale writes. |
 | Reconcile | Compare persisted state with seat, session, VM, workspace, and handoff reality and classify drift. |
-| Cleanup blocked | Terminal state where required VM or workspace cleanup cannot be proved. |
+| Cleanup blocked | Action-required recovery state where required VM or workspace cleanup cannot be proved. It is not successful or safely discardable evidence. |
 | Terminal state | State from which the runtime will not continue automatically. |
 | Contract revision | Exact public and persisted format identity. Revisions are not backwards-compatible. |
