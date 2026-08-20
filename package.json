@@ -22,6 +22,10 @@
 		"./extension": {
 			"types": "./dist/extension.d.ts",
 			"import": "./dist/extension.js"
+		},
+		"./service-provider": {
+			"types": "./dist/service-provider.d.ts",
+			"import": "./dist/service-provider.js"
 		}
 	},
 	"pi": {

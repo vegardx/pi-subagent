@@ -20,6 +20,8 @@ for (const required of [
 	"dist/extension.js",
 	"dist/index.d.ts",
 	"dist/index.js",
+	"dist/service-provider.d.ts",
+	"dist/service-provider.js",
 	"package.json",
 ]) {
 	if (!paths.has(required)) throw new Error(`packed file missing: ${required}`);

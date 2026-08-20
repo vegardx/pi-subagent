@@ -259,6 +259,30 @@ are never ordinary prune candidates.
 caller can import them into its own retention domain. `release` completes
 retained workspace cleanup through the owning service.
 
+## Service provider
+
+The extension registers one lazy provider on Pi's process-local event bus. A
+trusted peer extension acquires the exact extension-owned service through the
+`@vegardx/pi-subagent/service-provider` export and supplies its current
+`ExtensionContext`:
+
+```ts
+interface SubagentServiceProvider {
+	readonly contract: SubagentRuntimeContract;
+	acquire(context: ExtensionContext): Promise<SubagentService>;
+}
+```
+
+Discovery fails closed when the provider is absent, duplicated, or does not
+match the current runtime contract. Registration itself does not initialize the
+model runtime, Gondolin assets, capacity manager, or service store. The
+subagent extension alone owns provider removal and service shutdown. Consumers
+must not cache the service across Pi session replacement or reload.
+
+The event bus is an in-process composition mechanism among trusted extensions,
+not an authorization boundary. Owner-bound clients still scope service access;
+model input cannot access the provider API directly.
+
 ## Control receipt
 
 ```ts
