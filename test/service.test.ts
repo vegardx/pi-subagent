@@ -8,6 +8,7 @@ import {
 	type ModelRuntime,
 	SessionManager,
 } from "@earendil-works/pi-coding-agent";
+import { WEB_TOOL_DECLARATIONS } from "@vegardx/pi-web";
 import { describe, expect, it } from "vitest";
 import type { RunResult } from "../src/contracts.js";
 import type { SubagentRequest } from "../src/launch-contracts.js";
@@ -17,6 +18,7 @@ import { acquireRunLease } from "../src/persistence/run-lease.js";
 import { RunRecordStore } from "../src/persistence/run-record.js";
 import { digestFileResource } from "../src/preflight/resources.js";
 import { preflightWorkspace } from "../src/preflight/workspace.js";
+import type { HostToolDeclaration } from "../src/runtime/host-tools.js";
 import { createVmCapacityManager } from "../src/sandbox/capacity.js";
 import { createSubagentService, RetryBackoffError } from "../src/service.js";
 
@@ -145,13 +147,36 @@ function result(runId: string, status: RunResult["status"]): RunResult {
 	};
 }
 
+function searchHostTool(): HostToolDeclaration {
+	const declaration = WEB_TOOL_DECLARATIONS.find(
+		(tool) => tool.name === "search",
+	);
+	if (!declaration) throw new Error("pi-web search declaration missing");
+	return {
+		name: declaration.name,
+		label: declaration.label,
+		description: declaration.description,
+		promptGuidelines: declaration.promptGuidelines,
+		parameters: declaration.parameters,
+		authority: declaration.authority,
+		source: "@vegardx/pi-web/service-provider@3#search",
+		identitySha256: declaration.identitySha256,
+		execute: async () => ({
+			content: [{ type: "text", text: "result" }],
+			details: {},
+		}),
+	};
+}
+
 async function serviceFor(
 	name: string,
 	executeAttempt?: Parameters<
 		typeof createSubagentService
 	>[0]["executeAttempt"],
+	hostTools: readonly HostToolDeclaration[] = [],
 ) {
 	const data = await fixture(name);
+	data.agent.tools.push(...hostTools.map((tool) => tool.name));
 	const agentDir = path.join(data.root, "agent");
 	await mkdir(agentDir, { recursive: true });
 	const service = await createSubagentService({
@@ -173,6 +198,7 @@ async function serviceFor(
 			guestDiskBytes: 2 * 1024 * 1024 * 1024,
 		},
 		resolveModel: async (model) => model,
+		hostTools,
 		...(executeAttempt ? { executeAttempt } : {}),
 	});
 	return { ...data, service };
@@ -202,6 +228,49 @@ async function reopenService(data: Awaited<ReturnType<typeof serviceFor>>) {
 }
 
 describe("foreground subagent service", () => {
+	it("binds host-brokered tools into preflight and attempt execution", async () => {
+		const hostTool = searchHostTool();
+		let projected: readonly HostToolDeclaration[] = [];
+		const data = await serviceFor(
+			"host-tool",
+			async (input) => {
+				projected = input.hostTools ?? [];
+				const execution = {
+					result: result(input.plan.runId, "completed"),
+					output: "host tool projected",
+					sessionFile: undefined,
+					handoff: undefined,
+					structuredOutput: undefined,
+					error: undefined,
+				};
+				await input.journal.writeSnapshot(execution);
+				return execution;
+			},
+			[hostTool],
+		);
+		const client = data.service.forOwner({ id: "owner-host-tool" });
+		const preflight = await client.preflight({
+			...data.request,
+			operationId: "operation-host-tool",
+			tools: ["search"],
+		});
+		const grant = preflight.launchPlan.resources.find(
+			(resource) => resource.kind === "tool" && resource.name === "search",
+		);
+		expect(grant).toEqual({
+			kind: "tool",
+			name: "search",
+			source: hostTool.source,
+			sha256: hostTool.identitySha256,
+		});
+		const receipt = await client.launch(
+			preflight.preflightId,
+			preflight.identitySha256,
+		);
+		expect((await client.wait(receipt.runId)).result.status).toBe("completed");
+		expect(projected.map((tool) => tool.name)).toEqual(["search"]);
+	});
+
 	it("preflights, launches idempotently, waits, and scopes owners", async () => {
 		const data = await serviceFor("success", async (input) => {
 			await input.journal.append("fake-attempt", {});

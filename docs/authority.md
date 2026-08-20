@@ -48,11 +48,13 @@ A declaration is the single source for model schema, grant validation, runtime
 implementation, and acceptance coverage. The registry rejects drift at
 construction.
 
-Arbitrary Pi extensions are not child resources in the initial release.
-Loading extension code in the host seat would grant host authority before tool
-allowlisting. A future provider integration must be implemented through an
-explicit adapter or run its code inside the VM; listing an extension path is not
-a sufficient grant.
+Arbitrary Pi extensions are not child resources. Loading extension code in the
+host seat grants host authority before child tool allowlisting, so only the
+exact pi-web provider contract is currently adapted. Its `search` and `fetch`
+declarations are recomputed, deep-frozen, persisted in launch identity, bounded
+again by pi-subagent, and invoked with attempt cancellation plus a host timeout.
+API keys remain inside the trusted pi-web service. Listing an extension path is
+not a sufficient grant.
 
 ## Resource defaults
 

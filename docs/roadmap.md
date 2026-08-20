@@ -53,6 +53,7 @@ blocked until the stable-version decision.
 
 - steering and follow-up while the seat is active;
 - explicit durable abandonment of interrupted runs after cleanup proof;
+- exact host-brokered `search` and `fetch` tools from the shared pi-web service;
 - service-owned action eligibility shared by inspector and direct commands;
 - bounded widget and inspector with separate ongoing and needs-action status
   groups;

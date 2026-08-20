@@ -13,6 +13,8 @@ Provide one reusable implementation for delegated Pi agents:
 - native in-process Pi `AgentSession`s with explicit resource projection;
 - one Gondolin Linux micro-VM per active attempt;
 - VM-backed built-in tools with fail-closed host-write containment;
+- exact host-brokered public-network tools whose credentials remain in the Pi
+  seat;
 - read-only checkout access for readers and private worktrees for writers;
 - host-owned models, credentials, Git handoffs, persistence, and cleanup;
 - cancellation, classified failure, backoff, fresh-VM retry/resume, and reconciliation;

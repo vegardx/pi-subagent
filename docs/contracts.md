@@ -342,6 +342,7 @@ interface SubagentRuntimeContract {
 		publicNetworkEgress: boolean;
 		explicitResources: boolean;
 		ambientExtensionsControl: boolean;
+		hostBrokeredTools: boolean;
 	};
 }
 ```

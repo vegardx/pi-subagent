@@ -37,7 +37,7 @@ const request = {
 
 const plan = {
 	schema: "pi-subagent-launch",
-	contractRevision: 2,
+	contractRevision: 3,
 	operationId: "operation-1",
 	ownerId: "owner-1",
 	runId: "run_launch",
@@ -125,7 +125,7 @@ describe("launch contracts", () => {
 
 	it("rejects incompatible revisions and host cwd projection", () => {
 		expect(
-			Value.Check(AgentLaunchPlanSchema, { ...plan, contractRevision: 3 }),
+			Value.Check(AgentLaunchPlanSchema, { ...plan, contractRevision: 4 }),
 		).toBe(false);
 		expect(Value.Check(AgentLaunchPlanSchema, { ...plan, cwd: "/repo" })).toBe(
 			false,

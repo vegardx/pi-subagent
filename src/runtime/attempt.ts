@@ -52,6 +52,10 @@ import {
 	uncachedTokens,
 } from "./budget.js";
 import { classifyAttemptFailure } from "./failure.js";
+import {
+	executeBoundedHostTool,
+	type HostToolDeclaration,
+} from "./host-tools.js";
 import { createFinalAnswerController } from "./structured-output.js";
 
 const MAX_INLINE_OUTPUT_BYTES = 32 * 1024;
@@ -193,6 +197,7 @@ export async function runNativeAttempt(options: {
 	artifactStore: ArtifactStore;
 	skills: SkillProjection;
 	contextFiles: ContextFileProjection;
+	hostTools?: readonly HostToolDeclaration[];
 	forkContext?: ForkContextProjection;
 	sessionRoot: string;
 	resumeSessionFile?: string;
@@ -228,6 +233,33 @@ export async function runNativeAttempt(options: {
 		options.plan.outputSchema === undefined
 			? undefined
 			: createFinalAnswerController(options.plan.outputSchema);
+	const hostToolNames = new Set<string>();
+	for (const declaration of options.hostTools ?? []) {
+		if (
+			hostToolNames.has(declaration.name) ||
+			!options.plan.tools.includes(declaration.name) ||
+			!options.plan.resources.some(
+				(resource) =>
+					resource.kind === "tool" &&
+					resource.name === declaration.name &&
+					resource.source === declaration.source &&
+					resource.sha256 === declaration.identitySha256,
+			)
+		) {
+			throw new Error(`host tool identity mismatch: ${declaration.name}`);
+		}
+		hostToolNames.add(declaration.name);
+	}
+	for (const name of options.plan.tools) {
+		if (
+			!hostToolNames.has(name) &&
+			!options.plan.resources.some(
+				(resource) => resource.kind === "tool" && resource.name === name,
+			)
+		) {
+			throw new Error(`missing tool resource: ${name}`);
+		}
+	}
 	if (
 		options.agent.name !== options.plan.agent ||
 		options.agent.displayName !== options.plan.agentDisplayName ||
@@ -361,6 +393,30 @@ export async function runNativeAttempt(options: {
 		const customTools = Object.values(sandbox.tools).map(
 			(tool) => tool as unknown as ToolDefinition,
 		);
+		for (const declaration of options.hostTools ?? []) {
+			customTools.push({
+				name: declaration.name,
+				label: declaration.label,
+				description: declaration.description,
+				promptGuidelines: [...declaration.promptGuidelines],
+				parameters: declaration.parameters,
+				async execute(_toolCallId, input, signal) {
+					const hostSignal = signal
+						? AbortSignal.any([runSignal, signal])
+						: runSignal;
+					return executeBoundedHostTool(
+						declaration,
+						{
+							id: options.plan.ownerId,
+							runId: options.plan.runId,
+							attemptId: options.plan.attemptId,
+						},
+						input,
+						hostSignal,
+					);
+				},
+			} as ToolDefinition);
+		}
 		if (finalAnswer) customTools.push(finalAnswer.tool);
 		const activeTools = finalAnswer
 			? [...options.plan.tools, "final_answer"]

@@ -19,10 +19,27 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+        with:
+          path: pi-subagent
+      - uses: actions/checkout@v7
+        with:
+          repository: vegardx/pi-web
+          ref: 31308491c80f9c88f6e4d76b85b772806a9f8a61
+          path: pi-web
       - uses: actions/setup-node@v7
         with:
           node-version: 24.16.0
           cache: npm
+          cache-dependency-path: |
+            pi-subagent/package-lock.json
+            pi-web/package-lock.json
       - run: npm ci
+        working-directory: pi-web
+      - run: npm run build
+        working-directory: pi-web
+      - run: npm ci
+        working-directory: pi-subagent
       - run: npm run check
+        working-directory: pi-subagent
       - run: npm audit --audit-level=low
+        working-directory: pi-subagent

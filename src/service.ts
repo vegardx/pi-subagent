@@ -78,6 +78,7 @@ import {
 	runNativeAttempt,
 } from "./runtime/attempt.js";
 import { remainingUncachedTokens } from "./runtime/budget.js";
+import { type HostToolDeclaration, hostToolMap } from "./runtime/host-tools.js";
 import { createFinalAnswerController } from "./runtime/structured-output.js";
 import type { VmCapacityManager } from "./sandbox/capacity.js";
 import {
@@ -552,6 +553,26 @@ function assertSkillProjection(
 	}
 }
 
+function assertHostToolProjection(
+	plan: AgentLaunchPlan,
+	hostTools: ReadonlyMap<string, HostToolDeclaration>,
+): void {
+	for (const name of plan.tools) {
+		if (IMPLEMENTED_TOOLS.has(name)) continue;
+		const declaration = hostTools.get(name);
+		const grant = plan.resources.find(
+			(resource) => resource.kind === "tool" && resource.name === name,
+		);
+		if (
+			!declaration ||
+			grant?.source !== declaration.source ||
+			grant.sha256 !== declaration.identitySha256
+		) {
+			throw new Error(`host tool changed after preflight: ${name}`);
+		}
+	}
+}
+
 function agentFromPlan(plan: AgentLaunchPlan): DiscoveredAgent {
 	return {
 		name: plan.agent,
@@ -582,6 +603,7 @@ function toolResources(
 	agent: DiscoveredAgent,
 	request: SubagentRequest,
 	implementation: { canonicalPath: string; sha256: string },
+	hostTools: ReadonlyMap<string, HostToolDeclaration>,
 	skills: SkillProjection,
 	contextFiles: ContextFileProjection,
 ) {
@@ -605,18 +627,28 @@ function toolResources(
 		resources.push(contextFile.grant);
 	}
 	for (const tool of request.tools) {
-		if (!IMPLEMENTED_TOOLS.has(tool)) {
+		const hostTool = hostTools.get(tool);
+		if (!IMPLEMENTED_TOOLS.has(tool) && !hostTool) {
 			throw new Error(`tool implementation unavailable: ${tool}`);
 		}
-		resources.push({
-			kind: "tool",
-			name: tool,
-			source: `${implementation.canonicalPath}#${tool}`,
-			sha256: canonicalSha256({
-				implementationSha256: implementation.sha256,
-				tool,
-			}),
-		});
+		resources.push(
+			hostTool
+				? {
+						kind: "tool",
+						name: tool,
+						source: hostTool.source,
+						sha256: hostTool.identitySha256,
+					}
+				: {
+						kind: "tool",
+						name: tool,
+						source: `${implementation.canonicalPath}#${tool}`,
+						sha256: canonicalSha256({
+							implementationSha256: implementation.sha256,
+							tool,
+						}),
+					},
+		);
 	}
 	return resources;
 }
@@ -640,6 +672,8 @@ export async function createSubagentService(options: {
 	resolveModel?: (model: ExactModelRequest) => Promise<ExactModelRequest>;
 	executeAttempt?: AttemptExecutor;
 	processController?: ProcessController;
+	hostTools?: readonly HostToolDeclaration[];
+	resolveHostTools?: () => readonly HostToolDeclaration[];
 }): Promise<SubagentService> {
 	await mkdir(options.root, { recursive: true, mode: 0o700 });
 	const builtToolImplementation = fileURLToPath(
@@ -728,6 +762,8 @@ export async function createSubagentService(options: {
 	const executeAttempt = options.executeAttempt ?? runNativeAttempt;
 	const processController =
 		options.processController ?? createHostProcessController();
+	const currentHostTools = () =>
+		hostToolMap(options.resolveHostTools?.() ?? options.hostTools ?? []);
 	let executionPromise: Promise<SubagentExecutionDependencies> | undefined;
 	const execution = () => {
 		if (!executionPromise) {
@@ -988,6 +1024,8 @@ export async function createSubagentService(options: {
 			if (input.expectedPriorStatus) {
 				await assertDurableStatus(journal, input.expectedPriorStatus);
 			}
+			const attemptHostTools = currentHostTools();
+			assertHostToolProjection(input.plan, attemptHostTools);
 			const artifacts = await ArtifactStore.open({
 				root: path.join(options.root, "runs", input.plan.runId, "artifacts"),
 				maxArtifactBytes: input.rootPlan.limits.outputBytes,
@@ -1049,6 +1087,9 @@ export async function createSubagentService(options: {
 				artifactStore: artifacts,
 				skills: input.skills,
 				contextFiles: input.contextFiles,
+				hostTools: input.plan.tools
+					.map((name) => attemptHostTools.get(name))
+					.filter((tool): tool is HostToolDeclaration => tool !== undefined),
 				...(input.forkContext ? { forkContext: input.forkContext } : {}),
 				sessionRoot: path.join(options.root, "sessions"),
 				...(input.resumeSessionFile
@@ -1657,6 +1698,7 @@ export async function createSubagentService(options: {
 						});
 					}
 					const ids = deterministicIds(owner.id, request);
+					const preflightHostTools = currentHostTools();
 					const executionDependencies = await execution();
 					const launchPlan = await compileLaunchPlan({
 						ownerId: owner.id,
@@ -1668,6 +1710,7 @@ export async function createSubagentService(options: {
 							agent,
 							request,
 							toolImplementation,
+							preflightHostTools,
 							skills,
 							contextFiles,
 						),

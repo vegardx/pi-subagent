@@ -13,6 +13,7 @@ import { Type } from "typebox";
 import type { ExactModelRequest } from "./launch-contracts.js";
 import type { DiscoveredAgent } from "./preflight/agents.js";
 import { canonicalSha256 } from "./preflight/canonical.js";
+import { discoverWebHostTools } from "./runtime/host-tools.js";
 import {
 	isRunAction,
 	RUN_ACTIONS,
@@ -128,6 +129,7 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 			service = await serviceModule.createSubagentService({
 				root: path.join(getAgentDir(), "subagents", "service"),
 				agents,
+				resolveHostTools: () => discoverWebHostTools(pi.events),
 				agentDir: getAgentDir(),
 				isProjectTrusted: (cwd) => cwd === ctx.cwd && ctx.isProjectTrusted(),
 				async loadExecution() {
@@ -736,6 +738,7 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 				parentSessionId: ctx.sessionManager.getSessionId(),
 				...(parentSessionFile ? { parentSessionFile } : {}),
 			});
+			signal?.throwIfAborted();
 			const preflight = await client.preflight({
 				operationId: `tool-${canonicalSha256({
 					parentSessionId: ctx.sessionManager.getSessionId(),
@@ -755,6 +758,7 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 				workspace: { mode: workspaceMode, cwd: ctx.cwd },
 				limits: agent.limitCeiling,
 			});
+			signal?.throwIfAborted();
 			const receipt = await client.launch(
 				preflight.preflightId,
 				preflight.identitySha256,
@@ -774,6 +778,7 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 			});
 			const onAbort = () => void client.interrupt(receipt.runId);
 			signal?.addEventListener("abort", onAbort, { once: true });
+			if (signal?.aborted) await client.interrupt(receipt.runId);
 			try {
 				const execution = await client.wait(receipt.runId);
 				if (execution.result.status !== "completed") {

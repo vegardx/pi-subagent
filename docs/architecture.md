@@ -13,6 +13,8 @@ graph TD
     Session[Native Pi AgentSession]
     Sandbox[Gondolin VM]
     Tools[VM-backed Pi tools]
+    HostTools[Bounded host-brokered tools]
+    Web[Extension-owned pi-web service]
     Workspace[Read-only checkout or private worktree]
     Network[Public egress policy]
 
@@ -21,6 +23,8 @@ graph TD
     Service --> Session
     Service --> Sandbox
     Session --> Tools
+    Session --> HostTools
+    HostTools --> Web
     Tools --> Sandbox
     Sandbox --> Workspace
     Sandbox --> Network
@@ -58,13 +62,16 @@ attributable to one attempt.
 4. **Lifecycle runtime** owns runs, attempts, cancellation, retry, and resume.
 5. **Session runtime** creates native `AgentSession`s with explicit resources.
 6. **Sandbox adapter** owns Gondolin VM creation, policy, and terminal proof.
-7. **Tool adapter** routes every granted model-facing operation into the VM.
+7. **Tool adapter** routes built-in filesystem/process operations into the VM
+   and exact declared public-network operations through bounded host brokers.
 8. **Workspace manager** owns read-only mounts, worktrees, handoff, and cleanup.
 9. **Store** owns bounded records, sessions, artifacts, and recovery evidence
    outside mounted workspaces.
 
-No model-facing tool may bypass the service or use host-backed filesystem,
-process, or network operations.
+No model-facing tool may bypass the service. Host-backed filesystem and process
+operations are forbidden; host-brokered public-network operations require an
+exact provider contract, declaration identity, bounded result, and launch-plan
+grant.
 
 Operator inspection uses the same service. Metadata listing, retained-run
 recovery, lifecycle logs, pins, and retention initialize without model,
@@ -116,9 +123,13 @@ abort or tool timeout is fatal to the attempt VM because aborting `vm.exec()`
 alone cannot prove guest-process termination; QEMU closes before the error is
 returned and the VM cannot be reused.
 
-A future external tool is admissible only when its implementation runs inside
-the VM or a project-owned host adapter enforces equivalent bounded authority.
-Merely hiding a host extension tool from the prompt is not isolation.
+The initial external tools are `search` and `fetch` from the exact
+extension-owned `pi-web` service. The provider publishes schema, description,
+authority, implementation identity, and execution together. Preflight persists
+that identity and refuses unavailable, duplicate, or incompatible providers.
+API keys and provider clients remain in the seat; only bounded results enter the
+child session. Merely hiding a host extension tool from the prompt is not
+isolation.
 
 ## Workspace model
 
