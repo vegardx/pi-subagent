@@ -58,7 +58,13 @@ The npm package ships compiled ESM and declarations:
 ```ts
 import { createSubagentService } from "@vegardx/pi-subagent";
 import piSubagentExtension from "@vegardx/pi-subagent/extension";
+import { acquireSubagentService } from "@vegardx/pi-subagent/service-provider";
 ```
+
+The extension registers its lazy service provider on Pi's process-local event
+bus. Trusted peer extensions can acquire that exact service instance through
+the provider export. With no consumer loaded, registration does not initialize
+Gondolin or alter standalone subagent behavior.
 
 Pi loads the declared extension from `dist/extension.js`. The supported release
 line requires Pi `>=0.84.2 <0.85`, Node.js 23.6 or newer, and macOS Apple Silicon
@@ -82,10 +88,10 @@ with the qualified Gondolin/QEMU stack.
 
 ## Relationship to pi-workflow
 
-[`pi-workflow`](https://github.com/vegardx/pi-workflow) will consume the typed
-`SubagentService` only after pi-subagent is finished and release-qualified.
-Workflow implementation and integration are intentionally deferred until then;
-workflow must never create a private second subagent runtime.
+[`pi-workflow`](https://github.com/vegardx/pi-workflow) consumes the registered
+`SubagentService` through the typed service-provider export. It checks the exact
+runtime contract before starting work and never creates, replaces, or shuts down
+the physical execution service.
 
 ## License
 

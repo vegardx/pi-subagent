@@ -33,13 +33,19 @@ describe("package contract", () => {
 			types: "./dist/extension.d.ts",
 			import: "./dist/extension.js",
 		});
+		expect(packageJson.exports?.["./service-provider"]).toEqual({
+			types: "./dist/service-provider.d.ts",
+			import: "./dist/service-provider.js",
+		});
 		expect(packageJson.pi?.extensions).toEqual(["./dist/extension.js"]);
 	});
 
 	it("loads the extension and public module", async () => {
 		const extension = await import("../src/extension.js");
 		const publicApi = await import("../src/index.js");
+		const serviceProvider = await import("../src/service-provider.js");
 		expect(extension.default).toBeTypeOf("function");
 		expect(publicApi.createVmCapacityManager).toBeTypeOf("function");
+		expect(serviceProvider.acquireSubagentService).toBeTypeOf("function");
 	}, 15_000);
 });

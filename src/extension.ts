@@ -14,6 +14,7 @@ import type { ExactModelRequest } from "./launch-contracts.js";
 import type { DiscoveredAgent } from "./preflight/agents.js";
 import { canonicalSha256 } from "./preflight/canonical.js";
 import type { RunSummary, SubagentService } from "./service.js";
+import { registerSubagentServiceProvider } from "./service-provider.js";
 import { formatBytes } from "./ui/format.js";
 import {
 	attentionWidgetLines,
@@ -196,6 +197,11 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 		return servicePromise;
 	}
 
+	const unregisterServiceProvider = registerSubagentServiceProvider(
+		pi.events,
+		ensureService,
+	);
+
 	pi.on("session_start", async (_event, ctx) => {
 		if (ctx.mode !== "tui") return;
 		try {
@@ -219,6 +225,7 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_shutdown", async (_event, ctx) => {
+		unregisterServiceProvider();
 		widgetUnsubscribe?.();
 		widgetUnsubscribe = undefined;
 		ctx.ui.setWidget("pi-subagent", undefined);

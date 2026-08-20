@@ -258,6 +258,12 @@ Using bounded disposable fixtures:
   tested and documented;
 - CI on an unsupported host is described only as build portability evidence,
   never runtime or release support;
+- the extension registers one lazy service provider without initializing the
+  runtime, and standalone use requires no consumer package;
+- provider discovery returns the exact extension-owned service and fails for
+  missing, duplicate, or incompatible providers;
+- provider registration is removed on session shutdown and consumers do not
+  own service shutdown;
 - `pi-workflow` uses the public service without creating another runtime;
 - incompatible consumer contract revisions fail startup instead of receiving a
   compatibility shim.
