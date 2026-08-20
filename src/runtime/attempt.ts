@@ -41,8 +41,7 @@ import {
 } from "../sandbox/gondolin.js";
 import { GUEST_WORKSPACE } from "../sandbox/tools.js";
 import {
-	captureWorktreeHandoff,
-	removeCleanWorktree,
+	finalizeWorktreeHandoff,
 	type WorktreeRecord,
 } from "../workspace/worktree.js";
 import {
@@ -586,12 +585,11 @@ export async function runNativeAttempt(options: {
 		if (options.plan.workspace.mode === "worktree") {
 			if (!options.worktree)
 				throw new Error("writing attempt has no worktree record");
-			handoff = await captureWorktreeHandoff(
+			handoff = await finalizeWorktreeHandoff(
 				options.worktree,
 				`feat(subagent): handoff ${options.plan.attemptId}`,
 				options.lease,
 			);
-			await removeCleanWorktree(handoff, options.lease);
 			workspaceCleanup = "proved";
 		}
 		const result = terminalResult({

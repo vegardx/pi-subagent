@@ -10,6 +10,7 @@ import { preflightWorkspace } from "../src/preflight/workspace.js";
 import {
 	captureWorktreeHandoff,
 	createAttemptWorktree,
+	finalizeWorktreeHandoff,
 	observeWorktree,
 	readWorktreeRecord,
 	releaseWorktreeBranch,
@@ -140,7 +141,9 @@ describe("worktree lifecycle", () => {
 			workspace,
 			lease,
 		});
-		await removeCleanWorktree(record, lease);
+		expect(
+			await finalizeWorktreeHandoff(record, "test: no-op handoff", lease),
+		).toBeUndefined();
 		const released = await releaseWorktreeBranch(record, lease);
 		expect(released.releasedAt).toBeDefined();
 		await expect(

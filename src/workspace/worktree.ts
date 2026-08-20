@@ -64,6 +64,13 @@ export type WorktreeObservation = {
 	reason?: string;
 };
 
+export class WorktreeNoChangesError extends Error {
+	constructor() {
+		super("worktree has no changes to hand off");
+		this.name = "WorktreeNoChangesError";
+	}
+}
+
 export class WorktreeError extends Error {
 	constructor(message: string, options?: ErrorOptions) {
 		super(message, options);
@@ -255,7 +262,7 @@ export async function captureWorktreeHandoff(
 	const staged = await git(record.worktreePath, ["diff", "--cached", "--quiet"])
 		.then(() => false)
 		.catch(() => true);
-	if (!staged) throw new WorktreeError("worktree has no changes to hand off");
+	if (!staged) throw new WorktreeNoChangesError();
 	await git(record.worktreePath, ["commit", "-m", message]);
 	const handoffCommit = (
 		await git(record.worktreePath, ["rev-parse", "--verify", "HEAD"])
@@ -266,6 +273,21 @@ export async function captureWorktreeHandoff(
 	await lease.assertCurrent();
 	await writeRecord(record.recordPath, updated);
 	return updated;
+}
+
+export async function finalizeWorktreeHandoff(
+	record: WorktreeRecord,
+	message: string,
+	lease: RunLease,
+): Promise<WorktreeRecord | undefined> {
+	let handoff: WorktreeRecord | undefined;
+	try {
+		handoff = await captureWorktreeHandoff(record, message, lease);
+	} catch (error) {
+		if (!(error instanceof WorktreeNoChangesError)) throw error;
+	}
+	await removeCleanWorktree(handoff ?? record, lease);
+	return handoff;
 }
 
 export async function removeCleanWorktree(
