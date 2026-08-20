@@ -23,8 +23,9 @@ are persisted. Immutable run
 records persist owner and launch identity before execution. Attempt publication
 requires the current run lease and a process-wide root/run queue, so competing
 next-attempt IDs cannot publish the same ordinal and parent. Startup scans them,
-restores proved terminal snapshots and artifact access, skips runs held by a
-live seat, and classifies unproved stale execution as cleanup-blocked. Artifact
+restores proved terminal snapshots and artifact access, including durable
+`run-abandoned` evidence, skips runs held by a live seat, and classifies
+unproved stale execution as cleanup-blocked. Artifact
 blobs are content-addressed, privately stored, bounded per artifact and store,
 deduplicated, and rehashed on export. Retention now uses explicit owner pins, a
 cross-process lease, per-run fencing, dry-run reports, age and byte-budget
@@ -137,6 +138,21 @@ Before launch it validates:
 A changed policy requires new preflight authority. Cleanup-blocked runs are not
 automatically resumable.
 
+## Abandonment
+
+Abandonment is an owner-bound, fenced, irreversible transition from interrupted
+to abandoned. It requires proved sandbox cleanup and safely releases every
+verified retained worktree before committing. Unknown process identity, dirty
+or identity-mismatched worktrees, and cleanup-blocked state fail closed. If the
+abandonment transaction stops after its durable intent, the run becomes
+cleanup-blocked: release-workspace may prove only workspace cleanup, while a
+subsequent reconcile is the sole action that completes abandonment. The
+journal records `run-abandoned` with the complete terminal result before the
+snapshot is replaced, so restart cannot recover stale resume authority after a
+snapshot failure. The terminal result removes session, handoff, output, and
+structured-output authority, records `operator-abandoned` with retry `never`,
+and becomes eligible for ordinary retention.
+
 ## Reconciliation
 
 Reconciliation compares records with:
@@ -165,8 +181,10 @@ stages every change, creates an immutable commit, and persists that commit befor
 cleanup. Cleanup refuses dirty worktrees or any path, branch, or HEAD mismatch.
 
 Cancellation or interruption preserves uncaptured writes unless cleanup policy
-can prove there are none. Explicit `release` removes a retained worktree only
-after durable handoff or explicit discard confirmation.
+can prove there are none. The operator surface calls `release` “release
+workspace” because it removes only a verified retained worktree and reservation
+branch. Abandonment may perform the same verified release transaction; it never
+forces removal of dirty or identity-mismatched work.
 
 ## Retention
 
@@ -181,7 +199,8 @@ ordinary terminal age:             30 days
 ordinary retained-data budget:     2 GiB
 ```
 
-`completed`, `failed`, and `cancelled` runs are ordinary terminal runs. Runs
+`completed`, `failed`, `cancelled`, and `abandoned` runs are ordinary terminal
+runs. Runs
 older than 30 days are selected first. If younger ordinary runs still exceed the
 2 GiB budget, the oldest are selected until the budget is met. Protected bytes
 are reported separately and never evicted to make the ordinary budget appear
@@ -200,10 +219,12 @@ default. Applied pruning writes and fsyncs a manifest, then renames linked state
 into a timestamped sibling trash directory. It never hard-deletes run data.
 Pin removal is also recoverable through trash.
 
-Operators use `/subagent-prune` for a report and `/subagent-prune --apply` after
-confirmation. The run record moves last as the graph commit marker and a durable
+Operators use `/subagents prune` for a report and `/subagents prune --apply`
+after confirmation. The run record moves last as the graph commit marker and a durable
 completion receipt distinguishes finished trash moves from recoverable partial
 intents. Applied pruning scans incomplete manifests first, reacquires the run
 lease, resumes each remaining rename with lease and commit paths ordered last,
-and writes the completion receipt before considering new candidates. `/subagent-pin <run-id> [reason]` and `/subagent-unpin <run-id>`
-manage pins owned by the current Pi session.
+and writes the completion receipt before considering new candidates. `/subagents
+pin <run-id> [reason]` and `/subagents unpin <run-id>` manage pins owned by the
+current Pi session. Pinning is shown only for ordinary terminal history; active
+and recovery states are already retention-protected.

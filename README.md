@@ -31,8 +31,10 @@ stages or define delivery policy.
 
 Use `/subagents` for the current-project run inspector. It provides bounded
 Overview, Activity, Result, and Technical tabs, live status updates, state-valid
-actions, search/filtering, current/all-project scope, retention preview, and an
-attention-only widget. During an active parent turn, `Alt+S` opens the inspector
+actions projected by the service, search/filtering, current/all-project scope,
+retention preview, and separate ongoing/needs-action widget lines. Interrupted
+runs can be explicitly abandoned after cleanup proof; cleanup-blocked runs must
+reconcile first. During an active parent turn, `Alt+S` opens the inspector
 without submitting editor input; steer/follow-up appear only after the child
 session reports control readiness. Direct commands use the same service
 authority:
@@ -42,7 +44,9 @@ authority:
 /subagents show|status <run-prefix>
 /subagents logs|wait <run-prefix>
 /subagents steer|follow-up|stop <run-prefix>
-/subagents retry|resume|reconcile|release <run-prefix>
+/subagents retry|resume|reconcile|abandon <run-prefix>
+/subagents release-workspace <run-prefix>
+/subagents export-output <run-prefix> <destination>
 /subagents pin|unpin <run-prefix>
 /subagents prune [--apply]
 ```

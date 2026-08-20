@@ -516,7 +516,11 @@ ordinary-data budget, dry-run reporting, and recoverable trash are integrated.
 Owner-bound release now reacquires fencing,
 removes every recorded clean worktree without force, deletes only branches that
 still resolve to their baseline/handoff commit, updates cleanup state, and is
-idempotent. Dirty or identity-mismatched work is retained.
+idempotent. Dirty or identity-mismatched work is retained. Owner-bound
+abandonment permanently terminalizes an interrupted run only after sandbox
+cleanup proof and verified workspace release, records durable
+`operator-abandoned` evidence, removes recovery authority, and becomes ordinary
+prune-eligible history.
 
 ### Build
 
@@ -529,7 +533,8 @@ idempotent. Dirty or identity-mismatched work is retained.
 - persisted Pi session resume into a fresh VM only after prior VM termination;
 - reconciliation of stale session, VM, worktree, handoff, and terminal records;
 - bounded artifact export and exact usage completeness;
-- explicit release of retained workspaces.
+- explicit release of retained workspaces;
+- explicit fenced abandonment of interrupted runs after cleanup proof.
 
 ### Tests
 
@@ -562,8 +567,10 @@ shuts down active runs on session replacement or reload. Resolved dynamic agent
 metadata is persisted so retry/resume survives reload without an in-memory agent
 catalog. A unified `/subagents` surface now provides bounded current-project/all
 run discovery, direct subcommands, a full-screen inspector with four detail
-tabs and action palette, retention report, lifecycle event updates, an
-attention-only widget, and progressive tool-row status. Real PTY qualification
+tabs and action palette, retention report, lifecycle event updates, separate
+ongoing/needs-action widget lines, and progressive tool-row status. The service
+owns the typed action projection used by both direct commands and the inspector,
+so lifecycle action names cannot drift between surfaces. Real PTY qualification
 added a portable `Alt+S` active-run entry point, keeps streaming-time input and
 confirmation inside the inspector, gates controls on native-session readiness,
 gates retry/resume on durable eligibility, distinguishes seat interruption from
@@ -574,7 +581,7 @@ named-agent selection remains outstanding.
 
 - model-facing `subagent` tool derived from service schemas;
 - commands for status, logs, wait, steer, follow-up, stop, retry, resume,
-  reconcile, and release;
+  reconcile, abandon, and release-workspace;
 - compact persistent widget and bounded inspector;
 - owner-scoped controls and confirmations;
 - session replacement and reload interruption/rehydration;

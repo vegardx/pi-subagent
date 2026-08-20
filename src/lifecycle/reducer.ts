@@ -44,11 +44,20 @@ export const RunTransitionEventSchema = Type.Union([
 	),
 	Type.Object(
 		{
+			type: Type.Literal("abandon"),
+			sandboxCleanup: CleanupOutcomeSchema,
+			workspaceCleanup: CleanupOutcomeSchema,
+		},
+		{ additionalProperties: false },
+	),
+	Type.Object(
+		{
 			type: Type.Literal("cleanup-proved"),
 			terminalStatus: Type.Union([
 				Type.Literal("completed"),
 				Type.Literal("failed"),
 				Type.Literal("cancelled"),
+				Type.Literal("abandoned"),
 				Type.Literal("interrupted"),
 			]),
 			sandboxCleanup: CleanupOutcomeSchema,
@@ -76,7 +85,7 @@ function cleanupProved(
 	workspace: CleanupOutcome,
 ): boolean {
 	return (
-		sandbox === "proved" &&
+		(sandbox === "proved" || sandbox === "not-needed") &&
 		(workspace === "proved" || workspace === "not-needed")
 	);
 }
@@ -116,7 +125,13 @@ export function transitionRunStatus(
 		case "failed":
 			return event.type === "retry" ? "queued" : invalid(current, event);
 		case "interrupted":
-			return event.type === "resume" ? "queued" : invalid(current, event);
+			if (event.type === "resume") return "queued";
+			if (event.type === "abandon") {
+				return cleanupProved(event.sandboxCleanup, event.workspaceCleanup)
+					? "abandoned"
+					: invalid(current, event);
+			}
+			return invalid(current, event);
 		case "cleanup-blocked":
 			if (event.type !== "cleanup-proved") return invalid(current, event);
 			return cleanupProved(event.sandboxCleanup, event.workspaceCleanup)
@@ -124,6 +139,7 @@ export function transitionRunStatus(
 				: "cleanup-blocked";
 		case "completed":
 		case "cancelled":
+		case "abandoned":
 			return invalid(current, event);
 	}
 }

@@ -233,6 +233,7 @@ interface SubagentClient {
 		context: MutationContext,
 		runId: RunId,
 	): Promise<CleanupReceipt>;
+	abandon(context: MutationContext, runId: RunId): Promise<RunReceipt>;
 	pin(runId: RunId, reason: string): Promise<RetentionPin>;
 	unpin(runId: RunId): Promise<boolean>;
 }
@@ -256,8 +257,27 @@ graph. Active, interrupted, cleanup-blocked, pinned, and unreleased-worktree run
 are never ordinary prune candidates.
 
 `exportArtifact` returns bounded verified bytes plus media type and digest so a
-caller can import them into its own retention domain. `release` completes
-retained workspace cleanup through the owning service.
+caller can import them into its own retention domain. `release` completes only
+retained workspace cleanup through the owning service. `abandon` permanently
+terminalizes an interrupted run after sandbox cleanup is proved and any retained
+workspace can be released safely. Cleanup-blocked runs must reconcile first.
+
+The service owns one typed action projection consumed unchanged by the inspector
+and direct commands:
+
+| Run condition | Operator actions |
+| --- | --- |
+| active, controllable | steer, follow-up, stop |
+| active, not controllable | stop |
+| retry-eligible failed | retry plus terminal retention actions |
+| interrupted | resume when eligible; abandon when sandbox and retained-workspace cleanup can be proved |
+| cleanup-blocked | reconcile, plus release-workspace when the retained workspace is already proved releasable |
+| completed/failed/cancelled/abandoned | pin or unpin; export-output when present |
+
+Pin and unpin affect retention only. Operator surfaces do not offer them for
+active, interrupted, or cleanup-blocked runs because those states are already
+protected; trusted owner clients may still create a pin without changing
+lifecycle state.
 
 ## Service provider
 
@@ -341,6 +361,7 @@ type RunStatus =
 	| "completed"
 	| "failed"
 	| "cancelled"
+	| "abandoned"
 	| "interrupted"
 	| "cleanup-blocked";
 
@@ -365,8 +386,10 @@ A run aggregates attempts. Retry and resume terminate the prior attempt and
 create a new one. Any post-side-effect path enters settlement before the run can
 be terminal.
 
-Completed results have no failure. Every failed, cancelled, interrupted, or
-cleanup-blocked result has exactly one bounded `ClassifiedFailure`:
+Completed results have no failure. Every failed, cancelled, abandoned,
+interrupted, or cleanup-blocked result has exactly one bounded
+`ClassifiedFailure`. Abandonment uses `operator-abandoned`, operator origin, and
+retry `never`:
 
 ```ts
 interface ClassifiedFailure {
@@ -413,6 +436,7 @@ stateDiagram-v2
     cleanupBlocked: cleanup-blocked
     failed --> queued: retry
     interrupted --> queued: resume
+    interrupted --> abandoned: abandon
 ```
 
 ## Result
@@ -424,6 +448,7 @@ interface RunResult {
 		| "completed"
 		| "failed"
 		| "cancelled"
+		| "abandoned"
 		| "interrupted"
 		| "cleanup-blocked";
 	output?: ArtifactRef;

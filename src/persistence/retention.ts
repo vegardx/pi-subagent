@@ -19,6 +19,7 @@ import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
 import {
 	AttemptIdSchema,
+	assertContractRevision,
 	CONTRACT_REVISION,
 	type RunId,
 	RunIdSchema,
@@ -40,6 +41,7 @@ const ORDINARY_TERMINAL = new Set<RunStatus>([
 	"completed",
 	"failed",
 	"cancelled",
+	"abandoned",
 ]);
 
 export const RetentionPinSchema = Type.Object(
@@ -186,6 +188,7 @@ async function readPin(filePath: string): Promise<RetentionPin> {
 		throw new Error("invalid retention pin file");
 	}
 	const value = JSON.parse(await readFile(filePath, "utf8")) as unknown;
+	assertContractRevision(value, "retention pin");
 	if (!Value.Check(RetentionPinSchema, value)) {
 		throw new Error("invalid retention pin schema");
 	}
@@ -242,6 +245,7 @@ async function operationPathsByRun(
 			throw new Error("invalid operation record during retention");
 		}
 		const value = JSON.parse(await readFile(filePath, "utf8")) as unknown;
+		assertContractRevision(value, "retention operation record");
 		if (!Value.Check(OperationRecordSchema, value)) {
 			throw new Error("invalid operation record during retention");
 		}
@@ -337,9 +341,9 @@ async function recoverTrashIntents(
 		} catch {
 			throw new Error("invalid retention trash manifest JSON");
 		}
+		assertContractRevision(manifest, "retention trash manifest");
 		if (
 			manifest.schema !== "pi-subagent-retention-trash" ||
-			manifest.contractRevision !== CONTRACT_REVISION ||
 			!Value.Check(RunIdSchema, manifest.runId) ||
 			!Array.isArray(manifest.paths) ||
 			manifest.paths.length > 128 ||
@@ -490,7 +494,7 @@ export async function createRetentionManager(options: {
 		}
 	};
 
-	const listPins = async (runId?: RunId): Promise<RetentionPin[]> => {
+	const listPinsUnlocked = async (runId?: RunId): Promise<RetentionPin[]> => {
 		const pins: RetentionPin[] = [];
 		for (const entry of (await readdir(pinsRoot)).sort()) {
 			if (!entry.endsWith(".json")) continue;
@@ -503,6 +507,9 @@ export async function createRetentionManager(options: {
 	return {
 		root,
 		trashRoot,
+		listPins(runId) {
+			return withLease(() => listPinsUnlocked(runId));
+		},
 		async pin(ownerId, runId, reason) {
 			if (!ownerId.trim() || Buffer.byteLength(ownerId) > 256) {
 				throw new Error("invalid retention pin owner");
@@ -577,7 +584,6 @@ export async function createRetentionManager(options: {
 				return true;
 			});
 		},
-		listPins,
 		async prune(pruneOptions) {
 			const maxAgeMs = pruneOptions.maxAgeMs ?? DEFAULT_MAX_AGE_MS;
 			const maxBytes = pruneOptions.maxBytes ?? DEFAULT_MAX_BYTES;
@@ -629,7 +635,7 @@ export async function createRetentionManager(options: {
 					throw new Error("invalid retention clock");
 				}
 				const startedAt = new Date().toISOString();
-				const pins = await listPins();
+				const pins = await listPinsUnlocked();
 				const pinnedRuns = new Set(pins.map((pin) => pin.runId));
 				const operations = await operationPathsByRun(root);
 				const assessed: Array<{

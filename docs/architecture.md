@@ -164,14 +164,18 @@ stateDiagram-v2
     settling --> failed
     settling --> cleanupBlocked: cleanup unproved
     interrupted --> preparing: explicit resume
+    interrupted --> abandoned: explicit abandon
     failed --> preparing: eligible retry
     cleanupBlocked: cleanup-blocked
+    abandoned: abandoned
 ```
 
 Explicit operator cancellation aborts model activity, terminates guest work,
 closes the VM, and records a cancelled disposition. Graceful seat shutdown uses
 a distinct abort reason and records interrupted when cleanup is proved, preserving
-session/workspace eligibility for a fresh-VM resume. Completion requires a terminal `AgentSession`,
+session/workspace eligibility for a fresh-VM resume. Explicit abandonment
+permanently removes that recovery authority only after cleanup is proved and any
+retained workspace can be released safely. Completion requires a terminal `AgentSession`,
 a closed VM, and proved workspace cleanup. Intentionally retained work remains
 `cleanup-blocked` until explicit release. Cross-seat lease generations fence
 stale lifecycle and cleanup writes. Reconciliation never adopts a stale VM. It
@@ -184,8 +188,8 @@ absence alone.
 
 Retention treats each run as a graph spanning records, attempts, sessions,
 artifacts, operation mappings, leases, and worktree metadata. Owner pins and
-unreleased worktrees protect the graph. Ordinary terminal graphs are selected by
-30-day age and a 2 GiB budget, fenced against live runs, and renamed into
+unreleased worktrees protect the graph. Completed, failed, cancelled, and
+abandoned graphs are ordinary terminal history selected by 30-day age and a 2 GiB budget, fenced against live runs, and renamed into
 recoverable trash with a durable manifest.
 
 ## Platform use

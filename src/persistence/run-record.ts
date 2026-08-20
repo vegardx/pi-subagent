@@ -13,7 +13,11 @@ import {
 import path from "node:path";
 import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
-import { CONTRACT_REVISION, RunIdSchema } from "../contracts.js";
+import {
+	assertContractRevision,
+	CONTRACT_REVISION,
+	RunIdSchema,
+} from "../contracts.js";
 import {
 	type AgentLaunchPlan,
 	AgentLaunchPlanSchema,
@@ -143,6 +147,7 @@ export class RunRecordStore {
 		} catch {
 			throw new PersistenceCorruptionError("invalid run record JSON");
 		}
+		assertContractRevision(value, "run record");
 		if (!Value.Check(RunRecordSchema, value)) {
 			throw new PersistenceCorruptionError("invalid run record schema");
 		}

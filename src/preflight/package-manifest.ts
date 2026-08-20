@@ -2,7 +2,7 @@ import { lstat, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
-import { CONTRACT_REVISION } from "../contracts.js";
+import { assertContractRevision, CONTRACT_REVISION } from "../contracts.js";
 import type { AgentSource } from "./agents.js";
 import { digestFileResource, type ResourceDigest } from "./resources.js";
 
@@ -61,6 +61,7 @@ export async function discoverPackageAgentSources(
 			cause: error,
 		});
 	}
+	assertContractRevision(value, "package agent manifest");
 	if (!Value.Check(PackageAgentManifestSchema, value)) {
 		throw new PackageAgentManifestError(
 			"invalid package agent manifest schema",

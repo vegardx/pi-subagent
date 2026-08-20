@@ -25,6 +25,7 @@ import type {
 	ResourceGrant,
 	SubagentRequest,
 } from "./launch-contracts.js";
+import { transitionRunStatus } from "./lifecycle/reducer.js";
 import { AttemptRecordStore } from "./persistence/attempt-record.js";
 import { type JournalEvent, RunJournal } from "./persistence/journal.js";
 import { OperationIndex } from "./persistence/operation-index.js";
@@ -112,6 +113,68 @@ export type RunView = RunReceipt & {
 	result?: AttemptExecutionResult;
 };
 
+export const RUN_ACTIONS = [
+	"steer",
+	"follow-up",
+	"stop",
+	"retry",
+	"resume",
+	"reconcile",
+	"release-workspace",
+	"abandon",
+	"pin",
+	"unpin",
+	"export-output",
+] as const;
+export type RunAction = (typeof RUN_ACTIONS)[number];
+
+export function isRunAction(value: string): value is RunAction {
+	return (RUN_ACTIONS as readonly string[]).includes(value);
+}
+
+export type RunActionFacts = {
+	status: RunStatus;
+	pinned: boolean;
+	controllable: boolean;
+	retryable: boolean;
+	retryAvailable: boolean;
+	resumable: boolean;
+	abandonable: boolean;
+	retainedWorktree: boolean;
+	workspaceReleasable: boolean;
+	hasOutput: boolean;
+};
+
+export function availableRunActions(
+	facts: RunActionFacts,
+): readonly RunAction[] {
+	const actions: RunAction[] = [];
+	if (facts.status === "active") {
+		if (facts.controllable) actions.push("steer", "follow-up");
+		actions.push("stop");
+	}
+	if (facts.retryable && facts.retryAvailable) actions.push("retry");
+	if (facts.resumable) actions.push("resume");
+	if (facts.status === "interrupted" && facts.abandonable) {
+		actions.push("abandon");
+	}
+	if (facts.status === "cleanup-blocked") actions.push("reconcile");
+	if (
+		facts.retainedWorktree &&
+		facts.workspaceReleasable &&
+		!["active", "stopping", "interrupted"].includes(facts.status)
+	) {
+		actions.push("release-workspace");
+	}
+	if (
+		["completed", "failed", "cancelled", "abandoned"].includes(facts.status)
+	) {
+		actions.push(facts.pinned ? "unpin" : "pin");
+	}
+	if (facts.hasOutput) actions.push("export-output");
+	return Object.freeze(actions);
+}
+
 export type RunSummary = {
 	runId: RunId;
 	attemptId: AttemptId;
@@ -132,6 +195,7 @@ export type RunSummary = {
 	resumable: boolean;
 	retainedWorktree: boolean;
 	requiresAttention: boolean;
+	availableActions: readonly RunAction[];
 };
 
 export type RunQuery = {
@@ -211,6 +275,7 @@ export type SubagentClient = {
 	resume(runId: RunId): Promise<RunReceipt>;
 	reconcile(runId: RunId): Promise<ReconcileResult>;
 	release(runId: RunId): Promise<RunReceipt>;
+	abandon(runId: RunId): Promise<RunReceipt>;
 	pin(runId: RunId, reason: string): Promise<RetentionPin>;
 	unpin(runId: RunId): Promise<boolean>;
 	exportArtifact(
@@ -285,6 +350,16 @@ function deterministicIds(ownerId: string, request: SubagentRequest) {
 		attemptId: `attempt_${identity.slice(0, 48)}`,
 		requestSha256: canonicalSha256(request),
 	};
+}
+
+function hasPendingAbandonment(events: readonly JournalEvent[]): boolean {
+	const requested = events.findLastIndex(
+		(event) => event.type === "run-abandoning",
+	);
+	const completed = events.findLastIndex(
+		(event) => event.type === "run-abandoned",
+	);
+	return requested >= 0 && requested > completed;
 }
 
 function emptyUsage(): Usage {
@@ -616,6 +691,38 @@ export async function createSubagentService(options: {
 			release();
 		}
 	};
+	const assertDurableStatus = async (
+		journal: RunJournal,
+		expected: RunStatus,
+	): Promise<void> => {
+		const events = await journal.readEvents();
+		if (events.some((event) => event.type === "run-abandoned")) {
+			if (expected !== "abandoned") {
+				throw new Error(
+					`durable run status changed from ${expected} to abandoned`,
+				);
+			}
+			return;
+		}
+		if (hasPendingAbandonment(events)) {
+			if (expected !== "cleanup-blocked") {
+				throw new Error(
+					`durable run status changed from ${expected} to cleanup-blocked`,
+				);
+			}
+			return;
+		}
+		const snapshot = await journal.readSnapshot();
+		const state = snapshot?.state as { result?: unknown } | undefined;
+		if (!isRunResult(state?.result)) {
+			throw new Error("durable run status is unavailable");
+		}
+		if (state.result.status !== expected) {
+			throw new Error(
+				`durable run status changed from ${expected} to ${state.result.status}`,
+			);
+		}
+	};
 	const preflightTtlMs = options.preflightTtlMs ?? 5 * 60_000;
 	const agentDir = options.agentDir ?? getAgentDir();
 	const executeAttempt = options.executeAttempt ?? runNativeAttempt;
@@ -697,6 +804,12 @@ export async function createSubagentService(options: {
 					? checkpointData.runtimeMs
 					: 0;
 			const snapshot = await journal.readSnapshot();
+			const abandonedEvent = [...recoveryEvents]
+				.reverse()
+				.find((event) => event.type === "run-abandoned");
+			const abandonedData = abandonedEvent?.data as
+				| { result?: unknown }
+				| undefined;
 			const state = snapshot?.state as
 				| {
 						result?: unknown;
@@ -706,9 +819,54 @@ export async function createSubagentService(options: {
 						error?: unknown;
 				  }
 				| undefined;
-			const persistedResult = state?.result;
+			const latestAttemptStart = [...recoveryEvents].reverse().find((event) => {
+				if (event.type !== "attempt-starting") return false;
+				const data = event.data as { attemptId?: unknown } | undefined;
+				return data?.attemptId === recoveredPlan.attemptId;
+			});
+			const snapshotCoversLatestAttempt =
+				latestAttemptStart === undefined ||
+				(snapshot?.lastSequence ?? 0) >= latestAttemptStart.sequence;
+			const priorResult =
+				snapshotCoversLatestAttempt && isRunResult(state?.result)
+					? state.result
+					: undefined;
+			const abandonmentPending = hasPendingAbandonment(recoveryEvents);
+			const persistedResult = isRunResult(abandonedData?.result)
+				? abandonedData.result
+				: priorResult;
 			let result: RunResult;
-			if (isRunResult(persistedResult)) {
+			if (abandonmentPending) {
+				result = {
+					runId: recoveredPlan.runId,
+					status: "cleanup-blocked",
+					usage: priorResult?.usage ?? checkpointUsage,
+					usageComplete: priorResult?.usageComplete ?? false,
+					runtimeMs: priorResult?.runtimeMs ?? checkpointRuntimeMs,
+					failure: {
+						code: "workspace",
+						origin: "service",
+						retry: "reconcile",
+						message:
+							"Operator abandonment was interrupted before cleanup proof",
+						guidance: "Reconcile cleanup to finish abandonment.",
+					},
+					sandboxCleanup: priorResult?.sandboxCleanup ?? "unknown",
+					workspaceCleanup:
+						recoveredPlan.workspace.mode === "read-only"
+							? "not-needed"
+							: "unknown",
+					truncated: priorResult?.truncated ?? false,
+				};
+				await journal.append("startup-reconciled", {
+					status: "cleanup-blocked",
+					reason: "operator abandonment requires reconciliation",
+				});
+				await journal.writeSnapshot({
+					result,
+					error: "operator abandonment requires reconciliation",
+				});
+			} else if (isRunResult(persistedResult)) {
 				result = persistedResult;
 			} else {
 				result = {
@@ -757,14 +915,26 @@ export async function createSubagentService(options: {
 			}
 			const execution: AttemptExecutionResult = {
 				result,
-				output: typeof state?.output === "string" ? state.output : "",
+				output:
+					result.status === "abandoned"
+						? ""
+						: typeof state?.output === "string"
+							? state.output
+							: "",
 				sessionFile:
+					result.status !== "abandoned" &&
 					typeof state?.sessionFile === "string"
 						? state.sessionFile
 						: undefined,
-				handoff: recoveredHandoff,
-				structuredOutput: result.structuredOutput,
-				error: typeof state?.error === "string" ? state.error : undefined,
+				handoff: result.status === "abandoned" ? undefined : recoveredHandoff,
+				structuredOutput:
+					result.status === "abandoned" ? undefined : result.structuredOutput,
+				error:
+					result.status === "abandoned"
+						? "run permanently abandoned by operator"
+						: typeof state?.error === "string"
+							? state.error
+							: undefined,
 			};
 			const abort = new AbortController();
 			const active: ActiveRun = {
@@ -798,6 +968,7 @@ export async function createSubagentService(options: {
 		contextFiles: ContextFileProjection;
 		forkContext?: ForkContextProjection;
 		kind: "initial" | "retry" | "resume";
+		expectedPriorStatus?: "failed" | "interrupted";
 		ordinal: number;
 		parentAttemptId?: AttemptId;
 		rootPlan: AgentLaunchPlan;
@@ -814,6 +985,9 @@ export async function createSubagentService(options: {
 				input.plan.runId,
 				lease,
 			);
+			if (input.expectedPriorStatus) {
+				await assertDurableStatus(journal, input.expectedPriorStatus);
+			}
 			const artifacts = await ArtifactStore.open({
 				root: path.join(options.root, "runs", input.plan.runId, "artifacts"),
 				maxArtifactBytes: input.rootPlan.limits.outputBytes,
@@ -908,6 +1082,13 @@ export async function createSubagentService(options: {
 			const running = active;
 			running.promise = rawPromise.then(
 				async (result) => {
+					try {
+						await journal.writeSnapshot(result);
+					} catch (error) {
+						running.status = "cleanup-blocked";
+						emit(running.plan.runId, running.status);
+						throw error;
+					}
 					running.result = result;
 					running.status = result.result.status;
 					if (result.result.status !== "cleanup-blocked") {
@@ -967,6 +1148,68 @@ export async function createSubagentService(options: {
 		return false;
 	};
 
+	const releaseRunWorktrees = async (
+		run: ActiveRun,
+		lease: RunLease,
+	): Promise<void> => {
+		if (run.plan.workspace.mode !== "worktree") return;
+		const attempts = await attemptRecords.list(run.plan.runId);
+		const worktreeAttempts = [
+			...new Set(
+				attempts
+					.map((attempt) => attempt.worktreeAttemptId)
+					.filter((attemptId): attemptId is string => attemptId !== undefined),
+			),
+		];
+		if (worktreeAttempts.length === 0) {
+			throw new Error("worktree identity is unavailable");
+		}
+		for (const worktreeAttemptId of worktreeAttempts) {
+			const record = await readWorktreeRecord(
+				path.join(
+					options.root,
+					"workspace",
+					"records",
+					`${worktreeAttemptId}.json`,
+				),
+			);
+			if ((await pathState(record.worktreePath)) === "present") {
+				await removeCleanWorktree(record, lease);
+			}
+			await releaseWorktreeBranch(record, lease);
+		}
+	};
+
+	const canReleaseRunWorktrees = async (
+		run: ActiveRun,
+		attempts: Awaited<ReturnType<AttemptRecordStore["list"]>>,
+	): Promise<boolean> => {
+		if (run.plan.workspace.mode === "read-only") return true;
+		const worktreeAttemptIds = [
+			...new Set(
+				attempts
+					.map((attempt) => attempt.worktreeAttemptId)
+					.filter((attemptId): attemptId is string => attemptId !== undefined),
+			),
+		];
+		if (worktreeAttemptIds.length === 0) return false;
+		for (const attemptId of worktreeAttemptIds) {
+			try {
+				const record = await readWorktreeRecord(
+					path.join(options.root, "workspace", "records", `${attemptId}.json`),
+				);
+				if (record.releasedAt) continue;
+				const observation = await observeWorktree(record);
+				if (observation.state === "dirty" || observation.state === "unknown") {
+					return false;
+				}
+			} catch {
+				return false;
+			}
+		}
+		return true;
+	};
+
 	const summarizeRun = async (
 		run: ActiveRun,
 		pinnedRuns: Set<RunId>,
@@ -998,6 +1241,44 @@ export async function createSubagentService(options: {
 		const goalPreview = run.plan.task.goal
 			.replaceAll(/\s+/g, " ")
 			.slice(0, 240);
+		const pinned = pinnedRuns.has(run.plan.runId);
+		const controllable = run.status === "active" && run.control !== undefined;
+		const retryable =
+			run.status === "failed" &&
+			run.result !== undefined &&
+			(retryFailure?.retry === "manual" || retryFailure?.retry === "backoff") &&
+			run.plan.limits.retries > 0 &&
+			remainingRuntime >= 1_000 &&
+			remainingTokens >= 1 &&
+			remainingCost > 0;
+		const resumable =
+			run.status === "interrupted" &&
+			run.result?.sessionFile !== undefined &&
+			run.result.result.failure?.retry === "resume" &&
+			run.plan.limits.resumes > 0 &&
+			remainingRuntime >= 1_000 &&
+			remainingTokens >= 1 &&
+			remainingCost > 0;
+		const hasRetainedWorktree = await retainedWorktree(run, attempts);
+		const workspaceReleasable = await canReleaseRunWorktrees(run, attempts);
+		const abandonable =
+			run.status === "interrupted" &&
+			(run.result?.result.sandboxCleanup === "proved" ||
+				run.result?.result.sandboxCleanup === "not-needed") &&
+			workspaceReleasable;
+		const availableActions = availableRunActions({
+			status: run.status,
+			pinned,
+			controllable,
+			retryable,
+			retryAvailable:
+				retryable && (!retryAt || Date.parse(retryAt) <= Date.now()),
+			resumable,
+			abandonable,
+			retainedWorktree: hasRetainedWorktree,
+			workspaceReleasable,
+			hasOutput: run.result?.result.output !== undefined,
+		});
 		return {
 			runId: run.plan.runId,
 			attemptId: latestAttempt?.attemptId ?? run.plan.attemptId,
@@ -1011,33 +1292,19 @@ export async function createSubagentService(options: {
 			createdAt: run.createdAt,
 			updatedAt,
 			...(run.result ? { usage: run.result.result.usage } : {}),
-			pinned: pinnedRuns.has(run.plan.runId),
-			controllable: run.status === "active" && run.control !== undefined,
-			retryable:
-				run.status === "failed" &&
-				run.result !== undefined &&
-				(retryFailure?.retry === "manual" ||
-					retryFailure?.retry === "backoff") &&
-				run.plan.limits.retries > 0 &&
-				remainingRuntime >= 1_000 &&
-				remainingTokens >= 1 &&
-				remainingCost > 0,
+			pinned,
+			controllable,
+			retryable,
 			...(retryAt ? { retryAt } : {}),
-			resumable:
-				run.status === "interrupted" &&
-				run.result?.sessionFile !== undefined &&
-				run.result.result.failure?.retry === "resume" &&
-				run.plan.limits.resumes > 0 &&
-				remainingRuntime >= 1_000 &&
-				remainingTokens >= 1 &&
-				remainingCost > 0,
-			retainedWorktree: await retainedWorktree(run, attempts),
+			resumable,
+			retainedWorktree: hasRetainedWorktree,
 			requiresAttention: [
 				"active",
 				"stopping",
 				"interrupted",
 				"cleanup-blocked",
 			].includes(run.status),
+			availableActions,
 		};
 	};
 
@@ -1053,6 +1320,7 @@ export async function createSubagentService(options: {
 					"attempt-failed",
 					"run-reconciled",
 					"startup-reconciled",
+					"run-abandoned",
 				].includes(event.type),
 			);
 			descriptors.push({
@@ -1136,6 +1404,7 @@ export async function createSubagentService(options: {
 			"completed",
 			"failed",
 			"cancelled",
+			"abandoned",
 			"interrupted",
 			"cleanup-blocked",
 		]);
@@ -1180,8 +1449,9 @@ export async function createSubagentService(options: {
 			interrupted: 3,
 			failed: 4,
 			cancelled: 5,
-			completed: 6,
-			queued: 7,
+			abandoned: 6,
+			completed: 7,
+			queued: 8,
 		};
 		summaries.sort(
 			(left, right) =>
@@ -1679,6 +1949,7 @@ export async function createSubagentService(options: {
 							contextFiles,
 							...(forkContext ? { forkContext } : {}),
 							kind: "retry",
+							expectedPriorStatus: "failed",
 							ordinal: latest.ordinal + 1,
 							parentAttemptId: latest.attemptId,
 							rootPlan: rootRecord.plan,
@@ -1756,6 +2027,24 @@ export async function createSubagentService(options: {
 									`${latest.worktreeAttemptId ?? latest.attemptId}.json`,
 								),
 							);
+							if (
+								existingWorktree.runId !== runId ||
+								existingWorktree.attemptId !== latest.worktreeAttemptId ||
+								existingWorktree.releasedAt
+							) {
+								throw new Error(
+									"retained worktree identity is invalid for resume",
+								);
+							}
+							const observation = await observeWorktree(existingWorktree);
+							if (
+								observation.state !== "clean" &&
+								observation.state !== "dirty"
+							) {
+								throw new Error(
+									`retained worktree is unavailable for resume: ${observation.state}`,
+								);
+							}
 						}
 						return startAttempt({
 							ownerId: owner.id,
@@ -1765,6 +2054,7 @@ export async function createSubagentService(options: {
 							skills,
 							contextFiles,
 							kind: "resume",
+							expectedPriorStatus: "interrupted",
 							ordinal: latest.ordinal + 1,
 							parentAttemptId: latest.attemptId,
 							rootPlan: rootRecord.plan,
@@ -1801,7 +2091,9 @@ export async function createSubagentService(options: {
 							runId,
 							lease,
 						);
+						await assertDurableStatus(journal, "cleanup-blocked");
 						const events = await journal.readEvents();
+						const abandonmentPending = hasPendingAbandonment(events);
 						const sandboxEvent = [...events]
 							.reverse()
 							.find((event) => event.type === "sandbox-started");
@@ -1839,46 +2131,73 @@ export async function createSubagentService(options: {
 								sandboxProcess = "unknown";
 							}
 						}
-						const latestAttempt = await attemptRecords.latest(runId);
 						let workspace: ReconcileResult["workspace"];
 						if (run.plan.workspace.mode === "read-only") {
 							workspace = "not-needed";
-						} else if (!latestAttempt?.worktreeAttemptId) {
-							workspace = "unknown";
 						} else {
-							try {
-								const record = await readWorktreeRecord(
-									path.join(
-										options.root,
-										"workspace",
-										"records",
-										`${latestAttempt.worktreeAttemptId}.json`,
-									),
-								);
-								if (
-									record.runId !== runId ||
-									record.attemptId !== latestAttempt.worktreeAttemptId
-								) {
-									workspace = "unknown";
-								} else {
-									const observation = await observeWorktree(record);
-									workspace =
-										observation.state === "absent"
-											? "absent"
-											: observation.state === "unknown"
-												? "unknown"
-												: "retained";
-								}
-							} catch {
+							const attempts = await attemptRecords.list(runId);
+							const worktreeAttemptIds = [
+								...new Set(
+									attempts
+										.map((attempt) => attempt.worktreeAttemptId)
+										.filter(
+											(attemptId): attemptId is string =>
+												attemptId !== undefined,
+										),
+								),
+							];
+							if (worktreeAttemptIds.length === 0) {
 								workspace = "unknown";
+							} else {
+								const states: Array<"absent" | "retained" | "unknown"> = [];
+								for (const attemptId of worktreeAttemptIds) {
+									try {
+										const record = await readWorktreeRecord(
+											path.join(
+												options.root,
+												"workspace",
+												"records",
+												`${attemptId}.json`,
+											),
+										);
+										if (
+											record.runId !== runId ||
+											record.attemptId !== attemptId
+										) {
+											states.push("unknown");
+											continue;
+										}
+										const observation = await observeWorktree(record);
+										states.push(
+											observation.state === "absent"
+												? "absent"
+												: observation.state === "unknown"
+													? "unknown"
+													: "retained",
+										);
+									} catch {
+										states.push("unknown");
+									}
+								}
+								workspace = states.includes("unknown")
+									? "unknown"
+									: states.includes("retained")
+										? "retained"
+										: "absent";
 							}
 						}
-						const sandboxCleanup =
+						const observedSandboxCleanup =
 							sandboxProcess === "not-started"
 								? "not-needed"
 								: sandboxProcess === "absent"
 									? "proved"
 									: "unknown";
+						const sandboxCleanup =
+							abandonmentPending &&
+							(run.result?.result.sandboxCleanup === "proved" ||
+								run.result?.result.sandboxCleanup === "not-needed")
+								? run.result.result.sandboxCleanup
+								: observedSandboxCleanup;
 						const workspaceCleanup =
 							workspace === "not-needed"
 								? "not-needed"
@@ -1896,55 +2215,86 @@ export async function createSubagentService(options: {
 							sessionEvidence.state === "valid"
 								? sessionEvidence.file
 								: undefined;
+						const cleanupProved =
+							(sandboxCleanup === "proved" ||
+								sandboxCleanup === "not-needed") &&
+							(workspaceCleanup === "proved" ||
+								workspaceCleanup === "not-needed");
 						const canClassify =
 							(sandboxCleanup === "proved" ||
 								sandboxCleanup === "not-needed") &&
 							workspaceCleanup !== "unknown" &&
 							sessionEvidence.state !== "unknown";
-						const status: RunResult["status"] = canClassify
-							? sessionEvidence.state === "valid"
-								? "interrupted"
-								: "failed"
-							: "cleanup-blocked";
+						const status: RunResult["status"] = abandonmentPending
+							? cleanupProved
+								? "abandoned"
+								: "cleanup-blocked"
+							: canClassify
+								? sessionEvidence.state === "valid"
+									? "interrupted"
+									: "failed"
+								: "cleanup-blocked";
+						if (status === "abandoned") {
+							const transitioned = transitionRunStatus("cleanup-blocked", {
+								type: "cleanup-proved",
+								terminalStatus: "abandoned",
+								sandboxCleanup,
+								workspaceCleanup,
+							});
+							if (transitioned !== "abandoned") {
+								throw new Error("cleanup proof did not permit abandonment");
+							}
+						}
 						const result: RunResult = {
 							runId,
 							status,
-							...(run.result?.result.output
+							...(!abandonmentPending && run.result?.result.output
 								? { output: run.result.result.output }
 								: {}),
-							...(run.result?.result.structuredOutput !== undefined
+							...(!abandonmentPending &&
+							run.result?.result.structuredOutput !== undefined
 								? { structuredOutput: run.result.result.structuredOutput }
 								: {}),
 							usage: run.result?.result.usage ?? emptyUsage(),
 							usageComplete: run.result?.result.usageComplete ?? false,
 							runtimeMs: run.result?.result.runtimeMs ?? 0,
 							failure:
-								status === "interrupted"
+								status === "abandoned"
 									? {
-											code: "seat-interruption",
-											origin: "service",
-											retry: "resume",
-											message: "Prior attempt ended before terminal proof",
-											guidance:
-												"Resume the retained session in a fresh VM after validation.",
+											code: "operator-abandoned",
+											origin: "operator",
+											retry: "never",
+											message:
+												"Operator permanently abandoned the interrupted run",
+											guidance: "Inspect retained journal evidence if needed.",
 										}
-									: status === "cleanup-blocked"
+									: status === "interrupted"
 										? {
-												code: "sandbox-cleanup",
+												code: "seat-interruption",
 												origin: "service",
-												retry: "reconcile",
-												message: "External cleanup remains unproved",
+												retry: "resume",
+												message: "Prior attempt ended before terminal proof",
 												guidance:
-													"Reconcile recorded sandbox and workspace identities.",
+													"Resume the retained session in a fresh VM after validation.",
 											}
-										: {
-												code: "unknown",
-												origin: "service",
-												retry: "reconcile",
-												message: "Prior attempt failed without terminal proof",
-												guidance:
-													"Inspect lifecycle evidence before continuing.",
-											},
+										: status === "cleanup-blocked"
+											? {
+													code: "sandbox-cleanup",
+													origin: "service",
+													retry: "reconcile",
+													message: "External cleanup remains unproved",
+													guidance:
+														"Reconcile recorded sandbox and workspace identities.",
+												}
+											: {
+													code: "unknown",
+													origin: "service",
+													retry: "reconcile",
+													message:
+														"Prior attempt failed without terminal proof",
+													guidance:
+														"Inspect lifecycle evidence before continuing.",
+												},
 							sandboxCleanup,
 							workspaceCleanup,
 							truncated: run.result?.result.truncated ?? false,
@@ -1954,20 +2304,29 @@ export async function createSubagentService(options: {
 						}
 						const execution: AttemptExecutionResult = {
 							result,
-							output: run.result?.output ?? "",
-							sessionFile,
-							handoff: run.result?.handoff,
+							output: abandonmentPending ? "" : (run.result?.output ?? ""),
+							sessionFile: abandonmentPending ? undefined : sessionFile,
+							handoff: abandonmentPending ? undefined : run.result?.handoff,
 							structuredOutput: result.structuredOutput,
 							error:
-								status === "cleanup-blocked"
-									? "external cleanup remains unproved"
-									: "prior attempt was interrupted before terminal proof",
+								status === "abandoned"
+									? "run permanently abandoned by operator"
+									: status === "cleanup-blocked"
+										? "external cleanup remains unproved"
+										: "prior attempt was interrupted before terminal proof",
 						};
-						await journal.append("run-reconciled", {
-							status,
-							sandboxProcess,
-							workspace,
-						});
+						if (status === "abandoned") {
+							await journal.append("run-abandoned", {
+								attemptId: run.plan.attemptId,
+								result,
+							});
+						} else {
+							await journal.append("run-reconciled", {
+								status,
+								sandboxProcess,
+								workspace,
+							});
+						}
 						await journal.writeSnapshot(execution);
 						run.journal = journal;
 						run.result = execution;
@@ -1989,11 +2348,21 @@ export async function createSubagentService(options: {
 					}
 				},
 
-				async release(runId) {
+				async abandon(runId) {
 					return runExclusive(async () => {
 						const run = ownedRun(runId);
-						if (run.status === "active" || run.status === "stopping") {
-							throw new Error("active run cannot be released");
+						if (run.status !== "interrupted" || !run.result) {
+							throw new Error(
+								"only an interrupted run with terminal evidence can be abandoned",
+							);
+						}
+						if (
+							run.result.result.sandboxCleanup !== "proved" &&
+							run.result.result.sandboxCleanup !== "not-needed"
+						) {
+							throw new Error(
+								"run cleanup is unproved; reconcile before abandoning",
+							);
 						}
 						const lease = await acquireRunLease({
 							root: path.join(options.root, "leases"),
@@ -2005,62 +2374,224 @@ export async function createSubagentService(options: {
 								runId,
 								lease,
 							);
-							if (run.plan.workspace.mode === "worktree") {
-								const attempts = await attemptRecords.list(runId);
-								const worktreeAttempts = [
-									...new Set(
-										attempts
-											.map((attempt) => attempt.worktreeAttemptId)
-											.filter(
-												(attemptId): attemptId is string =>
-													attemptId !== undefined,
-											),
-									),
-								];
-								if (worktreeAttempts.length === 0) {
-									throw new Error("worktree identity is unavailable");
-								}
-								for (const worktreeAttemptId of worktreeAttempts) {
-									const record = await readWorktreeRecord(
-										path.join(
-											options.root,
-											"workspace",
-											"records",
-											`${worktreeAttemptId}.json`,
-										),
-									);
-									if ((await pathState(record.worktreePath)) === "present") {
-										await removeCleanWorktree(record, lease);
-									}
-									await releaseWorktreeBranch(record, lease);
-								}
-							}
-							if (run.result) {
-								const result: RunResult = {
-									...run.result.result,
-									workspaceCleanup:
-										run.plan.workspace.mode === "read-only"
-											? "not-needed"
-											: "proved",
+							await assertDurableStatus(journal, "interrupted");
+							const previous = run.result.result;
+							await journal.append("run-abandoning", {
+								attemptId: run.plan.attemptId,
+							});
+							const pendingResult: RunResult = {
+								runId,
+								status: "cleanup-blocked",
+								usage: previous.usage,
+								usageComplete: previous.usageComplete,
+								runtimeMs: previous.runtimeMs,
+								failure: {
+									code: "workspace",
+									origin: "service",
+									retry: "reconcile",
+									message: "Operator abandonment is awaiting cleanup proof",
+									guidance: "Reconcile cleanup to finish abandonment.",
+								},
+								sandboxCleanup: previous.sandboxCleanup,
+								workspaceCleanup:
+									run.plan.workspace.mode === "read-only"
+										? "not-needed"
+										: "unknown",
+								truncated: previous.truncated,
+							};
+							const pendingExecution: AttemptExecutionResult = {
+								result: pendingResult,
+								output: "",
+								sessionFile: undefined,
+								handoff: undefined,
+								structuredOutput: undefined,
+								error: "operator abandonment is awaiting cleanup proof",
+							};
+							run.journal = journal;
+							run.result = pendingExecution;
+							run.promise = Promise.resolve(pendingExecution);
+							run.status = "cleanup-blocked";
+							emit(runId, run.status);
+							try {
+								await releaseRunWorktrees(run, lease);
+							} catch (error) {
+								const blocked: RunResult = {
+									runId,
+									status: "cleanup-blocked",
+									usage: previous.usage,
+									usageComplete: previous.usageComplete,
+									runtimeMs: previous.runtimeMs,
+									failure: {
+										code: "workspace",
+										origin: "workspace",
+										retry: "reconcile",
+										message:
+											"Operator abandonment could not prove workspace cleanup",
+										guidance:
+											"Inspect or preserve retained work, then reconcile cleanup.",
+									},
+									sandboxCleanup: previous.sandboxCleanup,
+									workspaceCleanup: "unknown",
+									truncated: previous.truncated,
 								};
+								const execution: AttemptExecutionResult = {
+									result: blocked,
+									output: "",
+									sessionFile: undefined,
+									handoff: undefined,
+									structuredOutput: undefined,
+									error: "operator abandonment requires reconciliation",
+								};
+								await journal.writeSnapshot(execution);
+								run.journal = journal;
+								run.result = execution;
+								run.promise = Promise.resolve(execution);
+								run.status = "cleanup-blocked";
+								emit(runId, run.status);
+								throw error;
+							}
+							const transitioned = transitionRunStatus("interrupted", {
+								type: "abandon",
+								sandboxCleanup: previous.sandboxCleanup,
+								workspaceCleanup:
+									run.plan.workspace.mode === "read-only"
+										? "not-needed"
+										: "proved",
+							});
+							if (transitioned !== "abandoned") {
+								throw new Error("cleanup proof did not permit abandonment");
+							}
+							const result: RunResult = {
+								runId,
+								status: "abandoned",
+								usage: previous.usage,
+								usageComplete: previous.usageComplete,
+								runtimeMs: previous.runtimeMs,
+								failure: {
+									code: "operator-abandoned",
+									origin: "operator",
+									retry: "never",
+									message: "Operator permanently abandoned the interrupted run",
+									guidance: "Inspect retained journal evidence if needed.",
+								},
+								sandboxCleanup: previous.sandboxCleanup,
+								workspaceCleanup:
+									run.plan.workspace.mode === "read-only"
+										? "not-needed"
+										: "proved",
+								truncated: previous.truncated,
+							};
+							if (!isRunResult(result)) {
+								throw new Error(
+									"abandonment produced invalid terminal evidence",
+								);
+							}
+							const execution: AttemptExecutionResult = {
+								result,
+								output: "",
+								sessionFile: undefined,
+								handoff: undefined,
+								structuredOutput: undefined,
+								error: "run permanently abandoned by operator",
+							};
+							await journal.append("run-abandoned", {
+								attemptId: run.plan.attemptId,
+								result,
+							});
+							run.journal = journal;
+							run.result = execution;
+							run.promise = Promise.resolve(execution);
+							run.status = "abandoned";
+							delete run.control;
+							emit(runId, run.status);
+							await journal.writeSnapshot(execution);
+							return {
+								runId,
+								attemptId: run.plan.attemptId,
+								status: run.status,
+							};
+						} finally {
+							await lease.release();
+						}
+					});
+				},
+
+				async release(runId) {
+					return runExclusive(async () => {
+						const run = ownedRun(runId);
+						if (
+							run.status === "active" ||
+							run.status === "stopping" ||
+							run.status === "interrupted"
+						) {
+							throw new Error(
+								run.status === "interrupted"
+									? "abandon an interrupted run to release its recovery workspace"
+									: "active run cannot release its workspace",
+							);
+						}
+						const lease = await acquireRunLease({
+							root: path.join(options.root, "leases"),
+							runId,
+						});
+						try {
+							const journal = await RunJournal.open(
+								path.join(options.root, "runs"),
+								runId,
+								lease,
+							);
+							await assertDurableStatus(journal, run.status);
+							const abandonmentPending = hasPendingAbandonment(
+								await journal.readEvents(),
+							);
+							await releaseRunWorktrees(run, lease);
+							let nextExecution = run.result;
+							if (run.result) {
+								const previous = run.result.result;
+								let result: RunResult = abandonmentPending
+									? previous
+									: {
+											...previous,
+											workspaceCleanup:
+												run.plan.workspace.mode === "read-only"
+													? "not-needed"
+													: "proved",
+										};
 								if (
+									!abandonmentPending &&
 									result.status === "cleanup-blocked" &&
-									result.sandboxCleanup === "proved"
+									(result.sandboxCleanup === "proved" ||
+										result.sandboxCleanup === "not-needed")
 								) {
-									result.status = "failed";
+									result = { ...result, status: "failed" };
 								}
 								if (!isRunResult(result))
 									throw new Error("release produced invalid result");
-								run.result = { ...run.result, result };
-								run.status = result.status;
-								emit(runId, run.status);
-								run.promise = Promise.resolve(run.result);
+								nextExecution = {
+									...run.result,
+									result,
+									...(result.status === "abandoned"
+										? {
+												output: "",
+												sessionFile: undefined,
+												handoff: undefined,
+												structuredOutput: undefined,
+												error: "run permanently abandoned by operator",
+											}
+										: {}),
+								};
 							}
 							await journal.append("run-released", {
 								workspace: run.plan.workspace.mode,
 							});
-							if (run.result) await journal.writeSnapshot(run.result);
+							if (nextExecution) await journal.writeSnapshot(nextExecution);
 							run.journal = journal;
+							if (nextExecution) {
+								run.result = nextExecution;
+								run.status = nextExecution.result.status;
+								run.promise = Promise.resolve(nextExecution);
+								emit(runId, run.status);
+							}
 							return {
 								runId,
 								attemptId: run.plan.attemptId,

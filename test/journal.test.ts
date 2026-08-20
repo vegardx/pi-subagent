@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { appendFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { IncompatibleContractRevisionError } from "../src/contracts.js";
 import {
 	PersistenceCorruptionError,
 	RunJournal,
@@ -82,7 +83,7 @@ describe("run journal", () => {
 		invalid.contractRevision++;
 		await writeFile(journal.snapshotPath, JSON.stringify(invalid));
 		await expect(journal.readSnapshot()).rejects.toBeInstanceOf(
-			PersistenceCorruptionError,
+			IncompatibleContractRevisionError,
 		);
 	});
 

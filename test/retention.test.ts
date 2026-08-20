@@ -75,13 +75,22 @@ function descriptor(
 describe("retention and pruning", () => {
 	it("protects pins, interrupted runs, and retained worktrees", async () => {
 		const data = await fixture();
-		const ids = ["run_old", "run_pin", "run_interrupt", "run_worktree"];
+		const ids = [
+			"run_old",
+			"run_abandoned",
+			"run_pin",
+			"run_interrupt",
+			"run_worktree",
+		];
 		const attempts = new Map<string, string>();
 		for (const id of ids) attempts.set(id, await addRun(data.root, id));
 		await data.manager.pin("owner", "run_pin", "keep for review");
 		const report = await data.manager.prune({
 			runs: [
 				descriptor("run_old", attempts.get("run_old") ?? ""),
+				descriptor("run_abandoned", attempts.get("run_abandoned") ?? "", {
+					status: "abandoned",
+				}),
 				descriptor("run_pin", attempts.get("run_pin") ?? ""),
 				descriptor("run_interrupt", attempts.get("run_interrupt") ?? "", {
 					status: "interrupted",
@@ -93,7 +102,10 @@ describe("retention and pruning", () => {
 			dryRun: true,
 			now,
 		});
-		expect(report.selected.map((run) => run.runId)).toEqual(["run_old"]);
+		expect(report.selected.map((run) => run.runId)).toEqual([
+			"run_abandoned",
+			"run_old",
+		]);
 		expect(
 			report.protected.find((run) => run.runId === "run_pin")?.reasons,
 		).toContain("pinned");

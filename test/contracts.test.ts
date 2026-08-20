@@ -1,7 +1,9 @@
 import { Value } from "typebox/value";
 import { describe, expect, it } from "vitest";
 import {
+	assertContractRevision,
 	CONTRACT_REVISION,
+	IncompatibleContractRevisionError,
 	isRunResult,
 	RunResultSchema,
 	SUBAGENT_RUNTIME_CONTRACT,
@@ -51,6 +53,15 @@ describe("runtime contracts", () => {
 		).toBe(false);
 	});
 
+	it("reports incompatible persisted revisions explicitly", () => {
+		expect(() =>
+			assertContractRevision({ contractRevision: 1 }, "run record"),
+		).toThrow(IncompatibleContractRevisionError);
+		expect(() =>
+			assertContractRevision({ contractRevision: 1 }, "run record"),
+		).toThrow("Discard incompatible persisted state");
+	});
+
 	it("validates bounded terminal result shapes", () => {
 		const result = {
 			runId: "run_abc123",
@@ -94,6 +105,21 @@ describe("runtime contracts", () => {
 				},
 			}),
 		).toBe(true);
+		const abandoned = {
+			...result,
+			status: "abandoned",
+			failure: {
+				code: "operator-abandoned",
+				origin: "operator",
+				retry: "never",
+				message: "operator abandoned the run",
+				guidance: "inspect retained evidence if needed",
+			},
+		};
+		expect(isRunResult(abandoned)).toBe(true);
+		expect(isRunResult({ ...abandoned, output: { id: "invalid" } })).toBe(
+			false,
+		);
 		expect(Value.Check(RunResultSchema, result)).toBe(true);
 	});
 });

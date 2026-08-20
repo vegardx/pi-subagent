@@ -178,6 +178,29 @@ async function serviceFor(
 	return { ...data, service };
 }
 
+async function reopenService(data: Awaited<ReturnType<typeof serviceFor>>) {
+	return createSubagentService({
+		root: path.join(data.root, "state"),
+		agentDir: path.join(data.root, "agent"),
+		agents: new Map([[data.agent.name, data.agent]]),
+		modelRuntime: {} as ModelRuntime,
+		capacity: await createVmCapacityManager({
+			root: path.join(data.root, "restart-capacity"),
+			maxSlots: 2,
+		}),
+		sandbox: {
+			packageVersion: "0.12.0",
+			imageSha256: hash,
+			mountPolicySha256: hash,
+			networkPolicySha256: hash,
+			capacityPolicySha256: hash,
+			memoryBytes: 512 * 1024 * 1024,
+			guestDiskBytes: 2 * 1024 * 1024 * 1024,
+		},
+		resolveModel: async (model) => model,
+	});
+}
+
 describe("foreground subagent service", () => {
 	it("preflights, launches idempotently, waits, and scopes owners", async () => {
 		const data = await serviceFor("success", async (input) => {
@@ -804,6 +827,121 @@ describe("foreground subagent service", () => {
 			"resume",
 		]);
 		expect(resumedRuntimeMs).toBe(data.request.limits.runtimeMs - 100);
+	});
+
+	it("abandons an interrupted run and removes recovery authority", async () => {
+		const data = await serviceFor("abandon", async (input) => ({
+			result: result(input.plan.runId, "interrupted"),
+			output: "partial output",
+			sessionFile: "/retained/session.jsonl",
+			handoff: undefined,
+			structuredOutput: { partial: true },
+			error: "interrupted",
+		}));
+		const client = data.service.forOwner({ id: "owner-abandon" });
+		const preflight = await client.preflight({
+			...data.request,
+			operationId: "operation-abandon",
+		});
+		const receipt = await client.launch(
+			preflight.preflightId,
+			preflight.identitySha256,
+		);
+		expect((await client.wait(receipt.runId)).result.status).toBe(
+			"interrupted",
+		);
+		const before = (await client.listRuns()).runs[0];
+		expect(before?.availableActions).toContain("abandon");
+		const abandoned = await client.abandon(receipt.runId);
+		expect(abandoned.status).toBe("abandoned");
+		const terminal = await client.wait(receipt.runId);
+		expect(terminal).toMatchObject({
+			result: {
+				status: "abandoned",
+				failure: {
+					code: "operator-abandoned",
+					origin: "operator",
+					retry: "never",
+				},
+			},
+			output: "",
+			sessionFile: undefined,
+			structuredOutput: undefined,
+		});
+		await expect(client.resume(receipt.runId)).rejects.toThrow(
+			"run is not resumable",
+		);
+		const after = (await client.listRuns()).runs[0];
+		expect(after?.requiresAttention).toBe(false);
+		expect(after?.availableActions).toEqual(["pin"]);
+		expect((await client.logs(receipt.runId)).events.at(-1)?.type).toBe(
+			"run-abandoned",
+		);
+		await data.service.shutdown();
+		const restarted = await reopenService(data);
+		const recovered = await restarted
+			.forOwner({ id: "owner-abandon" })
+			.status(receipt.runId);
+		expect(recovered.status).toBe("abandoned");
+		expect(recovered.result?.sessionFile).toBeUndefined();
+	});
+
+	it("abandons an interrupted run that never started a sandbox or session", async () => {
+		const data = await serviceFor("abandon-not-started", async (input) => ({
+			result: {
+				...result(input.plan.runId, "interrupted"),
+				sandboxCleanup: "not-needed",
+			},
+			output: "",
+			sessionFile: undefined,
+			handoff: undefined,
+			structuredOutput: undefined,
+			error: "interrupted before sandbox start",
+		}));
+		const client = data.service.forOwner({ id: "owner-abandon-not-started" });
+		const preflight = await client.preflight({
+			...data.request,
+			operationId: "operation-abandon-not-started",
+		});
+		const receipt = await client.launch(
+			preflight.preflightId,
+			preflight.identitySha256,
+		);
+		await client.wait(receipt.runId);
+		expect((await client.listRuns()).runs[0]?.availableActions).toEqual([
+			"abandon",
+		]);
+		expect((await client.abandon(receipt.runId)).status).toBe("abandoned");
+	});
+
+	it("does not abandon cleanup-blocked runs", async () => {
+		const data = await serviceFor("abandon-blocked", async (input) => ({
+			result: {
+				...result(input.plan.runId, "cleanup-blocked"),
+				sandboxCleanup: "unknown",
+			},
+			output: "",
+			sessionFile: undefined,
+			handoff: undefined,
+			structuredOutput: undefined,
+			error: "cleanup blocked",
+		}));
+		const client = data.service.forOwner({ id: "owner-abandon-blocked" });
+		const preflight = await client.preflight({
+			...data.request,
+			operationId: "operation-abandon-blocked",
+		});
+		const receipt = await client.launch(
+			preflight.preflightId,
+			preflight.identitySha256,
+		);
+		await client.wait(receipt.runId);
+		await expect(client.abandon(receipt.runId)).rejects.toThrow(
+			"only an interrupted run",
+		);
+		expect((await client.listRuns()).runs[0]?.availableActions).toEqual([
+			"reconcile",
+		]);
 	});
 
 	it("reconciles a stale pre-terminal run conservatively", async () => {

@@ -12,7 +12,13 @@ import net from "node:net";
 import path from "node:path";
 import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
-import { CONTRACT_REVISION, type RunId, RunIdSchema } from "../contracts.js";
+import {
+	assertContractRevision,
+	CONTRACT_REVISION,
+	IncompatibleContractRevisionError,
+	type RunId,
+	RunIdSchema,
+} from "../contracts.js";
 import { PersistenceCorruptionError } from "./journal.js";
 
 const MAX_RECORD_BYTES = 16 * 1024;
@@ -117,13 +123,19 @@ async function readRecord(
 			);
 		}
 		const value = JSON.parse(await readFile(filePath, "utf8")) as unknown;
+		assertContractRevision(value, "run lease record");
 		if (!Value.Check(RunLeaseRecordSchema, value)) {
 			throw new PersistenceCorruptionError("invalid run lease record schema");
 		}
 		return value as RunLeaseRecord;
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-		if (error instanceof PersistenceCorruptionError) throw error;
+		if (
+			error instanceof PersistenceCorruptionError ||
+			error instanceof IncompatibleContractRevisionError
+		) {
+			throw error;
+		}
 		throw new PersistenceCorruptionError("invalid run lease record JSON");
 	}
 }
