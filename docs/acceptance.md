@@ -136,6 +136,9 @@ Using bounded disposable fixtures:
 - Exa and Context7 credentials remain host-side and never enter Gondolin;
 - denied, unavailable, incompatible, or undeclared host-backed tools cannot be
   invoked;
+- a fresh composed Pi process discovers the provider over the shared EventBus,
+  delegates web search successfully, and observes provider unregister on
+  shutdown;
 - read-only checkout mounts reject all writes;
 - writing attempts use distinct private worktrees;
 - traversal, absolute host paths, symlink escape, and VFS-provider escape fail;
