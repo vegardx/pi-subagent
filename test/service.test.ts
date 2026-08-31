@@ -159,7 +159,7 @@ function searchHostTool(): HostToolDeclaration {
 		promptGuidelines: declaration.promptGuidelines,
 		parameters: declaration.parameters,
 		authority: declaration.authority,
-		source: "@vegardx/pi-web/service-provider@3#search",
+		source: "@vegardx/pi-web/service-provider@4#search",
 		identitySha256: declaration.identitySha256,
 		execute: async () => ({
 			content: [{ type: "text", text: "result" }],

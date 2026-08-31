@@ -1,5 +1,10 @@
-import type { EventBus } from "@earendil-works/pi-coding-agent";
-import { WEB_RUNTIME_CONTRACT, WEB_TOOL_DECLARATIONS } from "@vegardx/pi-web";
+import { createEventBus, type EventBus } from "@earendil-works/pi-coding-agent";
+import {
+	createWebService,
+	WEB_RUNTIME_CONTRACT,
+	WEB_TOOL_DECLARATIONS,
+} from "@vegardx/pi-web";
+import { registerWebServiceProvider } from "@vegardx/pi-web/service-provider";
 import { describe, expect, it } from "vitest";
 import {
 	discoverWebHostTools,
@@ -58,10 +63,23 @@ describe("host-brokered web tools", () => {
 		expect(discoverWebHostTools(eventsWith())).toEqual([]);
 	});
 
+	it("discovers and unregisters the real provider over Pi's EventBus", () => {
+		const events = createEventBus();
+		const unregister = registerWebServiceProvider(events, async () =>
+			createWebService(),
+		);
+		expect(discoverWebHostTools(events).map((tool) => tool.name)).toEqual([
+			"search",
+			"fetch",
+		]);
+		unregister();
+		expect(discoverWebHostTools(events)).toEqual([]);
+	});
+
 	it("projects exact tool identity and execution", async () => {
 		const tools = discoverWebHostTools(eventsWith(provider()));
 		expect(tools.map((tool) => tool.name)).toEqual(["search", "fetch"]);
-		expect(tools[0]?.source).toBe("@vegardx/pi-web/service-provider@3#search");
+		expect(tools[0]?.source).toBe("@vegardx/pi-web/service-provider@4#search");
 		expect(hostToolMap(tools).get("fetch")?.identitySha256).toMatch(
 			/^[a-f0-9]{64}$/,
 		);

@@ -43,7 +43,7 @@ interface WebProviderRequest {
 interface WebProvider {
 	readonly contract: {
 		readonly schema: "pi-web-runtime";
-		readonly contractRevision: 3;
+		readonly contractRevision: 4;
 		readonly features: {
 			readonly interactiveTools: true;
 			readonly delegatedTools: true;
@@ -96,7 +96,7 @@ function provider(value: unknown): value is WebProvider {
 			"repositorySnapshots",
 		]) &&
 		candidate.contract.schema === "pi-web-runtime" &&
-		candidate.contract.contractRevision === 3 &&
+		candidate.contract.contractRevision === 4 &&
 		features?.interactiveTools === true &&
 		features.delegatedTools === true &&
 		features.exaSearch === true &&
@@ -112,8 +112,8 @@ function provider(value: unknown): value is WebProvider {
 
 const EXPECTED_TOOL_IDENTITIES: Readonly<Record<"search" | "fetch", string>> =
 	Object.freeze({
-		search: "8b1ac9374b8528fb0cf7c60597c60b695d11868c8b469b29a9f2712ba90cf8de",
-		fetch: "32c7249426271da1355b7fa08e3d22bb346683254495ed3a284cd7d2102ad163",
+		search: "f3f1b20c59db3b10c3b3e73757711b8f540bff10af39621fb8c106fe396fc62e",
+		fetch: "0d46b12f2cc2295fad2e84ce40362a01cc470d9c834066ac36fb497542a186df",
 	});
 
 function declarationIdentity(value: {
@@ -127,8 +127,8 @@ function declarationIdentity(value: {
 	return createHash("sha256")
 		.update(
 			JSON.stringify({
-				contractRevision: 3,
-				implementationRevision: 1,
+				contractRevision: 4,
+				implementationRevision: 2,
 				name: value.name,
 				label: value.label,
 				description: value.description,
@@ -219,7 +219,7 @@ export function discoverWebHostTools(
 			...declaration,
 			promptGuidelines: Object.freeze([...declaration.promptGuidelines]),
 			parameters: frozenJson(declaration.parameters),
-			source: `@vegardx/pi-web/service-provider@3#${declaration.name}`,
+			source: `@vegardx/pi-web/service-provider@4#${declaration.name}`,
 		});
 	});
 	if (names.size !== 2 || !names.has("search") || !names.has("fetch")) {
