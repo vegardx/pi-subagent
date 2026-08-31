@@ -47,6 +47,19 @@ describe("Pi extension adapter", () => {
 		expect(shortcuts).toEqual(["alt+s"]);
 		expect(providerChannels).toHaveLength(1);
 		expect(activeProviderRegistrations).toBe(1);
+		const rendered = tool?.renderResult?.(
+			{
+				content: [{ type: "text", text: "The official Pi website is pi.dev." }],
+				details: {},
+			},
+			{ expanded: false, isPartial: false },
+			{ fg: (_color: string, text: string) => text } as never,
+			{} as never,
+		);
+		expect(rendered?.render(100).map((line) => line.trimEnd())).toEqual([
+			"",
+			"The official Pi website is pi.dev.",
+		]);
 		await handlers.get("session_shutdown")?.({}, { ui: { setWidget() {} } });
 		expect(activeProviderRegistrations).toBe(0);
 	});

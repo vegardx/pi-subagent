@@ -669,13 +669,11 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 		renderResult(result, { expanded, isPartial }, theme) {
 			const text = result.content.find((item) => item.type === "text");
 			const content = text?.type === "text" ? text.text : "";
+			const display = expanded
+				? content
+				: content.split("\n")[0] || (isPartial ? "active" : "completed");
 			return new Text(
-				theme.fg(
-					isPartial ? "warning" : "success",
-					expanded
-						? content
-						: content.split("\n")[0] || (isPartial ? "active" : "completed"),
-				),
+				`\n${theme.fg(isPartial ? "warning" : "success", display)}`,
 				0,
 				0,
 			);
