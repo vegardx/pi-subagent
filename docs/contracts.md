@@ -294,7 +294,9 @@ interface SubagentServiceProvider {
 ```
 
 Discovery fails closed when the provider is absent, duplicated, or does not
-match the current runtime contract. Registration itself does not initialize the
+match the current immutable runtime contract. Acquisition re-runs discovery
+after the asynchronous provider call and rejects removal or replacement before
+returning the service. Registration itself does not initialize the
 model runtime, Gondolin assets, capacity manager, or service store. The
 subagent extension alone owns provider removal and service shutdown. Consumers
 must not cache the service across Pi session replacement or reload.

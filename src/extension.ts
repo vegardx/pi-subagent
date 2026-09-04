@@ -119,14 +119,16 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 	let service: SubagentService | undefined;
 	let servicePromise: Promise<SubagentService> | undefined;
 	let widgetUnsubscribe: (() => void) | undefined;
+	let active = true;
 
 	async function ensureService(
 		ctx: ExtensionContext,
 	): Promise<SubagentService> {
+		if (!active) throw new Error("pi-subagent extension runtime is inactive");
 		if (service) return service;
 		servicePromise ??= (async () => {
 			const serviceModule = await import("./service.js");
-			service = await serviceModule.createSubagentService({
+			const created = await serviceModule.createSubagentService({
 				root: path.join(getAgentDir(), "subagents", "service"),
 				agents,
 				resolveHostTools: () => discoverWebHostTools(pi.events),
@@ -185,7 +187,12 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 					};
 				},
 			});
-			return service;
+			if (!active) {
+				await created.shutdown();
+				throw new Error("pi-subagent extension runtime became inactive");
+			}
+			service = created;
+			return created;
 		})().catch((error) => {
 			servicePromise = undefined;
 			throw error;
@@ -221,6 +228,7 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_shutdown", async (_event, ctx) => {
+		active = false;
 		unregisterServiceProvider();
 		widgetUnsubscribe?.();
 		widgetUnsubscribe = undefined;

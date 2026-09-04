@@ -75,6 +75,80 @@ describe("subagent service provider", () => {
 		);
 	});
 
+	it("rejects provider removal while acquisition is pending", async () => {
+		const events = createEventBus();
+		let resolveService: ((value: SubagentService) => void) | undefined;
+		let started: (() => void) | undefined;
+		const acquisitionStarted = new Promise<void>((resolve) => {
+			started = resolve;
+		});
+		const pending = new Promise<SubagentService>((resolve) => {
+			resolveService = resolve;
+		});
+		const unregister = registerSubagentServiceProvider(events, async () => {
+			started?.();
+			return pending;
+		});
+		const acquisition = acquireSubagentService(events, context);
+		await acquisitionStarted;
+		unregister();
+		resolveService?.(service);
+		await expect(acquisition).rejects.toMatchObject({ code: "missing" });
+	});
+
+	it("rejects provider replacement while acquisition is pending", async () => {
+		const events = createEventBus();
+		let resolveService: ((value: SubagentService) => void) | undefined;
+		let started: (() => void) | undefined;
+		const acquisitionStarted = new Promise<void>((resolve) => {
+			started = resolve;
+		});
+		const pending = new Promise<SubagentService>((resolve) => {
+			resolveService = resolve;
+		});
+		const unregister = registerSubagentServiceProvider(events, async () => {
+			started?.();
+			return pending;
+		});
+		const acquisition = acquireSubagentService(events, context);
+		await acquisitionStarted;
+		unregister();
+		registerSubagentServiceProvider(events, async () => service);
+		resolveService?.(service);
+		await expect(acquisition).rejects.toMatchObject({ code: "replaced" });
+	});
+
+	it("classifies throwing provider accessors as incompatible", async () => {
+		const events: EventBus = {
+			on() {
+				return () => {};
+			},
+			emit(_channel, value) {
+				const request = value as { respond(provider: unknown): void };
+				request.respond(
+					Object.defineProperty({}, "acquire", {
+						get() {
+							throw new Error("broken accessor");
+						},
+					}),
+				);
+			},
+		};
+		await expect(acquireSubagentService(events, context)).rejects.toMatchObject(
+			{
+				code: "incompatible",
+			},
+		);
+	});
+
+	it("freezes the advertised runtime contract", () => {
+		expect(Object.isFrozen(SUBAGENT_RUNTIME_CONTRACT)).toBe(true);
+		expect(Object.isFrozen(SUBAGENT_RUNTIME_CONTRACT.features)).toBe(true);
+		expect(() => {
+			SUBAGENT_RUNTIME_CONTRACT.features.structuredOutput = false;
+		}).toThrow(TypeError);
+	});
+
 	it("removes the provider when its registration is released", async () => {
 		const events = createEventBus();
 		const unregister = registerSubagentServiceProvider(

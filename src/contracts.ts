@@ -252,28 +252,30 @@ export type SubagentRuntimeContract = Static<
 	typeof SubagentRuntimeContractSchema
 >;
 
-export const SUBAGENT_RUNTIME_CONTRACT: SubagentRuntimeContract = {
-	schema: "pi-subagent-runtime",
-	contractRevision: CONTRACT_REVISION,
-	features: {
-		nativeSessionBackend: true,
-		gondolinSandbox: true,
-		background: false,
-		survivesSeatExit: false,
-		steering: true,
-		followUp: true,
-		structuredOutput: true,
-		preflight: true,
-		idempotentLaunch: true,
-		resume: true,
-		classifiedFailures: true,
-		cumulativeRuntimeBudget: true,
-		retryBackoff: true,
-		deepReconciliation: true,
-		worktrees: true,
-		publicNetworkEgress: true,
-		explicitResources: true,
-		ambientExtensionsControl: true,
-		hostBrokeredTools: true,
+export const SUBAGENT_RUNTIME_CONTRACT: SubagentRuntimeContract = Object.freeze(
+	{
+		schema: "pi-subagent-runtime",
+		contractRevision: CONTRACT_REVISION,
+		features: Object.freeze({
+			nativeSessionBackend: true,
+			gondolinSandbox: true,
+			background: false,
+			survivesSeatExit: false,
+			steering: true,
+			followUp: true,
+			structuredOutput: true,
+			preflight: true,
+			idempotentLaunch: true,
+			resume: true,
+			classifiedFailures: true,
+			cumulativeRuntimeBudget: true,
+			retryBackoff: true,
+			deepReconciliation: true,
+			worktrees: true,
+			publicNetworkEgress: true,
+			explicitResources: true,
+			ambientExtensionsControl: true,
+			hostBrokeredTools: true,
+		}),
 	},
-};
+);

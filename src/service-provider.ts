@@ -25,7 +25,7 @@ type ServiceRequest = {
 
 export class SubagentServiceProviderError extends Error {
 	constructor(
-		readonly code: "missing" | "duplicate" | "incompatible",
+		readonly code: "missing" | "duplicate" | "incompatible" | "replaced",
 		message: string,
 	) {
 		super(message);
@@ -46,44 +46,47 @@ function isCompatibleProvider(
 	value: unknown,
 ): value is SubagentServiceProvider {
 	if (typeof value !== "object" || value === null) return false;
-	const provider = value as Partial<SubagentServiceProvider>;
-	if (
-		typeof provider.acquire !== "function" ||
-		!Value.Check(SubagentRuntimeContractSchema, provider.contract)
-	) {
-		return false;
-	}
-	for (const feature of Object.keys(
-		SUBAGENT_RUNTIME_CONTRACT.features,
-	) as Array<keyof SubagentRuntimeContract["features"]>) {
+	try {
+		const provider = value as Partial<SubagentServiceProvider>;
+		const acquire = provider.acquire;
+		const contract = provider.contract;
 		if (
-			provider.contract.features[feature] !==
-			SUBAGENT_RUNTIME_CONTRACT.features[feature]
+			typeof acquire !== "function" ||
+			!Value.Check(SubagentRuntimeContractSchema, contract)
 		) {
 			return false;
 		}
+		for (const feature of Object.keys(
+			SUBAGENT_RUNTIME_CONTRACT.features,
+		) as Array<keyof SubagentRuntimeContract["features"]>) {
+			if (
+				contract.features[feature] !==
+				SUBAGENT_RUNTIME_CONTRACT.features[feature]
+			) {
+				return false;
+			}
+		}
+		return true;
+	} catch {
+		return false;
 	}
-	return true;
 }
 
 export function registerSubagentServiceProvider(
 	events: EventBus,
 	acquire: (context: ExtensionContext) => Promise<SubagentService>,
 ): () => void {
-	const provider: SubagentServiceProvider = {
+	const provider: SubagentServiceProvider = Object.freeze({
 		contract: SUBAGENT_RUNTIME_CONTRACT,
 		acquire,
-	};
+	});
 	return events.on(SERVICE_REQUEST_CHANNEL, (value) => {
 		if (!isServiceRequest(value)) return;
 		value.respond(provider);
 	});
 }
 
-export async function acquireSubagentService(
-	events: EventBus,
-	context: ExtensionContext,
-): Promise<SubagentService> {
+function discoverProvider(events: EventBus): SubagentServiceProvider {
 	const providers: unknown[] = [];
 	const request: ServiceRequest = {
 		schema: "pi-subagent-service-request-v1",
@@ -111,5 +114,20 @@ export async function acquireSubagentService(
 			"The registered pi-subagent service provider is incompatible.",
 		);
 	}
-	return provider.acquire(context);
+	return provider;
+}
+
+export async function acquireSubagentService(
+	events: EventBus,
+	context: ExtensionContext,
+): Promise<SubagentService> {
+	const provider = discoverProvider(events);
+	const service = await provider.acquire(context);
+	if (discoverProvider(events) !== provider) {
+		throw new SubagentServiceProviderError(
+			"replaced",
+			"The pi-subagent service provider changed during acquisition.",
+		);
+	}
+	return service;
 }
