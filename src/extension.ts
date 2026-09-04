@@ -233,7 +233,9 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 		widgetUnsubscribe?.();
 		widgetUnsubscribe = undefined;
 		ctx.ui.setWidget("pi-subagent", undefined);
-		await service?.shutdown();
+		const pendingService = servicePromise;
+		if (service) await service.shutdown();
+		else await pendingService?.catch(() => undefined);
 		service = undefined;
 		servicePromise = undefined;
 		modelRuntime = undefined;
