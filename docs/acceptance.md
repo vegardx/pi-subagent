@@ -284,7 +284,8 @@ Using bounded disposable fixtures:
 - the extension registers one lazy service provider without initializing the
   runtime, and standalone use requires no consumer package;
 - provider discovery returns the exact extension-owned service and fails for
-  missing, duplicate, or incompatible providers;
+  missing, duplicate, incompatible, removed-during-acquisition, or
+  replaced-during-acquisition providers;
 - provider registration is removed on session shutdown and consumers do not
   own service shutdown;
 - `pi-workflow` uses the public service without creating another runtime;
