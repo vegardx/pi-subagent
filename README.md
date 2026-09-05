@@ -68,8 +68,11 @@ import { acquireSubagentService } from "@vegardx/pi-subagent/service-provider";
 ```
 
 The extension registers its lazy service provider on Pi's process-local event
-bus. Trusted peer extensions can acquire that exact service instance through
-the provider export. With no consumer loaded, registration does not initialize
+bus. On first service acquisition it discovers named agents from
+`<getAgentDir()>/agents/*.md` and, for trusted projects,
+`<cwd>/.pi/agents/*.md`; project definitions override equal global names.
+Trusted peer extensions can acquire that exact service instance through the
+provider export. With no consumer loaded, registration does not initialize
 Gondolin or alter standalone subagent behavior.
 
 Pi loads the declared extension from `dist/extension.js`. The supported release

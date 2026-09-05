@@ -3,6 +3,7 @@ import { realpath, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
 import {
+	CONFIG_DIR_NAME,
 	type ExtensionAPI,
 	type ExtensionContext,
 	getAgentDir,
@@ -11,7 +12,7 @@ import {
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import type { ExactModelRequest } from "./launch-contracts.js";
-import type { DiscoveredAgent } from "./preflight/agents.js";
+import { type DiscoveredAgent, discoverAgents } from "./preflight/agents.js";
 import { canonicalSha256 } from "./preflight/canonical.js";
 import { discoverWebHostTools } from "./runtime/host-tools.js";
 import {
@@ -113,6 +114,28 @@ function parseModel(
 	};
 }
 
+export async function discoverExtensionAgents(
+	ctx: ExtensionContext,
+	agentDir = getAgentDir(),
+): Promise<Map<string, DiscoveredAgent>> {
+	return discoverAgents([
+		{
+			scope: "global",
+			directory: path.join(agentDir, "agents"),
+			trusted: true,
+		},
+		...(ctx.isProjectTrusted()
+			? [
+					{
+						scope: "project" as const,
+						directory: path.join(ctx.cwd, CONFIG_DIR_NAME, "agents"),
+						trusted: true,
+					},
+				]
+			: []),
+	]);
+}
+
 export default function piSubagentExtension(pi: ExtensionAPI): void {
 	const agents = new Map<string, DiscoveredAgent>();
 	let modelRuntime: ModelRuntime | undefined;
@@ -127,6 +150,8 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 		if (!active) throw new Error("pi-subagent extension runtime is inactive");
 		if (service) return service;
 		servicePromise ??= (async () => {
+			const discovered = await discoverExtensionAgents(ctx);
+			for (const [name, agent] of discovered) agents.set(name, agent);
 			const serviceModule = await import("./service.js");
 			const created = await serviceModule.createSubagentService({
 				root: path.join(getAgentDir(), "subagents", "service"),
