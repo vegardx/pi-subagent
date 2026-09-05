@@ -48,10 +48,11 @@
 		"node": ">=23.6.0"
 	},
 	"peerDependencies": {
-		"@earendil-works/pi-agent-core": ">=0.84.2 <0.85",
-		"@earendil-works/pi-ai": ">=0.84.2 <0.85",
-		"@earendil-works/pi-coding-agent": ">=0.84.2 <0.85",
-		"@earendil-works/pi-tui": ">=0.84.2 <0.85",
+		"@earendil-works/pi-agent-core": ">=0.85.0 <0.86",
+		"@earendil-works/pi-ai": ">=0.85.0 <0.86",
+		"@earendil-works/pi-coding-agent": ">=0.85.0 <0.86",
+		"@earendil-works/pi-server": ">=0.85.0 <0.86",
+		"@earendil-works/pi-tui": ">=0.85.0 <0.86",
 		"typebox": "*"
 	},
 	"dependencies": {
@@ -61,10 +62,11 @@
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.5.8",
-		"@earendil-works/pi-agent-core": "0.84.2",
-		"@earendil-works/pi-ai": "0.84.2",
-		"@earendil-works/pi-coding-agent": "0.84.2",
-		"@earendil-works/pi-tui": "0.84.2",
+		"@earendil-works/pi-agent-core": "0.85.0",
+		"@earendil-works/pi-ai": "0.85.0",
+		"@earendil-works/pi-coding-agent": "0.85.0",
+		"@earendil-works/pi-server": "0.85.0",
+		"@earendil-works/pi-tui": "0.85.0",
 		"@types/node": "24.13.3",
 		"@vegardx/pi-web": "file:../pi-web",
 		"tsx": "4.23.12",

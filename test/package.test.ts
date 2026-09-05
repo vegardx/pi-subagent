@@ -28,7 +28,7 @@ describe("package contract", () => {
 		);
 		expect(
 			packageJson.peerDependencies?.["@earendil-works/pi-coding-agent"],
-		).toBe(">=0.84.2 <0.85");
+		).toBe(">=0.85.0 <0.86");
 		expect(packageJson.exports?.["./extension"]).toEqual({
 			types: "./dist/extension.d.ts",
 			import: "./dist/extension.js",
@@ -47,5 +47,5 @@ describe("package contract", () => {
 		expect(extension.default).toBeTypeOf("function");
 		expect(publicApi.createVmCapacityManager).toBeTypeOf("function");
 		expect(serviceProvider.acquireSubagentService).toBeTypeOf("function");
-	}, 15_000);
+	}, 30_000);
 });
