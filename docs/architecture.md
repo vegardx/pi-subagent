@@ -56,7 +56,10 @@ attributable to one attempt.
 
 ## Layers
 
-1. **Extension adapter** registers model-facing tools, commands, and UI.
+1. **Extension adapter** registers model-facing tools, commands, and UI. On
+   first runtime acquisition it loads named global agents and trusted-project
+   agents into the same mutable registry used by direct and workflow clients;
+   project scope wins deterministic name precedence.
 2. **Service** exposes the same runtime to trusted extension consumers.
 3. **Policy compiler** resolves an immutable launch plan.
 4. **Lifecycle runtime** owns runs, attempts, cancellation, retry, and resume.
