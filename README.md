@@ -73,7 +73,7 @@ the provider export. With no consumer loaded, registration does not initialize
 Gondolin or alter standalone subagent behavior.
 
 Pi loads the declared extension from `dist/extension.js`. The supported release
-line requires Pi `>=0.84.2 <0.85`, Node.js 23.6 or newer, and macOS Apple Silicon
+line requires Pi `>=0.85.0 <0.86`, Node.js 23.6 or newer, and macOS Apple Silicon
 with the qualified Gondolin/QEMU stack.
 
 ## Documentation

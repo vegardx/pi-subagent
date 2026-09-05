@@ -5,7 +5,7 @@ must cite a pinned snapshot before source is adapted.
 
 | Project | Repository | Snapshot | License | Focus |
 | --- | --- | --- | --- | --- |
-| Pi | <https://github.com/earendil-works/pi-mono> | installed `@earendil-works/pi-coding-agent` 0.84.2 | MIT | SDK, resource loader, native sessions, tool factories, Gondolin and sandbox examples |
+| Pi | <https://github.com/earendil-works/pi-mono> | installed `@earendil-works/pi-coding-agent` 0.85.0 | MIT | SDK, resource loader, native sessions, tool factories, Gondolin and sandbox examples |
 | Gondolin | <https://github.com/earendil-works/gondolin> | `29fa74d802112f29c720990aced26165e0d57d84`; package 0.12.0 inspected | Apache-2.0 | QEMU VM, VFS, networking, security model, limitations, Pi integration |
 | Anthropic Sandbox Runtime | <https://github.com/anthropic-experimental/sandbox-runtime> | `bcad38810efcc2b7342bbc6ec26d15b7bbbabcfb`; package 0.0.73 inspected | Apache-2.0 | Seatbelt/Bubblewrap policy sandbox alternative |
 | pi-sandbox | <https://github.com/erichll/pi-packages/tree/main/packages/pi-sandbox> | `5dea625c0ff3a50bc3f344c59e93567b57b43d43` | MIT | Per-command SRT broker, network policy, process-backed subagents |

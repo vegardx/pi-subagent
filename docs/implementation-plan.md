@@ -2,7 +2,7 @@
 
 ## Target
 
-The first stable release targets Pi `>=0.84.2 <0.85`, Node.js 23.6 or newer,
+The first stable release targets Pi `>=0.85.0 <0.86`, Node.js 23.6 or newer,
 and qualified Gondolin/QEMU combinations on macOS Apple Silicon. New Pi, Node,
 Gondolin, image, QEMU, macOS, or architecture versions require explicit
 qualification. Linux and macOS Intel are not supported hosts.
