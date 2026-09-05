@@ -14,6 +14,7 @@ import type { RunResult } from "../src/contracts.js";
 import type { SubagentRequest } from "../src/launch-contracts.js";
 import { AttemptRecordStore } from "../src/persistence/attempt-record.js";
 import { RunJournal } from "../src/persistence/journal.js";
+import { OperationIndex } from "../src/persistence/operation-index.js";
 import { acquireRunLease } from "../src/persistence/run-lease.js";
 import { RunRecordStore } from "../src/persistence/run-record.js";
 import { digestFileResource } from "../src/preflight/resources.js";
@@ -379,6 +380,23 @@ describe("foreground subagent service", () => {
 		);
 		expect((await restartedClient.release(first.runId)).status).toBe(
 			"completed",
+		);
+	});
+
+	it("fails closed when an operation claim has no durable run", async () => {
+		const data = await serviceFor("dangling-operation");
+		const operations = await OperationIndex.open(
+			path.join(data.root, "state", "operations"),
+		);
+		await operations.claim({
+			ownerId: "owner-dangling",
+			operationId: "operation-dangling",
+			requestSha256: hash,
+			runId: "run_dangling",
+		});
+		const client = data.service.forOwner({ id: "owner-dangling" });
+		await expect(client.findByOperation("operation-dangling")).rejects.toThrow(
+			"operation claim has no durable run record",
 		);
 	});
 

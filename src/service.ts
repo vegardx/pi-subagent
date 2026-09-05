@@ -27,7 +27,11 @@ import type {
 } from "./launch-contracts.js";
 import { transitionRunStatus } from "./lifecycle/reducer.js";
 import { AttemptRecordStore } from "./persistence/attempt-record.js";
-import { type JournalEvent, RunJournal } from "./persistence/journal.js";
+import {
+	type JournalEvent,
+	PersistenceCorruptionError,
+	RunJournal,
+} from "./persistence/journal.js";
 import { OperationIndex } from "./persistence/operation-index.js";
 import {
 	createRetentionManager,
@@ -1855,11 +1859,37 @@ export async function createSubagentService(options: {
 					const record = await operationIndex.find(owner.id, operationId);
 					if (!record) return undefined;
 					const run = runs.get(record.runId);
+					if (run) {
+						return {
+							runId: record.runId,
+							attemptId: run.plan.attemptId,
+							status: run.status,
+						};
+					}
+					let persisted: Awaited<ReturnType<RunRecordStore["read"]>>;
+					try {
+						persisted = await runRecords.read(record.runId);
+					} catch (error) {
+						if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+							throw new PersistenceCorruptionError(
+								"operation claim has no durable run record",
+							);
+						}
+						throw error;
+					}
+					if (
+						persisted.ownerId !== owner.id ||
+						persisted.plan.operationId !== operationId ||
+						persisted.plan.runId !== record.runId
+					) {
+						throw new PersistenceCorruptionError(
+							"operation claim and run record do not match",
+						);
+					}
 					return {
 						runId: record.runId,
-						attemptId:
-							run?.plan.attemptId ?? `attempt_${record.runId.slice(4)}`,
-						status: run?.status ?? "active",
+						attemptId: persisted.plan.attemptId,
+						status: "active",
 					};
 				},
 
