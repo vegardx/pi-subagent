@@ -7,7 +7,10 @@ sequenced JSONL events, fsync-backed appends, atomic snapshots, exact contract
 revision validation, JSON-roundtrip validation, and repair of one unterminated
 tail. Interior corruption fails closed. The operation index atomically binds an
 owner-scoped operation ID to one request digest and run through create-once hard
-links; identical replay adopts the mapping and conflicting replay fails.
+links; identical replay adopts the mapping and conflicting replay fails. Lookup
+requires a matching durable run record when the run is not already loaded; an
+operation claim without that record is classified as persistence corruption
+rather than reported as an active child.
 Cross-process run leases now use OS-owned per-run localhost listeners and
 monotonic durable generations. Fenced journals and worktree lifecycle mutations
 verify the current lease before side effects and receipts. Session-specific leases and deep external-side-effect reconciliation remain
