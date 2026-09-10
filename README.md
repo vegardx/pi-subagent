@@ -18,7 +18,7 @@ Provide one reusable implementation for delegated Pi agents:
 - read-only checkout access for readers and private worktrees for writers;
 - host-owned models, credentials, Git handoffs, persistence, and cleanup;
 - cancellation, classified failure, backoff, fresh-VM retry/resume, and reconciliation;
-- cumulative runtime/uncached-token/cost budgets, 70%/90% convergence steering,
+- cumulative runtime/provider-cost/optional-total-token budgets, 70%/90% convergence steering,
   and bounded artifacts with full cache-usage telemetry;
 - a typed service used by both the model-facing tool and workflow engines.
 

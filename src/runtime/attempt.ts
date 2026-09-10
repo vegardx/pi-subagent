@@ -49,7 +49,8 @@ import {
 	type BudgetSteeringTrigger,
 	budgetStagesForPressure,
 	budgetSteeringMessage,
-	uncachedTokens,
+	totalTokens,
+	usageBudgetPressures,
 } from "./budget.js";
 import { classifyAttemptFailure } from "./failure.js";
 import {
@@ -305,7 +306,7 @@ export async function runNativeAttempt(options: {
 	let truncated = false;
 	let stopBudgetSteering: () => Promise<void> = async () => {};
 	const timeoutSignal = AbortSignal.timeout(
-		options.plan.limits.attemptRuntimeMs,
+		options.plan.limits.attemptTimeoutMs,
 	);
 	const fatalToolController = new AbortController();
 	let fatalToolAbort = false;
@@ -463,12 +464,21 @@ export async function runNativeAttempt(options: {
 			(total, result) => total + result.runtimeMs,
 			0,
 		);
-		const priorUncachedTokens = priorResults.reduce(
-			(total, result) => total + uncachedTokens(result.usage),
+		const priorTotalTokens = priorResults.reduce(
+			(total, result) => total + totalTokens(result.usage),
 			0,
 		);
-		const runRuntimeLimit = options.plan.limits.runtimeMs + priorRuntimeMs;
-		const tokenLimit = options.plan.limits.tokens + priorUncachedTokens;
+		const priorCost = priorResults.reduce(
+			(total, result) => total + result.usage.cost,
+			0,
+		);
+		const cumulativeRuntimeLimit =
+			options.plan.limits.cumulativeRuntimeMs + priorRuntimeMs;
+		const tokenLimit =
+			options.plan.limits.totalTokens === undefined
+				? undefined
+				: options.plan.limits.totalTokens + priorTotalTokens;
+		const costLimit = options.plan.limits.cost + priorCost;
 		let highestBudgetStage = priorBudgetEvents.reduce<BudgetSteeringStage | 0>(
 			(highest, event) => {
 				if (event.type !== "budget-steering") return highest;
@@ -512,7 +522,7 @@ export async function runNativeAttempt(options: {
 			stage: BudgetSteeringStage,
 			trigger: Extract<
 				BudgetSteeringTrigger,
-				"run-runtime" | "attempt-runtime"
+				"cumulative-runtime" | "attempt-timeout"
 			>,
 			limit: number,
 			alreadyUsed: number,
@@ -523,7 +533,7 @@ export async function runNativeAttempt(options: {
 			);
 			const timer = setTimeout(() => {
 				const used =
-					trigger === "run-runtime"
+					trigger === "cumulative-runtime"
 						? priorRuntimeMs + elapsedRuntimeMs()
 						: elapsedRuntimeMs();
 				queueBudgetSteering(stage, trigger, used, limit);
@@ -534,14 +544,14 @@ export async function runNativeAttempt(options: {
 		for (const stage of [0.7, 0.9] as const) {
 			scheduleRuntimeStage(
 				stage,
-				"run-runtime",
-				runRuntimeLimit,
+				"cumulative-runtime",
+				cumulativeRuntimeLimit,
 				priorRuntimeMs,
 			);
 			scheduleRuntimeStage(
 				stage,
-				"attempt-runtime",
-				options.plan.limits.attemptRuntimeMs,
+				"attempt-timeout",
+				options.plan.limits.attemptTimeoutMs,
 				0,
 			);
 		}
@@ -561,9 +571,32 @@ export async function runNativeAttempt(options: {
 				)
 				.then(() => undefined)
 				.catch(() => {});
-			const used = priorUncachedTokens + uncachedTokens(current);
-			for (const stage of budgetStagesForPressure(used / tokenLimit))
-				queueBudgetSteering(stage, "tokens", used, tokenLimit);
+			for (const pressure of usageBudgetPressures({
+				prior: {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: priorTotalTokens,
+					cost: priorCost,
+				},
+				current,
+				limits: {
+					cost: costLimit,
+					...(tokenLimit === undefined ? {} : { totalTokens: tokenLimit }),
+				},
+			})) {
+				for (const stage of budgetStagesForPressure(
+					pressure.used / pressure.limit,
+				)) {
+					queueBudgetSteering(
+						stage,
+						pressure.trigger,
+						pressure.used,
+						pressure.limit,
+					);
+				}
+			}
 		});
 		stopBudgetSteering = async () => {
 			for (const timer of budgetTimers) clearTimeout(timer);
@@ -628,7 +661,8 @@ export async function runNativeAttempt(options: {
 		output = inlineOutput.output;
 		truncated = artifactOutput.truncated || inlineOutput.truncated;
 		if (
-			uncachedTokens(collectedUsage) > options.plan.limits.tokens ||
+			(options.plan.limits.totalTokens !== undefined &&
+				totalTokens(collectedUsage) > options.plan.limits.totalTokens) ||
 			collectedUsage.cost > options.plan.limits.cost
 		) {
 			throw new Error("attempt usage limit exceeded");

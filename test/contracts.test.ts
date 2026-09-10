@@ -29,6 +29,7 @@ describe("runtime contracts", () => {
 			resume: true,
 			classifiedFailures: true,
 			cumulativeRuntimeBudget: true,
+			costFirstBudgets: true,
 			retryBackoff: true,
 			deepReconciliation: true,
 			worktrees: true,

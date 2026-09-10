@@ -721,8 +721,8 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 				modelRuntime?.registerNativeProvider(selectedProvider);
 			const thinking = resolveThinking(params.thinking, ctx);
 			const tools = params.tools ?? READ_ONLY_TOOLS;
-			const attemptRuntimeMs = params.timeoutMs ?? 600_000;
-			const runRuntimeMs = Math.min(3_600_000, attemptRuntimeMs * 3);
+			const attemptTimeoutMs = params.timeoutMs ?? 600_000;
+			const cumulativeRuntimeMs = Math.min(3_600_000, attemptTimeoutMs * 3);
 			const workspaceMode: "read-only" | "worktree" = tools.some((tool) =>
 				MUTATING_TOOLS.has(tool),
 			)
@@ -752,9 +752,9 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 				contextScopes: [...(params.contextScopes ?? [])],
 				workspaceModes: [workspaceMode],
 				limitCeiling: {
-					runtimeMs: runRuntimeMs,
-					attemptRuntimeMs,
-					tokens: 10_000_000,
+					cumulativeRuntimeMs: cumulativeRuntimeMs,
+					attemptTimeoutMs,
+					totalTokens: 10_000_000,
 					cost: 100,
 					outputBytes: 1024 * 1024,
 					workspaceWriteBytes: 512 * 1024 * 1024,

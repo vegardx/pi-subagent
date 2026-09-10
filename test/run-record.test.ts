@@ -18,7 +18,7 @@ function root(name: string): string {
 function plan(): AgentLaunchPlan {
 	const draft = {
 		schema: "pi-subagent-launch" as const,
-		contractRevision: 4 as const,
+		contractRevision: 5 as const,
 		operationId: "operation",
 		ownerId: "owner",
 		runId: "run_record",
@@ -69,9 +69,9 @@ function plan(): AgentLaunchPlan {
 			blockInternalRanges: true as const,
 		},
 		limits: {
-			runtimeMs: 60_000,
-			attemptRuntimeMs: 30_000,
-			tokens: 1000,
+			cumulativeRuntimeMs: 60_000,
+			attemptTimeoutMs: 30_000,
+			totalTokens: 1000,
 			cost: 1,
 			outputBytes: 1024,
 			workspaceWriteBytes: 0,

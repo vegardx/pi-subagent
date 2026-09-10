@@ -63,15 +63,19 @@ export const WorkspaceRequestSchema = Type.Union([
 ]);
 export type WorkspaceRequest = Static<typeof WorkspaceRequestSchema>;
 
+export const DEFAULT_MAX_TASK_COST = 100;
+
 export const RunLimitsSchema = Type.Object(
 	{
-		runtimeMs: Type.Integer({ minimum: 1_000, maximum: 3_600_000 }),
-		attemptRuntimeMs: Type.Integer({
+		cumulativeRuntimeMs: Type.Integer({ minimum: 1_000, maximum: 3_600_000 }),
+		attemptTimeoutMs: Type.Integer({
 			minimum: 1_000,
 			maximum: 3_600_000,
 		}),
-		tokens: Type.Integer({ minimum: 1, maximum: 10_000_000 }),
-		cost: Type.Number({ minimum: 0, maximum: 10_000 }),
+		totalTokens: Type.Optional(
+			Type.Integer({ minimum: 1, maximum: 10_000_000 }),
+		),
+		cost: Type.Number({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
 		outputBytes: Type.Integer({ minimum: 1, maximum: 16 * 1024 * 1024 }),
 		workspaceWriteBytes: Type.Integer({
 			minimum: 0,

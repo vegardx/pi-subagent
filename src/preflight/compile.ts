@@ -69,11 +69,13 @@ function assertSubset(
 }
 
 function assertLimits(requested: RunLimits, ceiling: RunLimits): void {
-	if (requested.attemptRuntimeMs > requested.runtimeMs) {
-		throw new PreflightError("attempt runtime exceeds run-wide runtime");
+	if (requested.attemptTimeoutMs > requested.cumulativeRuntimeMs) {
+		throw new PreflightError("attempt timeout exceeds cumulative runtime");
 	}
 	for (const key of Object.keys(requested) as Array<keyof RunLimits>) {
-		if (requested[key] > ceiling[key]) {
+		const value = requested[key];
+		const maximum = ceiling[key];
+		if (value !== undefined && maximum !== undefined && value > maximum) {
 			throw new PreflightError(`limit exceeds ceiling: ${key}`);
 		}
 	}

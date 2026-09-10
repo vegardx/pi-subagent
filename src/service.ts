@@ -25,6 +25,7 @@ import type {
 	ResourceGrant,
 	SubagentRequest,
 } from "./launch-contracts.js";
+import { DEFAULT_MAX_TASK_COST } from "./launch-contracts.js";
 import { transitionRunStatus } from "./lifecycle/reducer.js";
 import { AttemptRecordStore } from "./persistence/attempt-record.js";
 import {
@@ -81,7 +82,7 @@ import {
 	type AttemptExecutionResult,
 	runNativeAttempt,
 } from "./runtime/attempt.js";
-import { remainingUncachedTokens } from "./runtime/budget.js";
+import { remainingTotalTokens } from "./runtime/budget.js";
 import { type HostToolDeclaration, hostToolMap } from "./runtime/host-tools.js";
 import { createFinalAnswerController } from "./runtime/structured-output.js";
 import type { VmCapacityManager } from "./sandbox/capacity.js";
@@ -417,13 +418,18 @@ function retryPlan(
 	) {
 		throw new Error("failure classification does not permit retry");
 	}
-	const remainingRuntimeMs = current.limits.runtimeMs - result.result.runtimeMs;
-	const remainingTokens = remainingUncachedTokens(
-		current.limits.tokens,
+	const remainingRuntimeMs =
+		current.limits.cumulativeRuntimeMs - result.result.runtimeMs;
+	const remainingTokens = remainingTotalTokens(
+		current.limits.totalTokens,
 		result.result.usage,
 	);
 	const remainingCost = current.limits.cost - result.result.usage.cost;
-	if (remainingRuntimeMs < 1_000 || remainingTokens < 1 || remainingCost <= 0) {
+	if (
+		remainingRuntimeMs < 1_000 ||
+		(remainingTokens !== undefined && remainingTokens < 1) ||
+		remainingCost <= 0
+	) {
 		throw new Error("retry run-wide budget exhausted");
 	}
 	const attemptId = `attempt_${canonicalSha256({
@@ -438,12 +444,14 @@ function retryPlan(
 		attemptId,
 		limits: {
 			...current.limits,
-			runtimeMs: remainingRuntimeMs,
-			attemptRuntimeMs: Math.min(
-				current.limits.attemptRuntimeMs,
+			cumulativeRuntimeMs: remainingRuntimeMs,
+			attemptTimeoutMs: Math.min(
+				current.limits.attemptTimeoutMs,
 				remainingRuntimeMs,
 			),
-			tokens: remainingTokens,
+			...(remainingTokens === undefined
+				? {}
+				: { totalTokens: remainingTokens }),
 			cost: remainingCost,
 			retries: current.limits.retries - 1,
 		},
@@ -460,13 +468,18 @@ function resumePlan(
 	if (result.result.failure?.retry !== "resume") {
 		throw new Error("failure classification does not permit resume");
 	}
-	const remainingRuntimeMs = current.limits.runtimeMs - result.result.runtimeMs;
-	const remainingTokens = remainingUncachedTokens(
-		current.limits.tokens,
+	const remainingRuntimeMs =
+		current.limits.cumulativeRuntimeMs - result.result.runtimeMs;
+	const remainingTokens = remainingTotalTokens(
+		current.limits.totalTokens,
 		result.result.usage,
 	);
 	const remainingCost = current.limits.cost - result.result.usage.cost;
-	if (remainingRuntimeMs < 1_000 || remainingTokens < 1 || remainingCost <= 0) {
+	if (
+		remainingRuntimeMs < 1_000 ||
+		(remainingTokens !== undefined && remainingTokens < 1) ||
+		remainingCost <= 0
+	) {
 		throw new Error("resume run-wide budget exhausted");
 	}
 	const attemptId = `attempt_${canonicalSha256({
@@ -481,12 +494,14 @@ function resumePlan(
 		attemptId,
 		limits: {
 			...current.limits,
-			runtimeMs: remainingRuntimeMs,
-			attemptRuntimeMs: Math.min(
-				current.limits.attemptRuntimeMs,
+			cumulativeRuntimeMs: remainingRuntimeMs,
+			attemptTimeoutMs: Math.min(
+				current.limits.attemptTimeoutMs,
 				remainingRuntimeMs,
 			),
-			tokens: remainingTokens,
+			...(remainingTokens === undefined
+				? {}
+				: { totalTokens: remainingTokens }),
 			cost: remainingCost,
 			resumes: current.limits.resumes - 1,
 		},
@@ -678,7 +693,12 @@ export async function createSubagentService(options: {
 	processController?: ProcessController;
 	hostTools?: readonly HostToolDeclaration[];
 	resolveHostTools?: () => readonly HostToolDeclaration[];
+	maxTaskCost?: number;
 }): Promise<SubagentService> {
+	const maxTaskCost = options.maxTaskCost ?? DEFAULT_MAX_TASK_COST;
+	if (!Number.isFinite(maxTaskCost) || maxTaskCost < 0) {
+		throw new Error("invalid maximum task cost policy");
+	}
 	await mkdir(options.root, { recursive: true, mode: 0o700 });
 	const builtToolImplementation = fileURLToPath(
 		new URL("./sandbox/tools.js", import.meta.url),
@@ -1277,10 +1297,13 @@ export async function createSubagentService(options: {
 					).toISOString()
 				: undefined;
 		const remainingRuntime =
-			run.plan.limits.runtimeMs - (run.result?.result.runtimeMs ?? 0);
+			run.plan.limits.cumulativeRuntimeMs - (run.result?.result.runtimeMs ?? 0);
 		const remainingTokens = run.result
-			? remainingUncachedTokens(run.plan.limits.tokens, run.result.result.usage)
-			: run.plan.limits.tokens;
+			? remainingTotalTokens(
+					run.plan.limits.totalTokens,
+					run.result.result.usage,
+				)
+			: run.plan.limits.totalTokens;
 		const remainingCost =
 			run.plan.limits.cost - (run.result?.result.usage.cost ?? 0);
 		const goalPreview = run.plan.task.goal
@@ -1294,7 +1317,7 @@ export async function createSubagentService(options: {
 			(retryFailure?.retry === "manual" || retryFailure?.retry === "backoff") &&
 			run.plan.limits.retries > 0 &&
 			remainingRuntime >= 1_000 &&
-			remainingTokens >= 1 &&
+			(remainingTokens === undefined || remainingTokens >= 1) &&
 			remainingCost > 0;
 		const resumable =
 			run.status === "interrupted" &&
@@ -1302,7 +1325,7 @@ export async function createSubagentService(options: {
 			run.result.result.failure?.retry === "resume" &&
 			run.plan.limits.resumes > 0 &&
 			remainingRuntime >= 1_000 &&
-			remainingTokens >= 1 &&
+			(remainingTokens === undefined || remainingTokens >= 1) &&
 			remainingCost > 0;
 		const hasRetainedWorktree = await retainedWorktree(run, attempts);
 		const workspaceReleasable = await canReleaseRunWorktrees(run, attempts);
@@ -1657,6 +1680,11 @@ export async function createSubagentService(options: {
 
 			return {
 				async preflight(request) {
+					if (request.limits.cost > maxTaskCost) {
+						throw new Error(
+							`task cost limit exceeds service policy maximum of $${maxTaskCost}`,
+						);
+					}
 					for (const [id, prepared] of preflights) {
 						if (Date.parse(prepared.expiresAt) <= Date.now())
 							preflights.delete(id);
