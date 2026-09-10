@@ -37,6 +37,7 @@ export {
 	AgentLaunchPlanSchema,
 	type ContextScope,
 	ContextScopeSchema,
+	DEFAULT_MAX_TASK_COST,
 	type DelegatedTask,
 	DelegatedTaskSchema,
 	type ExactModelRequest,

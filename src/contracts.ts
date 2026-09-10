@@ -1,7 +1,7 @@
 import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
 
-export const CONTRACT_REVISION = 4 as const;
+export const CONTRACT_REVISION = 5 as const;
 
 export class IncompatibleContractRevisionError extends Error {
 	constructor(
@@ -235,6 +235,7 @@ export const SubagentRuntimeContractSchema = Type.Object(
 				resume: Type.Boolean(),
 				classifiedFailures: Type.Boolean(),
 				cumulativeRuntimeBudget: Type.Boolean(),
+				costFirstBudgets: Type.Boolean(),
 				retryBackoff: Type.Boolean(),
 				deepReconciliation: Type.Boolean(),
 				worktrees: Type.Boolean(),
@@ -269,6 +270,7 @@ export const SUBAGENT_RUNTIME_CONTRACT: SubagentRuntimeContract = Object.freeze(
 			resume: true,
 			classifiedFailures: true,
 			cumulativeRuntimeBudget: true,
+			costFirstBudgets: true,
 			retryBackoff: true,
 			deepReconciliation: true,
 			worktrees: true,

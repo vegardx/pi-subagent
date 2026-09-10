@@ -497,14 +497,14 @@ reconciliation reacquires fencing, inspects persisted VM PID
 and worktree evidence without signaling unknown processes, and moves stale runs
 to failed, interrupted, or cleanup-blocked with a new durable receipt. Immutable per-attempt records now preserve ordinal, kind, parent, plan, and
 worktree identity across initial/retry/resume execution. Failed runs can retry
-with a new attempt while decrementing remaining retry/token/cost budgets.
+with a new attempt while decrementing remaining retry/optional-total-token/provider-cost budgets.
 Interrupted runs can reopen a contained persisted Pi session in a fresh VM while
-decrementing resume/token/cost budgets and reusing a retained worktree when
+decrementing resume/optional-total-token/provider-cost budgets and reusing a retained worktree when
 present. Stable terminal failure classification now binds code, origin, retry
 disposition, bounded message, and operator guidance into every non-completed
 result. Unknown errors fail closed to reconciliation; manual retry and
 exponentially delayed transient retry are distinct; resume requires a seat
-interruption classification and retained session. Runtime, token, and cost are
+interruption classification and retained session. Runtime, configured total model tokens, and provider-reported cost are
 cumulative across fresh attempts. Reconciliation now captures QEMU process birth
 and command identity, terminates only an exact stale match with per-signal
 revalidation, verifies retained `SessionManager` identity and containment, and

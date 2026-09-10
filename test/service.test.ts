@@ -51,9 +51,9 @@ async function fixture(name: string) {
 	await writeFile(agentPath, "worker prompt\n");
 	const agentDigest = await digestFileResource(agentPath);
 	const limits = {
-		runtimeMs: 60_000,
-		attemptRuntimeMs: 30_000,
-		tokens: 100_000,
+		cumulativeRuntimeMs: 60_000,
+		attemptTimeoutMs: 30_000,
+		totalTokens: 100_000,
 		cost: 10,
 		outputBytes: 4096,
 		workspaceWriteBytes: 0,
@@ -175,6 +175,7 @@ async function serviceFor(
 		typeof createSubagentService
 	>[0]["executeAttempt"],
 	hostTools: readonly HostToolDeclaration[] = [],
+	maxTaskCost?: number,
 ) {
 	const data = await fixture(name);
 	data.agent.tools.push(...hostTools.map((tool) => tool.name));
@@ -200,6 +201,7 @@ async function serviceFor(
 		},
 		resolveModel: async (model) => model,
 		hostTools,
+		...(maxTaskCost === undefined ? {} : { maxTaskCost }),
 		...(executeAttempt ? { executeAttempt } : {}),
 	});
 	return { ...data, service };
@@ -229,6 +231,24 @@ async function reopenService(data: Awaited<ReturnType<typeof serviceFor>>) {
 }
 
 describe("foreground subagent service", () => {
+	it("enforces the configurable task cost policy before preflight", async () => {
+		const data = await serviceFor("cost-policy", undefined, [], 5);
+		const client = data.service.forOwner({ id: "owner-cost-policy" });
+		await expect(
+			client.preflight({
+				...data.request,
+				limits: { ...data.request.limits, cost: 5.01 },
+			}),
+		).rejects.toThrow("service policy maximum of $5");
+		await expect(
+			client.preflight({
+				...data.request,
+				limits: { ...data.request.limits, cost: 5 },
+			}),
+		).resolves.toMatchObject({ launchPlan: { limits: { cost: 5 } } });
+		await data.service.shutdown();
+	});
+
 	it("binds host-brokered tools into preflight and attempt execution", async () => {
 		const hostTool = searchHostTool();
 		let projected: readonly HostToolDeclaration[] = [];
@@ -773,7 +793,7 @@ describe("foreground subagent service", () => {
 			},
 			resolveModel: async (model) => model,
 			executeAttempt: async (input) => {
-				retryRuntimeMs = input.plan.limits.runtimeMs;
+				retryRuntimeMs = input.plan.limits.cumulativeRuntimeMs;
 				return {
 					result: result(input.plan.runId, "completed"),
 					output: input.agent.prompt,
@@ -790,7 +810,7 @@ describe("foreground subagent service", () => {
 		expect((await restartedClient.wait(initial.runId)).output).toBe(
 			"worker prompt",
 		);
-		expect(retryRuntimeMs).toBe(data.request.limits.runtimeMs - 100);
+		expect(retryRuntimeMs).toBe(data.request.limits.cumulativeRuntimeMs - 100);
 		const history = await (
 			await AttemptRecordStore.open(
 				path.join(data.root, "state", "attempt-records"),
@@ -852,7 +872,8 @@ describe("foreground subagent service", () => {
 		let dataRoot = "";
 		const data = await serviceFor("resume", async (input) => {
 			attempts++;
-			if (attempts === 2) resumedRuntimeMs = input.plan.limits.runtimeMs;
+			if (attempts === 2)
+				resumedRuntimeMs = input.plan.limits.cumulativeRuntimeMs;
 			if (attempts === 1) {
 				const manager = SessionManager.create(
 					"/workspace",
@@ -913,7 +934,9 @@ describe("foreground subagent service", () => {
 			"initial",
 			"resume",
 		]);
-		expect(resumedRuntimeMs).toBe(data.request.limits.runtimeMs - 100);
+		expect(resumedRuntimeMs).toBe(
+			data.request.limits.cumulativeRuntimeMs - 100,
+		);
 	});
 
 	it("abandons an interrupted run and removes recovery authority", async () => {

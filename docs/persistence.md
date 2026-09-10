@@ -135,7 +135,8 @@ Before launch it validates:
 - workspace/worktree and baseline identity;
 - Gondolin package and image compatibility;
 - mount and public-egress policy;
-- remaining runtime, token, cost, retry, and resume limits;
+- remaining cumulative runtime, optional total-token, provider-cost, retry, and
+  resume limits;
 - absence of another active writer for the session or worktree.
 
 A changed policy requires new preflight authority. Cleanup-blocked runs are not

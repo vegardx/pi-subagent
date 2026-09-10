@@ -40,10 +40,11 @@ not retry or cancellation: it removes recovery authority from an interrupted
 run, records operator-origin `operator-abandoned` evidence, and preserves the
 run graph until ordinary retention selects it.
 
-`runtimeMs` is a cumulative run-wide budget alongside uncached input/output
-tokens, cost, retry count, and resume count. Cache read/write tokens are reported
-but do not consume the ceiling. `attemptRuntimeMs` is the per-attempt deadline and may not
-exceed the remaining run-wide runtime. Every terminal attempt records measured
+`cumulativeRuntimeMs` is a run-wide budget alongside provider-reported dollar
+cost, optional `totalTokens`, retry count, and resume count. A configured total
+model-token guard consumes `Usage.totalTokens`, including cache traffic.
+`attemptTimeoutMs` is the per-attempt wall deadline and may not exceed the
+remaining cumulative runtime. Every terminal attempt records measured
 wall-clock milliseconds, including startup and cleanup. Retry or resume subtracts
 that duration, clamps the next attempt deadline to the remaining runtime, and
 fails before execution when fewer than 1,000 milliseconds remain. Resume records

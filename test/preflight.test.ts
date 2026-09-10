@@ -10,9 +10,9 @@ import {
 const a = "a".repeat(64);
 const b = "b".repeat(64);
 const limits = {
-	runtimeMs: 60_000,
-	attemptRuntimeMs: 30_000,
-	tokens: 100_000,
+	cumulativeRuntimeMs: 60_000,
+	attemptTimeoutMs: 30_000,
+	totalTokens: 100_000,
 	cost: 10,
 	outputBytes: 1024 * 1024,
 	workspaceWriteBytes: 128 * 1024 * 1024,
@@ -170,11 +170,11 @@ describe("semantic preflight", () => {
 					...request,
 					limits: {
 						...request.limits,
-						attemptRuntimeMs: request.limits.runtimeMs + 1,
+						attemptTimeoutMs: request.limits.cumulativeRuntimeMs + 1,
 					},
 				},
 			}),
-		).rejects.toThrow("attempt runtime exceeds run-wide runtime");
+		).rejects.toThrow("attempt timeout exceeds cumulative runtime");
 	});
 
 	it("rejects capability and limit escalation", async () => {
@@ -185,7 +185,10 @@ describe("semantic preflight", () => {
 			compile({
 				request: {
 					...request,
-					limits: { ...limits, runtimeMs: limits.runtimeMs + 1 },
+					limits: {
+						...limits,
+						cumulativeRuntimeMs: limits.cumulativeRuntimeMs + 1,
+					},
 				},
 			}),
 		).rejects.toThrow("limit exceeds ceiling");

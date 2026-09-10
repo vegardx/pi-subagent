@@ -22,9 +22,9 @@ preloadSkills: []
 contextScopes: []
 workspaceModes: [read-only]
 limits:
-  runtimeMs: 60000
-  attemptRuntimeMs: 30000
-  tokens: 100000
+  cumulativeRuntimeMs: 60000
+  attemptTimeoutMs: 30000
+  totalTokens: 100000
   cost: 10
   outputBytes: 1048576
   workspaceWriteBytes: 0

@@ -74,10 +74,10 @@ type WorkspaceRequest =
 	| { mode: "worktree"; cwd: string };
 
 interface RunLimits {
-	runtimeMs: number;        // cumulative across every attempt
-	attemptRuntimeMs: number; // deadline for one attempt; <= runtimeMs
-	tokens: number;
-	cost: number;
+	cumulativeRuntimeMs: number; // cumulative across every attempt
+	attemptTimeoutMs: number;    // wall deadline for one attempt
+	totalTokens?: number;        // optional all-traffic guard
+	cost: number;                // provider-reported dollars
 	outputBytes: number;
 	workspaceWriteBytes: number;
 	retries: number;
@@ -103,6 +103,15 @@ interface OwnerRegistration {
 	resultDestination?: string;
 }
 ```
+
+`cost` is provider-reported spend in dollars using Pi's configured model pricing
+and message usage. A model configured with zero rates is treated as free; the
+current Pi model contract does not distinguish free pricing from unavailable
+pricing metadata. The service defaults to a $100 maximum declared task cost and
+embedders may configure that policy. The task's
+explicit cost limit must fit both its agent ceiling and the service policy.
+`totalTokens` is optional; when absent, cost and runtime remain the task budget
+authorities.
 
 Preflight resolves and hashes all effective resources without starting a model
 session or VM. Project trust, provenance, canonical paths, symlink policy,
@@ -415,10 +424,11 @@ interface ClassifiedFailure {
 
 Unknown failures fail closed to `reconcile`. Explicit retry accepts only `manual`
 or elapsed `backoff`; resume accepts only `resume`. Every attempt records
-`runtimeMs`, and retry/resume subtract runtime, uncached input/output tokens, and
-cost from the current remaining plan before creating a fresh attempt. Cache reads
-and writes remain in usage telemetry and provider cost but do not consume the
-token ceiling.
+measured `runtimeMs`, and retry/resume subtract runtime, configured total model
+tokens, and provider-reported cost from the current remaining plan before
+creating a fresh attempt. When `totalTokens` is configured, it consumes the
+reported `Usage.totalTokens`, including input, output, cache-read, and cache-write
+traffic. Without it, cost and runtime remain authoritative.
 
 A run may be `completed` only when VM cleanup is proved and workspace cleanup is
 `proved` or `not-needed`. A deliberately retained worktree is represented as
@@ -466,12 +476,13 @@ interface RunResult {
 }
 ```
 
-Limits define per-attempt and per-run runtime, uncached input/output tokens,
-cost, output, logs, events, artifact bytes, retries, and resume count. Cache
-reads/writes and total provider tokens remain visible telemetry. At 70% and 90%
-of either token, run-runtime, or attempt-runtime pressure, the runtime persists a
-single stage receipt per attempt and queues progressively stronger convergence
-steering.
+Limits define per-attempt timeout, cumulative runtime, optional total model
+tokens, provider-reported dollar cost, output, logs, events, artifact bytes,
+retries, and resume count. At 70% and 90% of configured total-token,
+provider-reported cost, cumulative-runtime, or attempt-timeout pressure, the
+runtime persists a single stage receipt per attempt and queues progressively
+stronger convergence steering. One unified stage per attempt prevents competing
+budget dimensions from emitting duplicate notices.
 Runtime stages are scheduled by wall clock; token stages are evaluated after
 turn usage is recorded. Partial usage and truncation remain visible after
 failure.

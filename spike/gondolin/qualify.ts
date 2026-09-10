@@ -595,9 +595,9 @@ async function qualifyForegroundService(): Promise<string> {
 	const modelRuntime = await ModelRuntime.create();
 	const agentHash = canonicalSha256("qualification-service-agent");
 	const limits = {
-		runtimeMs: 60_000,
-		attemptRuntimeMs: 30_000,
-		tokens: 100_000,
+		cumulativeRuntimeMs: 60_000,
+		attemptTimeoutMs: 30_000,
+		totalTokens: 100_000,
 		cost: 10,
 		outputBytes: 4096,
 		workspaceWriteBytes: 0,
@@ -764,9 +764,9 @@ async function qualifyAttemptRunner(): Promise<string> {
 		contextScopes: [],
 		workspaceModes: ["read-only" as const],
 		limitCeiling: {
-			runtimeMs: 60_000,
-			attemptRuntimeMs: 30_000,
-			tokens: 100_000,
+			cumulativeRuntimeMs: 60_000,
+			attemptTimeoutMs: 30_000,
+			totalTokens: 100_000,
 			cost: 10,
 			outputBytes: 4096,
 			workspaceWriteBytes: 0,

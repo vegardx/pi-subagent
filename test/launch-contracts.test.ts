@@ -7,9 +7,9 @@ import {
 
 const hash = "a".repeat(64);
 const limits = {
-	runtimeMs: 60_000,
-	attemptRuntimeMs: 30_000,
-	tokens: 100_000,
+	cumulativeRuntimeMs: 60_000,
+	attemptTimeoutMs: 30_000,
+	totalTokens: 100_000,
 	cost: 10,
 	outputBytes: 1024 * 1024,
 	workspaceWriteBytes: 128 * 1024 * 1024,
@@ -37,7 +37,7 @@ const request = {
 
 const plan = {
 	schema: "pi-subagent-launch",
-	contractRevision: 4,
+	contractRevision: 5,
 	operationId: "operation-1",
 	ownerId: "owner-1",
 	runId: "run_launch",
@@ -94,6 +94,19 @@ describe("launch contracts", () => {
 	it("accepts a bounded request and immutable launch plan", () => {
 		expect(Value.Check(SubagentRequestSchema, request)).toBe(true);
 		expect(Value.Check(AgentLaunchPlanSchema, plan)).toBe(true);
+		const { totalTokens: _requestTokens, ...costOnlyLimits } = limits;
+		expect(
+			Value.Check(SubagentRequestSchema, {
+				...request,
+				limits: costOnlyLimits,
+			}),
+		).toBe(true);
+		expect(
+			Value.Check(AgentLaunchPlanSchema, {
+				...plan,
+				limits: costOnlyLimits,
+			}),
+		).toBe(true);
 	});
 
 	it("rejects duplicate grants and unknown request fields", () => {
@@ -112,7 +125,7 @@ describe("launch contracts", () => {
 		expect(
 			Value.Check(SubagentRequestSchema, {
 				...request,
-				limits: { ...limits, runtimeMs: 3_600_001 },
+				limits: { ...limits, cumulativeRuntimeMs: 3_600_001 },
 			}),
 		).toBe(false);
 		expect(
