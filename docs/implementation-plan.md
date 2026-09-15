@@ -282,7 +282,10 @@ corruption handling, and an atomic owner-scoped operation idempotency index.
 Cross-process run fencing with monotonic generations is implemented and enforced
 by journal appends and snapshots. Session fencing remains outstanding. Worktree mutations and cleanup now require
 a current matching run lease, and explicit release deletes a handoff branch only
-after the worktree is gone and the branch still resolves to the recorded commit.
+after the worktree is gone, the branch still resolves to the recorded commit,
+and the durable `refs/pi-subagent/handoffs/` ref still pins that commit; the
+owner client exports the commit as bounded digest-verified `git format-patch`
+bytes and retention deletes the ref when the run graph is pruned.
 The host reserves deterministic per-attempt branches/worktrees, captures all
 changes in an immutable commit, persists the handoff before cleanup, retains
 dirty work, and removes only clean worktrees whose path, branch, and HEAD match

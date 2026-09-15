@@ -134,6 +134,7 @@ function labelAction(action: InspectorAction): string {
 		pin: "Protect from pruning",
 		unpin: "Allow normal pruning",
 		"export-output": "Export output artifact",
+		"export-handoff": "Export handoff patch",
 	}[action];
 }
 

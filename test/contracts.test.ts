@@ -33,6 +33,7 @@ describe("runtime contracts", () => {
 			retryBackoff: true,
 			deepReconciliation: true,
 			worktrees: true,
+			handoffExport: true,
 			publicNetworkEgress: true,
 			explicitResources: true,
 			ambientExtensionsControl: true,

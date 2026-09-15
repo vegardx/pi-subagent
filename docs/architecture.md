@@ -144,6 +144,12 @@ The host owns worktree creation, baseline identity, handoff capture, commit,
 retention, and cleanup. The VM does not receive unrestricted repository Git
 metadata. If a child needs Git evidence, the service provides a bounded
 read-only adapter or artifact rather than mounting the entire common Git dir.
+Consumers of the service receive handoff evidence the same way: the workspace
+manager keeps each handoff commit reachable through a durable
+`refs/pi-subagent/handoffs/` ref and renders it on demand as bounded,
+digest-verified `git format-patch` bytes through `exportHandoff`. Consumers
+never read private worktrees, branches, or refs; retention deletes the ref when
+the run graph is pruned.
 
 The selected repository is mounted as repository content, including local files
 such as `.env` when present. Confidentiality of repository contents is not an

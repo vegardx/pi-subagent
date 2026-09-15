@@ -24,7 +24,7 @@ transient.
 | Seat interruption | Seat exited or reloaded during an active attempt | Explicit validated resume |
 | Lease loss | Seat lost fenced ownership of run/session/worktree | Abort local work; reconcile before retry |
 | Sandbox cleanup | VM closure or QEMU identity cannot be proved | Reconcile; cleanup blocked |
-| Workspace | Worktree preparation, handoff, or cleanup failed | Preparation may retry; cleanup fails closed |
+| Workspace | Worktree preparation, handoff, handoff ref, or cleanup failed | Preparation may retry; cleanup fails closed |
 | Persistence | Journal, receipt, or fsync failure | Fail closed before authority release |
 | Resource drift | Agent, skill, context, image, or policy changed after preflight | Re-preflight; never continue old plan |
 | Unknown | Unclassified error or unprovable external state | Reconcile/operator action |
@@ -59,6 +59,27 @@ persisted before steering is queued. A fresh retry or resume attempt receives it
 own reminders against the remaining budgets. Steering and its advisory receipt
 are best-effort and never turn otherwise successful task work into a failure;
 a missing receipt permits the reminder to be sent again.
+
+A cleanup-blocked attempt keeps its run lease in the owning seat. Handoff
+export, workspace release, and reconciliation reuse that held lease instead of
+binding a second time, so same-seat operators are not refused with "run lease
+unavailable"; the lease is released once the run leaves cleanup-blocked.
+
+If release finds the handoff ref missing while the record carries a handoff
+commit, release refuses, the reservation branch stays, and the run remains
+cleanup-blocked and retained. The operator remedy is to restore the ref from the
+recorded commit while the object still exists
+(`git update-ref refs/pi-subagent/handoffs/<run-id>/<attempt-id> <handoffCommit>`
+in the repository root), then release again; if the commit object is gone the
+handoff cannot be exported and the run should be pinned for inspection or
+abandoned through reconciliation rather than force-released.
+
+`exportHandoff` is a read and never changes run state. It rejects with an
+explicit error when the run is not owned, is not in a durable completed,
+failed, cancelled, or cleanup-blocked state, has no handoff commit, exceeds the
+requested or absolute byte bound, or when the handoff ref no longer resolves to
+the recorded commit; the caller retries after correcting the request or pinning
+the run, never by reading private repository state.
 
 A filesystem escape or denied host/internal-network destination is a boundary
 result, not a transient infrastructure failure. The runtime must not retry it
