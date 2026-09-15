@@ -677,6 +677,7 @@ The extension entry is separate:
 | 0.4 | Worktrees, public-egress policy, and handoff |
 | 0.5 | Service lifecycle, retry, and fresh-VM resume |
 | 0.9 | Extension, UI, and full acceptance candidate |
+| 0.10 | Contract revision 6: durable handoff export (`handoffExport`) |
 | 1.0 | Production-core stable contract |
 
 Versions are capability milestones, not deadlines.
