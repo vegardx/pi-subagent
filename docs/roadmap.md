@@ -3,8 +3,10 @@
 Phases 0–4 are implemented and release-qualified on the supported macOS Apple
 Silicon host. The standalone 0.9 candidate is active in the maintainer's normal
 Pi configuration alongside pi-maestro, which no longer bundles a subagent
-extension. No package-path filter is required. Phase 5 remains intentionally
-blocked until the stable-version decision.
+extension. No package-path filter is required. Phase 5 consumer integration
+remains intentionally blocked until the stable-version decision; the
+pi-subagent-side prerequisite for it, handoff export, ships ahead of that gate
+because it is a service capability of this repository and not workflow code.
 
 ## Phase 0 — contracts
 
@@ -63,8 +65,14 @@ blocked until the stable-version decision.
 
 ## Phase 5 — deferred workflow integration
 
-Starts only after pi-subagent completes full acceptance, dogfood cutover, and
-stable release qualification:
+Service-side prerequisite, delivered in this repository under contract
+revision 6: `exportHandoff`, `HandoffRef`, durable handoff refs that survive
+release, and retention cleanup of those refs, so a consumer can import writer
+evidence as bounded digest-verified bytes without reading private branches or
+host paths.
+
+Consumer integration starts only after pi-subagent completes full acceptance,
+dogfood cutover, and stable release qualification:
 
 - exact contract revision check for workflow consumers;
 - public-service-only pi-workflow integration;

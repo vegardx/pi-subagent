@@ -1,7 +1,7 @@
 import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
 
-export const CONTRACT_REVISION = 5 as const;
+export const CONTRACT_REVISION = 6 as const;
 
 export class IncompatibleContractRevisionError extends Error {
 	constructor(
@@ -106,6 +106,23 @@ export const ArtifactRefSchema = Type.Object(
 	{ additionalProperties: false },
 );
 export type ArtifactRef = Static<typeof ArtifactRefSchema>;
+
+export const HANDOFF_EXPORT_MEDIA_TYPE = "application/x-git-format-patch";
+
+export const HandoffRefSchema = Type.Object(
+	{
+		runId: RunIdSchema,
+		attemptId: AttemptIdSchema,
+		baselineHead: Type.String({ pattern: "^[a-f0-9]{40,64}$" }),
+		handoffCommit: Type.String({ pattern: "^[a-f0-9]{40,64}$" }),
+		format: Type.Literal("git-format-patch"),
+		sha256: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+		bytes: Type.Integer({ minimum: 1 }),
+		mediaType: Type.Literal(HANDOFF_EXPORT_MEDIA_TYPE),
+	},
+	{ additionalProperties: false },
+);
+export type HandoffRef = Static<typeof HandoffRefSchema>;
 
 export const FailureCodeSchema = Type.Union([
 	Type.Literal("authentication"),
@@ -239,6 +256,7 @@ export const SubagentRuntimeContractSchema = Type.Object(
 				retryBackoff: Type.Boolean(),
 				deepReconciliation: Type.Boolean(),
 				worktrees: Type.Boolean(),
+				handoffExport: Type.Boolean(),
 				publicNetworkEgress: Type.Boolean(),
 				explicitResources: Type.Boolean(),
 				ambientExtensionsControl: Type.Boolean(),
@@ -274,6 +292,7 @@ export const SUBAGENT_RUNTIME_CONTRACT: SubagentRuntimeContract = Object.freeze(
 			retryBackoff: true,
 			deepReconciliation: true,
 			worktrees: true,
+			handoffExport: true,
 			publicNetworkEgress: true,
 			explicitResources: true,
 			ambientExtensionsControl: true,

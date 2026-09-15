@@ -49,6 +49,7 @@ authority:
 /subagents retry|resume|reconcile|abandon <run-prefix>
 /subagents release-workspace <run-prefix>
 /subagents export-output <run-prefix> <destination>
+/subagents export-handoff <run-prefix> <destination>
 /subagents pin|unpin <run-prefix>
 /subagents prune [--apply]
 ```

@@ -237,7 +237,15 @@ interface SubagentClient {
 		context: MutationContext,
 		runId: RunId,
 	): Promise<ReconcileResult>;
-	exportArtifact(artifact: ArtifactRef): Promise<ArtifactExport>;
+	exportArtifact(
+		runId: RunId,
+		artifact: ArtifactRef,
+		maxBytes?: number,
+	): Promise<ArtifactExport>;
+	exportHandoff(
+		runId: RunId,
+		options?: { maxBytes?: number },
+	): Promise<HandoffExport>;
 	release(
 		context: MutationContext,
 		runId: RunId,
@@ -267,7 +275,49 @@ are never ordinary prune candidates.
 
 `exportArtifact` returns bounded verified bytes plus media type and digest so a
 caller can import them into its own retention domain. `release` completes only
-retained workspace cleanup through the owning service. `abandon` permanently
+retained workspace cleanup through the owning service.
+
+```ts
+interface HandoffRef {
+	runId: RunId;
+	attemptId: AttemptId;
+	baselineHead: string;
+	handoffCommit: string;
+	format: "git-format-patch";
+	sha256: string;
+	bytes: number;
+	mediaType: "application/x-git-format-patch";
+}
+
+interface HandoffExport {
+	ref: HandoffRef;
+	content: Buffer;
+}
+```
+
+`exportHandoff` returns the writing attempt's handoff as bounded bytes so a
+consumer that must never read private branches, refs, or host paths can import
+workflow-owned evidence. The content is the binary-safe
+`git format-patch --binary --stdout <baselineHead>..<handoffCommit>` output for
+the single handoff commit, produced by the host with `--no-replace-objects` and
+every `format.*` and `diff.*` rendering option pinned, without a diffstat or Git
+version signature. Bytes and digest are identical for the same baseline/handoff
+pair, the same Git build, and unchanged repository attributes: `.gitattributes`
+content is part of the commit pair, and `.git/info/attributes` is treated as
+part of the repository identity, so editing it changes the rendering. Consumers
+verify `sha256` and `bytes`, then `git am` or `git apply --index` the patch onto
+`baselineHead`. The handoff must be exactly one non-merge commit whose sole
+parent is `baselineHead`; anything else is refused. Export is owner-scoped like
+`exportArtifact`, requires a durable `completed`, `failed`, `cancelled`, or
+`cleanup-blocked` result whose `handoff` carries a `handoffCommit`, holds the
+run lease while reading the repository, and is bounded by `maxBytes` and the
+absolute 64 MiB Git output cap. A run that changed nothing has no handoff commit
+and is refused; an empty patch is never exported. Each export appends one
+`handoff-exported` receipt carrying the `HandoffRef`. Release removes only the
+reservation branch; the handoff commit stays reachable through a durable
+`refs/pi-subagent/handoffs/<run-id>/<attempt-id>` ref until retention prunes the
+run, so consumers may export before or after release but must export or pin
+before the run becomes ordinary prune history. `abandon` permanently
 terminalizes an interrupted run after sandbox cleanup is proved and any retained
 workspace can be released safely. Cleanup-blocked runs must reconcile first.
 
@@ -280,8 +330,8 @@ and direct commands:
 | active, not controllable | stop |
 | retry-eligible failed | retry plus terminal retention actions |
 | interrupted | resume when eligible; abandon when sandbox and retained-workspace cleanup can be proved |
-| cleanup-blocked | reconcile, plus release-workspace when the retained workspace is already proved releasable |
-| completed/failed/cancelled/abandoned | pin or unpin; export-output when present |
+| cleanup-blocked | reconcile, plus release-workspace when the retained workspace is already proved releasable; export-handoff when a handoff commit exists |
+| completed/failed/cancelled/abandoned | pin or unpin; export-output when present; export-handoff when a handoff commit exists (never for abandoned) |
 
 Pin and unpin affect retention only. Operator surfaces do not offer them for
 active, interrupted, or cleanup-blocked runs because those states are already
@@ -347,9 +397,11 @@ interface SubagentRuntimeContract {
 		resume: boolean;
 		classifiedFailures: boolean;
 		cumulativeRuntimeBudget: boolean;
+		costFirstBudgets: boolean;
 		retryBackoff: boolean;
 		deepReconciliation: boolean;
 		worktrees: boolean;
+		handoffExport: boolean;
 		publicNetworkEgress: boolean;
 		explicitResources: boolean;
 		ambientExtensionsControl: boolean;
@@ -358,7 +410,10 @@ interface SubagentRuntimeContract {
 }
 ```
 
-Consumers check the exact contract revision and required features rather than
+The current revision is 6. `handoffExport` states that `exportHandoff`,
+`HandoffRef`, the `export-handoff` action, durable handoff refs, and the
+`handoff-exported` receipt are implemented. Consumers check the exact contract
+revision and required features rather than
 infer support from package versions. Revisions are not backwards-compatible:
 a consumer either supports the current revision or refuses to start. The
 project does not provide compatibility aliases, adapters, or migration shims.

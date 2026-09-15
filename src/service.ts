@@ -88,6 +88,9 @@ import { createFinalAnswerController } from "./runtime/structured-output.js";
 import type { VmCapacityManager } from "./sandbox/capacity.js";
 import {
 	createAttemptWorktree,
+	exportWorktreeHandoff,
+	type HandoffExport,
+	handoffRefName,
 	observeWorktree,
 	readWorktreeRecord,
 	releaseWorktreeBranch,
@@ -131,8 +134,16 @@ export const RUN_ACTIONS = [
 	"pin",
 	"unpin",
 	"export-output",
+	"export-handoff",
 ] as const;
 export type RunAction = (typeof RUN_ACTIONS)[number];
+
+export const HANDOFF_EXPORT_STATUSES: readonly RunStatus[] = Object.freeze([
+	"completed",
+	"failed",
+	"cancelled",
+	"cleanup-blocked",
+]);
 
 export function isRunAction(value: string): value is RunAction {
 	return (RUN_ACTIONS as readonly string[]).includes(value);
@@ -149,6 +160,7 @@ export type RunActionFacts = {
 	retainedWorktree: boolean;
 	workspaceReleasable: boolean;
 	hasOutput: boolean;
+	hasHandoff: boolean;
 };
 
 export function availableRunActions(
@@ -178,6 +190,9 @@ export function availableRunActions(
 		actions.push(facts.pinned ? "unpin" : "pin");
 	}
 	if (facts.hasOutput) actions.push("export-output");
+	if (facts.hasHandoff && HANDOFF_EXPORT_STATUSES.includes(facts.status)) {
+		actions.push("export-handoff");
+	}
 	return Object.freeze(actions);
 }
 
@@ -289,6 +304,10 @@ export type SubagentClient = {
 		ref: ArtifactRef,
 		maxBytes?: number,
 	): Promise<ArtifactExport>;
+	exportHandoff(
+		runId: RunId,
+		options?: { maxBytes?: number },
+	): Promise<HandoffExport>;
 };
 
 export type SubagentService = {
@@ -335,6 +354,8 @@ type ActiveRun = {
 	control?: AttemptControl;
 	controlReceipts: Map<string, ControlReceipt>;
 	controlTail: Promise<void>;
+	/** Run lease this seat still holds because the attempt ended cleanup-blocked. */
+	lease?: RunLease;
 };
 
 type AttemptExecutor = typeof runNativeAttempt;
@@ -781,6 +802,36 @@ export async function createSubagentService(options: {
 			);
 		}
 	};
+	/**
+	 * A cleanup-blocked attempt keeps its run lease in this seat. Fenced reads
+	 * and cleanup for that run reuse the held lease instead of binding a second
+	 * time, which the OS-owned listener would refuse as unavailable. Callers
+	 * release a reused lease only when the run leaves cleanup-blocked.
+	 */
+	const holdRunLease = async (
+		run: ActiveRun,
+	): Promise<{ lease: RunLease; reused: boolean; done(): Promise<void> }> => {
+		if (run.lease) {
+			try {
+				await run.lease.assertCurrent();
+				return { lease: run.lease, reused: true, done: async () => {} };
+			} catch {
+				delete run.lease;
+			}
+		}
+		const lease = await acquireRunLease({
+			root: path.join(options.root, "leases"),
+			runId: run.plan.runId,
+		});
+		return { lease, reused: false, done: () => lease.release() };
+	};
+	const settleHeldLease = async (run: ActiveRun): Promise<void> => {
+		if (run.lease && run.status !== "cleanup-blocked") {
+			const held = run.lease;
+			delete run.lease;
+			await held.release();
+		}
+	};
 	const preflightTtlMs = options.preflightTtlMs ?? 5 * 60_000;
 	const agentDir = options.agentDir ?? getAgentDir();
 	const executeAttempt = options.executeAttempt ?? runNativeAttempt;
@@ -1143,6 +1194,7 @@ export async function createSubagentService(options: {
 				controlReceipts: new Map(),
 				controlTail: Promise.resolve(),
 				...(pendingControl ? { control: pendingControl } : {}),
+				lease,
 			};
 			const running = active;
 			running.promise = rawPromise.then(
@@ -1159,6 +1211,7 @@ export async function createSubagentService(options: {
 					if (result.result.status !== "cleanup-blocked") {
 						try {
 							await lease.release();
+							delete running.lease;
 						} catch (error) {
 							running.status = "cleanup-blocked";
 							emit(running.plan.runId, running.status);
@@ -1346,6 +1399,7 @@ export async function createSubagentService(options: {
 			retainedWorktree: hasRetainedWorktree,
 			workspaceReleasable,
 			hasOutput: run.result?.result.output !== undefined,
+			hasHandoff: run.result?.handoff?.handoffCommit !== undefined,
 		});
 		return {
 			runId: run.plan.runId,
@@ -2182,10 +2236,8 @@ export async function createSubagentService(options: {
 									: "absent",
 						};
 					}
-					const lease = await acquireRunLease({
-						root: path.join(options.root, "leases"),
-						runId,
-					});
+					const held = await holdRunLease(run);
+					const lease = held.lease;
 					try {
 						const journal = await RunJournal.open(
 							path.join(options.root, "runs"),
@@ -2434,6 +2486,7 @@ export async function createSubagentService(options: {
 						run.promise = Promise.resolve(execution);
 						run.status = status;
 						emit(runId, run.status);
+						await settleHeldLease(run);
 						return {
 							run: {
 								runId,
@@ -2445,7 +2498,7 @@ export async function createSubagentService(options: {
 							workspace,
 						};
 					} finally {
-						await lease.release();
+						await held.done();
 					}
 				},
 
@@ -2631,10 +2684,8 @@ export async function createSubagentService(options: {
 									: "active run cannot release its workspace",
 							);
 						}
-						const lease = await acquireRunLease({
-							root: path.join(options.root, "leases"),
-							runId,
-						});
+						const held = await holdRunLease(run);
+						const lease = held.lease;
 						try {
 							const journal = await RunJournal.open(
 								path.join(options.root, "runs"),
@@ -2693,13 +2744,14 @@ export async function createSubagentService(options: {
 								run.promise = Promise.resolve(nextExecution);
 								emit(runId, run.status);
 							}
+							await settleHeldLease(run);
 							return {
 								runId,
 								attemptId: run.plan.attemptId,
 								status: run.status,
 							};
 						} finally {
-							await lease.release();
+							await held.done();
 						}
 					});
 				},
@@ -2720,6 +2772,64 @@ export async function createSubagentService(options: {
 						ref,
 						maxBytes ?? run.plan.limits.outputBytes,
 					);
+				},
+
+				async exportHandoff(runId, exportOptions = {}) {
+					return runExclusive(async () => {
+						const run = ownedRun(runId);
+						if (!HANDOFF_EXPORT_STATUSES.includes(run.status)) {
+							throw new Error(
+								`handoff export requires a durable terminal run; run is ${run.status}`,
+							);
+						}
+						const handoff = run.result?.handoff;
+						if (!handoff?.handoffCommit) {
+							throw new Error("run has no handoff commit to export");
+						}
+						const held = await holdRunLease(run);
+						const lease = held.lease;
+						try {
+							const journal = await RunJournal.open(
+								path.join(options.root, "runs"),
+								runId,
+								lease,
+							);
+							await assertDurableStatus(journal, run.status);
+							const record = await readWorktreeRecord(
+								path.join(
+									options.root,
+									"workspace",
+									"records",
+									`${handoff.attemptId}.json`,
+								),
+							);
+							if (
+								record.runId !== runId ||
+								record.attemptId !== handoff.attemptId ||
+								record.handoffCommit !== handoff.handoffCommit ||
+								record.baselineHead !== handoff.baselineHead ||
+								record.handoffRef !== handoffRefName(runId, handoff.attemptId)
+							) {
+								throw new Error("durable handoff identity mismatch");
+							}
+							const exported = await exportWorktreeHandoff(record, {
+								lease,
+								...(exportOptions.maxBytes === undefined
+									? {}
+									: { maxBytes: exportOptions.maxBytes }),
+							});
+							await journal.append("handoff-exported", {
+								ref: exported.ref,
+								...(exportOptions.maxBytes === undefined
+									? {}
+									: { maxBytes: exportOptions.maxBytes }),
+							});
+							run.journal = journal;
+							return exported;
+						} finally {
+							await held.done();
+						}
+					});
 				},
 
 				async interrupt(runId) {

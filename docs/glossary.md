@@ -44,6 +44,8 @@ these definitions rather than redefine them.
 | Recoverable trash | Timestamped sibling storage receiving pruned state by rename; ordinary pruning never hard-deletes run data. |
 | Artifact | Durable bounded output associated with a run or attempt. |
 | Handoff | Host-captured commit or artifact preserving worktree changes before cleanup. |
+| Handoff ref | Durable `refs/pi-subagent/handoffs/<run-id>/<attempt-id>` ref that keeps a handoff commit reachable after the reservation branch is released, until retention prunes the run. |
+| Handoff export | Owner-scoped, bounded, digest-verified `git format-patch` bytes for one handoff commit, returned with a `HandoffRef` so consumers import evidence without reading private repository state. |
 | Retry | New attempt with the same task after a classified failure. It gets a fresh VM. |
 | Resume | New attempt continuing a retained Pi session after validation. It gets a fresh VM. |
 | Seat lease | Cross-process claim allowing one seat instance to mutate a run, session, VM, or worktree. |

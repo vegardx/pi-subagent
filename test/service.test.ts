@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, realpath, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -22,6 +22,10 @@ import { preflightWorkspace } from "../src/preflight/workspace.js";
 import type { HostToolDeclaration } from "../src/runtime/host-tools.js";
 import { createVmCapacityManager } from "../src/sandbox/capacity.js";
 import { createSubagentService, RetryBackoffError } from "../src/service.js";
+import {
+	finalizeWorktreeHandoff,
+	handoffRefName,
+} from "../src/workspace/worktree.js";
 
 const execFileAsync = promisify(execFile);
 const hash = "a".repeat(64);
@@ -205,6 +209,39 @@ async function serviceFor(
 		...(executeAttempt ? { executeAttempt } : {}),
 	});
 	return { ...data, service };
+}
+
+async function worktreeServiceFor(
+	name: string,
+	executeAttempt: NonNullable<
+		Parameters<typeof createSubagentService>[0]["executeAttempt"]
+	>,
+) {
+	const data = await fixture(name);
+	const agent = { ...data.agent, workspaceModes: ["worktree" as const] };
+	data.request.workspace = { mode: "worktree", cwd: data.repository };
+	const service = await createSubagentService({
+		root: path.join(data.root, "state"),
+		agentDir: path.join(data.root, "agent"),
+		agents: new Map([[agent.name, agent]]),
+		modelRuntime: {} as ModelRuntime,
+		capacity: await createVmCapacityManager({
+			root: path.join(data.root, "capacity"),
+			maxSlots: 1,
+		}),
+		sandbox: {
+			packageVersion: "0.12.0",
+			imageSha256: hash,
+			mountPolicySha256: hash,
+			networkPolicySha256: hash,
+			capacityPolicySha256: hash,
+			memoryBytes: 512 * 1024 * 1024,
+			guestDiskBytes: 2 * 1024 * 1024 * 1024,
+		},
+		resolveModel: async (model) => model,
+		executeAttempt,
+	});
+	return { ...data, agent, service };
 }
 
 async function reopenService(data: Awaited<ReturnType<typeof serviceFor>>) {
@@ -447,9 +484,19 @@ describe("foreground subagent service", () => {
 			executeAttempt: async (input) => {
 				if (!input.worktree) throw new Error("worktree missing");
 				expectedHandoffCommit = input.worktree.baselineHead;
+				const handoffRef = handoffRefName(
+					input.worktree.runId,
+					input.worktree.attemptId,
+				);
+				await execFileAsync(
+					"git",
+					["update-ref", handoffRef, expectedHandoffCommit],
+					{ cwd: input.worktree.repositoryRoot },
+				);
 				const handoff = {
 					...input.worktree,
 					handoffCommit: expectedHandoffCommit,
+					handoffRef,
 				};
 				await writeFile(
 					input.worktree.recordPath,
@@ -509,6 +556,284 @@ describe("foreground subagent service", () => {
 		});
 		await restartedClient.release(receipt.runId);
 		await restarted.shutdown();
+	});
+
+	it("exports a bounded digest-verified handoff that survives release until pruning", async () => {
+		const data = await worktreeServiceFor("handoff-export", async (input) => {
+			if (!input.worktree) throw new Error("worktree missing");
+			await writeFile(
+				path.join(input.worktree.worktreePath, "file.txt"),
+				"changed by subagent\n",
+			);
+			await writeFile(
+				path.join(input.worktree.worktreePath, "blob.bin"),
+				Buffer.from([0, 255, 1, 254, 10, 13, 0]),
+			);
+			const handoff = await finalizeWorktreeHandoff(
+				input.worktree,
+				`feat(subagent): handoff ${input.plan.attemptId}`,
+				input.lease,
+			);
+			const execution = {
+				result: {
+					...result(input.plan.runId, "completed"),
+					workspaceCleanup: "proved" as const,
+				},
+				output: "handoff",
+				sessionFile: undefined,
+				handoff,
+				structuredOutput: undefined,
+				error: undefined,
+			};
+			await input.journal.append("attempt-completed", {});
+			await input.journal.writeSnapshot(execution);
+			return execution;
+		});
+		const client = data.service.forOwner({ id: "owner-handoff-export" });
+		const preflight = await client.preflight({
+			...data.request,
+			operationId: "operation-handoff-export",
+		});
+		const receipt = await client.launch(
+			preflight.preflightId,
+			preflight.identitySha256,
+		);
+		const completed = await client.wait(receipt.runId);
+		const handoff = completed.handoff;
+		if (!handoff?.handoffCommit || !handoff.handoffRef) {
+			throw new Error("handoff missing");
+		}
+		expect((await client.listRuns()).runs[0]?.availableActions).toEqual([
+			"release-workspace",
+			"pin",
+			"export-handoff",
+		]);
+		const first = await client.exportHandoff(receipt.runId);
+		const second = await client.exportHandoff(receipt.runId, {
+			maxBytes: first.ref.bytes,
+		});
+		expect(first.ref).toMatchObject({
+			runId: receipt.runId,
+			attemptId: receipt.attemptId,
+			baselineHead: handoff.baselineHead,
+			handoffCommit: handoff.handoffCommit,
+			format: "git-format-patch",
+			bytes: first.content.byteLength,
+			mediaType: "application/x-git-format-patch",
+		});
+		expect(second.ref).toEqual(first.ref);
+		expect(second.content.equals(first.content)).toBe(true);
+		expect(first.content.toString("utf8")).toContain("GIT binary patch");
+		await expect(
+			client.exportHandoff(receipt.runId, { maxBytes: first.ref.bytes - 1 }),
+		).rejects.toThrow("handoff export exceeds byte limit");
+		await expect(
+			data.service.forOwner({ id: "owner-other" }).exportHandoff(receipt.runId),
+		).rejects.toThrow("run not found");
+		const exportedEvents = (await client.logs(receipt.runId)).events.filter(
+			(event) => event.type === "handoff-exported",
+		);
+		expect(exportedEvents).toHaveLength(2);
+		expect(exportedEvents[0]?.data).toEqual({ ref: first.ref });
+		expect(exportedEvents[1]?.data).toEqual({
+			ref: first.ref,
+			maxBytes: first.ref.bytes,
+		});
+
+		expect((await client.release(receipt.runId)).status).toBe("completed");
+		await expect(
+			execFileAsync("git", ["rev-parse", "--verify", handoff.branch], {
+				cwd: data.repository,
+			}),
+		).rejects.toBeDefined();
+		const refCommit = (
+			await execFileAsync(
+				"git",
+				["show-ref", "--verify", "--hash", handoff.handoffRef],
+				{ cwd: data.repository },
+			)
+		).stdout.trim();
+		expect(refCommit).toBe(handoff.handoffCommit);
+		const afterRelease = await client.exportHandoff(receipt.runId);
+		expect(afterRelease.ref).toEqual(first.ref);
+		expect(afterRelease.content.equals(first.content)).toBe(true);
+
+		const dryRun = await data.service.prune({ dryRun: true, maxAgeMs: 0 });
+		expect(dryRun.selected.map((run) => run.runId)).toEqual([receipt.runId]);
+		expect(
+			(
+				await execFileAsync(
+					"git",
+					["show-ref", "--verify", "--hash", handoff.handoffRef],
+					{ cwd: data.repository },
+				)
+			).stdout.trim(),
+		).toBe(handoff.handoffCommit);
+		const applied = await data.service.prune({ dryRun: false, maxAgeMs: 0 });
+		expect(applied.pruned.map((run) => run.runId)).toEqual([receipt.runId]);
+		await expect(
+			execFileAsync(
+				"git",
+				["show-ref", "--verify", "--quiet", handoff.handoffRef],
+				{ cwd: data.repository },
+			),
+		).rejects.toBeDefined();
+		if (!applied.pruned[0]?.trashPath) throw new Error("trash path missing");
+		expect(
+			JSON.parse(
+				await readFile(
+					path.join(applied.pruned[0].trashPath, "manifest.json"),
+					"utf8",
+				),
+			).handoffRefs,
+		).toEqual([
+			{
+				runId: receipt.runId,
+				repositoryRoot: handoff.repositoryRoot,
+				ref: handoff.handoffRef,
+				commit: handoff.handoffCommit,
+			},
+		]);
+		await expect(client.exportHandoff(receipt.runId)).rejects.toThrow(
+			"run not found",
+		);
+		await data.service.shutdown();
+	});
+
+	it("exports and releases a cleanup-blocked handoff while this seat holds the lease", async () => {
+		const data = await worktreeServiceFor("handoff-blocked", async (input) => {
+			if (!input.worktree) throw new Error("worktree missing");
+			await writeFile(
+				path.join(input.worktree.worktreePath, "file.txt"),
+				"blocked handoff\n",
+			);
+			const handoff = await finalizeWorktreeHandoff(
+				input.worktree,
+				"feat(subagent): blocked handoff",
+				input.lease,
+			);
+			const execution = {
+				result: {
+					...result(input.plan.runId, "cleanup-blocked"),
+					sandboxCleanup: "blocked" as const,
+					workspaceCleanup: "proved" as const,
+				},
+				output: "",
+				sessionFile: undefined,
+				handoff,
+				structuredOutput: undefined,
+				error: "cleanup blocked",
+			};
+			await input.journal.append("attempt-failed", {});
+			await input.journal.writeSnapshot(execution);
+			return execution;
+		});
+		const client = data.service.forOwner({ id: "owner-handoff-blocked" });
+		const preflight = await client.preflight({
+			...data.request,
+			operationId: "operation-handoff-blocked",
+		});
+		const receipt = await client.launch(
+			preflight.preflightId,
+			preflight.identitySha256,
+		);
+		const blocked = await client.wait(receipt.runId);
+		expect(blocked.result.status).toBe("cleanup-blocked");
+		expect((await client.listRuns()).runs[0]?.availableActions).toContain(
+			"export-handoff",
+		);
+		await expect(
+			acquireRunLease({
+				root: path.join(data.root, "state", "leases"),
+				runId: receipt.runId,
+			}),
+		).rejects.toMatchObject({ name: "RunLeaseUnavailableError" });
+		const exported = await client.exportHandoff(receipt.runId);
+		expect(exported.ref.handoffCommit).toBe(blocked.handoff?.handoffCommit);
+		expect((await client.release(receipt.runId)).status).toBe(
+			"cleanup-blocked",
+		);
+		const again = await client.exportHandoff(receipt.runId);
+		expect(again.content.equals(exported.content)).toBe(true);
+		await expect(
+			acquireRunLease({
+				root: path.join(data.root, "state", "leases"),
+				runId: receipt.runId,
+			}),
+		).rejects.toMatchObject({ name: "RunLeaseUnavailableError" });
+		await data.service.shutdown();
+	});
+
+	it("refuses handoff export without a durable terminal handoff", async () => {
+		const noChanges = await worktreeServiceFor(
+			"handoff-export-none",
+			async (input) => {
+				if (!input.worktree) throw new Error("worktree missing");
+				const handoff = await finalizeWorktreeHandoff(
+					input.worktree,
+					"feat(subagent): no-op",
+					input.lease,
+				);
+				const execution = {
+					result: {
+						...result(input.plan.runId, "completed"),
+						workspaceCleanup: "proved" as const,
+					},
+					output: "",
+					sessionFile: undefined,
+					handoff,
+					structuredOutput: undefined,
+					error: undefined,
+				};
+				await input.journal.writeSnapshot(execution);
+				return execution;
+			},
+		);
+		const client = noChanges.service.forOwner({ id: "owner-none" });
+		const preflight = await client.preflight({
+			...noChanges.request,
+			operationId: "operation-handoff-none",
+		});
+		const receipt = await client.launch(
+			preflight.preflightId,
+			preflight.identitySha256,
+		);
+		expect((await client.wait(receipt.runId)).handoff).toBeUndefined();
+		expect((await client.listRuns()).runs[0]?.availableActions).not.toContain(
+			"export-handoff",
+		);
+		await expect(client.exportHandoff(receipt.runId)).rejects.toThrow(
+			"run has no handoff commit to export",
+		);
+		await noChanges.service.shutdown();
+
+		const interrupted = await serviceFor(
+			"handoff-export-status",
+			async (input) => ({
+				result: result(input.plan.runId, "interrupted"),
+				output: "",
+				sessionFile: undefined,
+				handoff: undefined,
+				structuredOutput: undefined,
+				error: "interrupted",
+			}),
+		);
+		const interruptedClient = interrupted.service.forOwner({
+			id: "owner-status",
+		});
+		const interruptedPreflight = await interruptedClient.preflight({
+			...interrupted.request,
+			operationId: "operation-handoff-status",
+		});
+		const interruptedReceipt = await interruptedClient.launch(
+			interruptedPreflight.preflightId,
+			interruptedPreflight.identitySha256,
+		);
+		await interruptedClient.wait(interruptedReceipt.runId);
+		await expect(
+			interruptedClient.exportHandoff(interruptedReceipt.runId),
+		).rejects.toThrow("run is interrupted");
+		await interrupted.service.shutdown();
 	});
 
 	it("keeps execution dependencies lazy for metadata inspection", async () => {

@@ -411,6 +411,41 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 			operatorOutput(ctx, `Exported ${target}.`);
 			return;
 		}
+		if (action === "export-handoff") {
+			const destination =
+				providedText ??
+				(ctx.hasUI
+					? await ctx.ui.input(
+							"Export handoff patch",
+							path.join(ctx.cwd, `${run.agentDisplayName}-handoff.patch`),
+						)
+					: undefined);
+			if (!destination?.trim()) {
+				if (!ctx.hasUI) {
+					throw new Error(
+						"export-handoff requires a destination path in non-interactive mode",
+					);
+				}
+				return;
+			}
+			const target = path.resolve(ctx.cwd, destination.trim());
+			if (
+				ctx.hasUI &&
+				!(await ctx.ui.confirm(
+					"Export handoff patch?",
+					`The verified git-format-patch handoff will be written to ${target}. Existing content will be replaced.`,
+				))
+			) {
+				return;
+			}
+			const handoff = await client.exportHandoff(run.runId);
+			await writeFile(target, handoff.content, { flag: "w" });
+			operatorOutput(
+				ctx,
+				`Exported ${target} (${handoff.ref.bytes} bytes, sha256 ${handoff.ref.sha256}).`,
+			);
+			return;
+		}
 		if (action === "stop") await client.interrupt(run.runId);
 		else if (action === "retry") await client.retry(run.runId);
 		else if (action === "resume") await client.resume(run.runId);
@@ -666,7 +701,13 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 			}
 			if (
 				rest.length > 0 &&
-				!["steer", "follow-up", "pin", "export-output"].includes(action)
+				![
+					"steer",
+					"follow-up",
+					"pin",
+					"export-output",
+					"export-handoff",
+				].includes(action)
 			) {
 				throw new Error(`Unexpected arguments for ${subcommand}.`);
 			}
@@ -675,7 +716,13 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 				run,
 				ctx,
 				runtime,
-				["steer", "follow-up", "pin", "export-output"].includes(action)
+				[
+					"steer",
+					"follow-up",
+					"pin",
+					"export-output",
+					"export-handoff",
+				].includes(action)
 					? rest.join(" ") || undefined
 					: undefined,
 			);

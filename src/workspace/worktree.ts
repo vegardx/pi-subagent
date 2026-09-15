@@ -17,6 +17,9 @@ import {
 	AttemptIdSchema,
 	assertContractRevision,
 	CONTRACT_REVISION,
+	HANDOFF_EXPORT_MEDIA_TYPE,
+	type HandoffRef,
+	HandoffRefSchema,
 	type RunId,
 	RunIdSchema,
 } from "../contracts.js";
@@ -25,6 +28,70 @@ import type { WorkspacePreflight } from "../preflight/workspace.js";
 
 const execFileAsync = promisify(execFile);
 const MAX_GIT_OUTPUT = 64 * 1024 * 1024;
+/**
+ * Absolute handoff export cap. It equals the bounded stdout buffer used for
+ * every authoritative Git operation, so an export can never require more
+ * host memory than any other Git evidence read. Consumers importing bounded
+ * evidence pass a smaller `maxBytes`; larger handoffs are not exportable.
+ */
+export const MAX_HANDOFF_EXPORT_BYTES = MAX_GIT_OUTPUT;
+export const HANDOFF_REF_PREFIX = "refs/pi-subagent/handoffs/";
+export const HANDOFF_REF_PATTERN =
+	"^refs/pi-subagent/handoffs/run_[a-z0-9]+/attempt_[a-z0-9]+$";
+/**
+ * Fixed `git format-patch` configuration. Every option that repository-local
+ * `format.*` or `diff.*` configuration could otherwise change is pinned so the
+ * same baseline/handoff pair yields identical bytes. The trailing Git version
+ * signature and the diffstat are omitted because they depend on the host
+ * build and rendering width rather than on the commit pair.
+ */
+const FORMAT_PATCH_ARGUMENTS = [
+	"-c",
+	"format.mboxrd=false",
+	"-c",
+	"diff.suppressBlankEmpty=false",
+	"-c",
+	"core.quotePath=true",
+	"-c",
+	"i18n.logOutputEncoding=UTF-8",
+	"format-patch",
+	"--stdout",
+	"--binary",
+	"--full-index",
+	"--no-stat",
+	"--no-signature",
+	"--no-color",
+	"--no-ext-diff",
+	"--no-textconv",
+	"--no-attach",
+	"--no-thread",
+	"--no-cover-letter",
+	"--no-numbered",
+	"--no-signoff",
+	"--no-cc",
+	"--no-to",
+	"--no-add-header",
+	"--no-encode-email-headers",
+	"--no-notes",
+	"--no-base",
+	"--no-from",
+	"--no-force-in-body-from",
+	"--subject-prefix=PATCH",
+	"--diff-algorithm=myers",
+	"--no-indent-heuristic",
+	"--unified=3",
+	"--inter-hunk-context=0",
+	"--src-prefix=a/",
+	"--dst-prefix=b/",
+	"--no-relative",
+	"--find-renames",
+	"-l1000",
+	"-O/dev/null",
+] as const;
+
+export function handoffRefName(runId: RunId, attemptId: AttemptId): string {
+	return `${HANDOFF_REF_PREFIX}${runId}/${attemptId}`;
+}
 
 export const WorktreeRecordSchema = Type.Object(
 	{
@@ -39,6 +106,9 @@ export const WorktreeRecordSchema = Type.Object(
 		baselineHead: Type.String({ pattern: "^[a-f0-9]{40,64}$" }),
 		createdAt: Type.String({ format: "date-time" }),
 		handoffCommit: Type.Optional(Type.String({ pattern: "^[a-f0-9]{40,64}$" })),
+		handoffRef: Type.Optional(
+			Type.String({ pattern: HANDOFF_REF_PATTERN, maxLength: 1024 }),
+		),
 		releasedAt: Type.Optional(Type.String({ format: "date-time" })),
 	},
 	{ additionalProperties: false },
@@ -56,7 +126,20 @@ export type WorktreeRecord = {
 	baselineHead: string;
 	createdAt: string;
 	handoffCommit?: string;
+	handoffRef?: string;
 	releasedAt?: string;
+};
+
+export type HandoffExport = {
+	ref: HandoffRef;
+	content: Buffer;
+};
+
+export type HandoffRefTarget = {
+	runId: RunId;
+	repositoryRoot: string;
+	ref: string;
+	commit?: string;
 };
 
 export type WorktreeObservation = {
@@ -95,11 +178,16 @@ function gitEnvironment(): NodeJS.ProcessEnv {
 	return environment;
 }
 
-async function git(cwd: string, args: string[]): Promise<Buffer> {
+async function git(
+	cwd: string,
+	args: readonly string[],
+	options: { maxBuffer?: number } = {},
+): Promise<Buffer> {
 	try {
 		const result = await execFileAsync(
 			"git",
 			[
+				"--no-replace-objects",
 				"-c",
 				"commit.gpgSign=false",
 				"-c",
@@ -111,7 +199,7 @@ async function git(cwd: string, args: string[]): Promise<Buffer> {
 			{
 				cwd,
 				encoding: "buffer",
-				maxBuffer: MAX_GIT_OUTPUT,
+				maxBuffer: options.maxBuffer ?? MAX_GIT_OUTPUT,
 				env: gitEnvironment(),
 			},
 		);
@@ -123,6 +211,47 @@ async function git(cwd: string, args: string[]): Promise<Buffer> {
 				cause: error,
 			},
 		);
+	}
+}
+
+function exceededOutputBuffer(error: unknown): boolean {
+	const cause = (error as { cause?: { code?: unknown } }).cause;
+	return cause?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
+}
+
+async function resolveHandoffRef(
+	repositoryRoot: string,
+	ref: string,
+): Promise<string | undefined> {
+	try {
+		return (
+			await execFileAsync(
+				"git",
+				[
+					"--no-replace-objects",
+					"rev-parse",
+					"--verify",
+					"--quiet",
+					"--end-of-options",
+					`${ref}^{commit}`,
+				],
+				{
+					cwd: repositoryRoot,
+					encoding: "utf8",
+					maxBuffer: 4096,
+					env: gitEnvironment(),
+				},
+			)
+		).stdout.trim();
+	} catch (error) {
+		// `rev-parse --verify --quiet` exits 1 with empty stderr only for a
+		// missing ref. A non-repository, corrupt ref storage, or any other
+		// failure exits 128 and must fail closed rather than read as "absent".
+		const failure = error as { code?: unknown; stderr?: unknown };
+		if (failure.code === 1 && failure.stderr === "") return undefined;
+		throw new WorktreeError(`handoff ref lookup failed: ${ref}`, {
+			cause: error,
+		});
 	}
 }
 
@@ -258,6 +387,14 @@ export async function captureWorktreeHandoff(
 	) {
 		throw new WorktreeError("worktree baseline identity mismatch");
 	}
+	const handoffRef = handoffRefName(record.runId, record.attemptId);
+	if (
+		(await resolveHandoffRef(record.repositoryRoot, handoffRef)) !== undefined
+	) {
+		// No commit exists yet, so any ref at this attempt's deterministic name
+		// is foreign; refuse before touching the worktree history.
+		throw new WorktreeError("handoff ref already exists");
+	}
 	await git(record.worktreePath, ["add", "-A"]);
 	const staged = await git(record.worktreePath, ["diff", "--cached", "--quiet"])
 		.then(() => false)
@@ -269,10 +406,205 @@ export async function captureWorktreeHandoff(
 	)
 		.toString("utf8")
 		.trim();
-	const updated = { ...record, handoffCommit };
+	await lease.assertCurrent();
+	try {
+		await git(record.repositoryRoot, [
+			"update-ref",
+			handoffRef,
+			handoffCommit,
+			"",
+		]);
+	} catch (error) {
+		// Idempotent: a ref already pinning this exact commit is accepted.
+		const current = await resolveHandoffRef(record.repositoryRoot, handoffRef);
+		if (current !== handoffCommit) {
+			throw new WorktreeError("handoff ref identity mismatch", {
+				cause: error,
+			});
+		}
+	}
+	const updated = { ...record, handoffCommit, handoffRef };
 	await lease.assertCurrent();
 	await writeRecord(record.recordPath, updated);
 	return updated;
+}
+
+async function assertHandoffReachable(record: WorktreeRecord): Promise<void> {
+	if (!record.handoffCommit) return;
+	if (!record.handoffRef) {
+		throw new WorktreeError("handoff commit has no durable handoff ref");
+	}
+	const current = await resolveHandoffRef(
+		record.repositoryRoot,
+		record.handoffRef,
+	);
+	if (current !== record.handoffCommit) {
+		throw new WorktreeError(
+			"handoff commit is not reachable from its durable handoff ref",
+		);
+	}
+}
+
+export async function exportWorktreeHandoff(
+	record: WorktreeRecord,
+	options: { lease: RunLease; maxBytes?: number },
+): Promise<HandoffExport> {
+	if (options.lease.record.runId !== record.runId) {
+		throw new WorktreeError("worktree run lease identity mismatch");
+	}
+	await options.lease.assertCurrent();
+	const maxBytes = options.maxBytes ?? MAX_HANDOFF_EXPORT_BYTES;
+	if (
+		!Number.isSafeInteger(maxBytes) ||
+		maxBytes < 1 ||
+		maxBytes > MAX_HANDOFF_EXPORT_BYTES
+	) {
+		throw new WorktreeError(
+			`handoff export limit must be an integer from 1 to ${MAX_HANDOFF_EXPORT_BYTES}`,
+		);
+	}
+	if (!record.handoffCommit) {
+		throw new WorktreeError("worktree has no handoff commit to export");
+	}
+	if (record.handoffCommit === record.baselineHead) {
+		throw new WorktreeError(
+			"handoff commit equals its baseline; there is no handoff to export",
+		);
+	}
+	await assertHandoffReachable(record);
+	const parents = (
+		await git(record.repositoryRoot, [
+			"rev-list",
+			"--parents",
+			"-n1",
+			record.handoffCommit,
+		])
+	)
+		.toString("utf8")
+		.trim()
+		.split(/\s+/);
+	if (
+		parents.length !== 2 ||
+		parents[0] !== record.handoffCommit ||
+		parents[1] !== record.baselineHead
+	) {
+		throw new WorktreeError(
+			"handoff commit must have exactly one parent, the recorded baseline",
+		);
+	}
+	const count = (
+		await git(record.repositoryRoot, [
+			"rev-list",
+			"--count",
+			`${record.baselineHead}..${record.handoffCommit}`,
+		])
+	)
+		.toString("utf8")
+		.trim();
+	if (count !== "1") {
+		throw new WorktreeError(
+			"handoff must be exactly one commit on top of its baseline",
+		);
+	}
+	await options.lease.assertCurrent();
+	let content: Buffer;
+	try {
+		content = await git(
+			record.repositoryRoot,
+			[
+				...FORMAT_PATCH_ARGUMENTS,
+				`${record.baselineHead}..${record.handoffCommit}`,
+			],
+			{ maxBuffer: maxBytes },
+		);
+	} catch (error) {
+		if (exceededOutputBuffer(error)) {
+			throw new WorktreeError("handoff export exceeds byte limit", {
+				cause: error,
+			});
+		}
+		throw error;
+	}
+	if (content.byteLength > maxBytes) {
+		throw new WorktreeError("handoff export exceeds byte limit");
+	}
+	if (content.byteLength === 0) {
+		throw new WorktreeError("handoff export produced no patch content");
+	}
+	const ref: HandoffRef = {
+		runId: record.runId,
+		attemptId: record.attemptId,
+		baselineHead: record.baselineHead,
+		handoffCommit: record.handoffCommit,
+		format: "git-format-patch",
+		sha256: createHash("sha256").update(content).digest("hex"),
+		bytes: content.byteLength,
+		mediaType: HANDOFF_EXPORT_MEDIA_TYPE,
+	};
+	if (!Value.Check(HandoffRefSchema, ref)) {
+		throw new WorktreeError("invalid handoff export metadata");
+	}
+	return { ref, content };
+}
+
+/**
+ * The ref name is deterministic from run and attempt identity, so retention can
+ * reclaim a ref created in the crash window between `update-ref` and the record
+ * write even when the record never learned about it. Without a recorded commit
+ * the ref is removed unconditionally; with one, only when it still resolves
+ * to that commit.
+ */
+export function handoffRefTarget(record: WorktreeRecord): HandoffRefTarget {
+	return {
+		runId: record.runId,
+		repositoryRoot: record.repositoryRoot,
+		ref: record.handoffRef ?? handoffRefName(record.runId, record.attemptId),
+		...(record.handoffCommit ? { commit: record.handoffCommit } : {}),
+	};
+}
+
+export type HandoffRefState = "present" | "absent" | "repository-missing";
+
+export async function inspectHandoffRef(
+	target: HandoffRefTarget,
+): Promise<HandoffRefState> {
+	try {
+		const metadata = await stat(target.repositoryRoot);
+		if (!metadata.isDirectory()) {
+			throw new WorktreeError("handoff repository root is not a directory");
+		}
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+			return "repository-missing";
+		}
+		throw error;
+	}
+	const current = await resolveHandoffRef(target.repositoryRoot, target.ref);
+	if (current === undefined) return "absent";
+	if (target.commit !== undefined && current !== target.commit) {
+		throw new WorktreeError("handoff ref identity mismatch");
+	}
+	return "present";
+}
+
+export async function removeHandoffRef(
+	target: HandoffRefTarget,
+	lease: RunLease,
+): Promise<HandoffRefState> {
+	if (lease.record.runId !== target.runId) {
+		throw new WorktreeError("handoff ref run lease identity mismatch");
+	}
+	await lease.assertCurrent();
+	const state = await inspectHandoffRef(target);
+	if (state !== "present") return state;
+	await lease.assertCurrent();
+	await git(target.repositoryRoot, [
+		"update-ref",
+		"-d",
+		target.ref,
+		...(target.commit === undefined ? [] : [target.commit]),
+	]);
+	return "present";
 }
 
 export async function finalizeWorktreeHandoff(
@@ -349,6 +681,7 @@ export async function releaseWorktreeBranch(
 		if (error instanceof WorktreeError) throw error;
 		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 	}
+	await assertHandoffReachable(record);
 	const listed = (
 		await git(record.repositoryRoot, ["branch", "--list", record.branch])
 	)

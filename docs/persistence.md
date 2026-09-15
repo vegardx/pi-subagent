@@ -22,7 +22,10 @@ path is inside the session root and `SessionManager` identity matches the durabl
 `session-started` receipt. Worktrees are classified from canonical path, Git
 root, branch, HEAD, status, handoff/baseline commit, release receipt, and retained
 branch evidence before conservative failed/interrupted/cleanup-blocked outcomes
-are persisted. Immutable run
+are persisted. Handoff commits are pinned by a durable
+`refs/pi-subagent/handoffs/<run-id>/<attempt-id>` ref from capture until the
+run is pruned, and the owner client can export them as bounded, digest-verified
+`git format-patch` bytes. Immutable run
 records persist owner and launch identity before execution. Attempt publication
 requires the current run lease and a process-wide root/run queue, so competing
 next-attempt IDs cannot publish the same ordinal and parent. Startup scans them,
@@ -76,6 +79,13 @@ persist intent
 
 State must never claim that a VM started or stopped, a session settled, a
 worktree was removed, or a handoff was captured without corresponding evidence.
+
+Handoff export is the one exception to the intent/receipt pair: it reads
+repository objects under the run lease and mutates nothing, so a crash leaves
+no external effect for recovery to interpret. It therefore appends a single
+`handoff-exported` receipt carrying the verified `HandoffRef` after the bytes
+are produced. A dangling export intent would only add a reconciliation case
+without evidence to reconcile.
 
 Events carry schema version, sequence number, event ID, timestamp, owner, and
 attempt identity. Appends and snapshots use crash-safe write/fsync/rename rules.
@@ -181,8 +191,30 @@ Unprovable state becomes explicit `unknown` or `cleanup-blocked`, never success.
 
 A read-only checkout has no workspace mutation to retain. A writing attempt's
 worktree and reservation record remain host-owned across seat restart. Handoff
-stages every change, creates an immutable commit, and persists that commit before
-cleanup. Cleanup refuses dirty worktrees or any path, branch, or HEAD mismatch.
+stages every change, creates an immutable commit, records it under
+`refs/pi-subagent/handoffs/<run-id>/<attempt-id>`, and persists both the commit
+and the ref name in the worktree record before cleanup. Cleanup refuses dirty
+worktrees or any path, branch, or HEAD mismatch.
+
+Capture refuses to commit while a foreign ref already occupies the attempt's
+deterministic name and accepts an existing ref that already pins the exact
+handoff commit. The ref name is derived from run and attempt identity, so a ref
+created in the crash window between `update-ref` and the record write is still
+reclaimed: retention computes the same name and removes the ref even when the
+record never recorded it.
+
+The handoff ref, not the reservation branch, is the durable reachability
+authority for the commit. Release verifies that the ref still resolves to the
+recorded commit before it deletes the branch and refuses otherwise, so release
+can never make the only copy of a handoff unreachable. `exportHandoff` verifies
+the ref, verifies that the commit's sole parent is the recorded baseline,
+requires exactly one non-merge commit between them, renders
+`git format-patch --binary --stdout baseline..handoff` with pinned rendering
+options and replace refs disabled, bounds the bytes, and returns the digest with
+the content. An
+attempt whose worktree had no changes captures no commit and has nothing to
+export; a record whose handoff commit equals its baseline is refused rather than
+exported as an empty patch.
 
 Cancellation or interruption preserves uncaptured writes unless cleanup policy
 can prove there are none. The operator surface calls `release` “release
@@ -214,7 +246,17 @@ A run pin protects the full graph: run and attempt records, journal and snapshot
 artifacts, sessions, operation mappings, lease record, and every distinct
 `worktreeAttemptId` referenced by attempt lineage. Worktree records gain a durable `releasedAt` receipt only after both
 the verified worktree and branch are gone; any unreleased or uncertain worktree
-protects its run.
+protects its run. Handoff refs outlive release. Applied pruning reads every
+released worktree record in the run graph, verifies that each handoff ref is
+absent or still resolves to the recorded commit, records the refs in the trash
+manifest as intent, deletes them from the consumer repository, and then moves
+the run graph. A ref that resolves elsewhere, a repository that is not a Git
+repository, or corrupt ref storage protects the run with reason
+`handoff-ref-unremovable`; only a missing ref or a missing repository root reads
+as already removed. Trash-intent recovery deletes any
+manifest-listed ref that still exists before resuming the moves. Consumers must
+export or pin a handoff before ordinary retention selects its run; after pruning
+the commit is unreferenced and ordinary Git garbage collection may drop it.
 
 Retention mutation holds one cross-process OS-owned lease and acquires each
 selected run lease before moving data. A live run lease converts selection into

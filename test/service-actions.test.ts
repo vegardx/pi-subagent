@@ -22,6 +22,7 @@ function facts(
 		retainedWorktree: false,
 		workspaceReleasable: false,
 		hasOutput: false,
+		hasHandoff: false,
 		...overrides,
 	};
 }
@@ -73,6 +74,38 @@ describe("subagent run action projection", () => {
 				}),
 			),
 		).toEqual(["reconcile"]);
+	});
+
+	it("offers handoff export only for durable terminal runs with a handoff commit", () => {
+		for (const status of [
+			"completed",
+			"failed",
+			"cancelled",
+			"cleanup-blocked",
+		] as const) {
+			expect(
+				availableRunActions(facts(status, { hasHandoff: true })),
+			).toContain("export-handoff");
+		}
+		for (const status of [
+			"queued",
+			"active",
+			"stopping",
+			"interrupted",
+			"abandoned",
+		] as const) {
+			expect(
+				availableRunActions(facts(status, { hasHandoff: true })),
+			).not.toContain("export-handoff");
+		}
+		expect(availableRunActions(facts("completed"))).not.toContain(
+			"export-handoff",
+		);
+		expect(
+			availableRunActions(
+				facts("completed", { hasOutput: true, hasHandoff: true }),
+			),
+		).toEqual(["pin", "export-output", "export-handoff"]);
 	});
 
 	it("keeps retention and output actions orthogonal", () => {

@@ -208,7 +208,18 @@ Using bounded disposable fixtures:
 - commit or artifact handoff is durable before cleanup;
 - uncertain worktrees are retained;
 - cleanup failure blocks successful terminal status;
-- explicit release removes only the recorded worktree after identity checks.
+- explicit release removes only the recorded worktree after identity checks;
+- a captured handoff commit is pinned by a durable `refs/pi-subagent/handoffs/`
+  ref, release refuses to delete the reservation branch unless that ref resolves
+  to the recorded commit, and the commit survives release plus `git gc`;
+- `exportHandoff` is owner-scoped, requires a durable completed, failed,
+  cancelled, or cleanup-blocked result with a handoff commit, holds the run
+  lease, refuses runs without a handoff commit and records whose handoff equals
+  the baseline, and appends one `handoff-exported` receipt with the ref;
+- exported bytes are bounded by `maxBytes` and the absolute 64 MiB cap, carry
+  the exact sha256/byte count, are identical across repeated exports of the
+  same commit pair, and reproduce text, binary, mode, symlink, rename, and
+  deletion changes exactly when applied with `git am` onto the baseline.
 
 ## Persistence and recovery
 
@@ -261,6 +272,10 @@ Using bounded disposable fixtures:
 - applied pruning and pin removal use recoverable trash rather than hard delete;
 - every distinct worktree referenced through `worktreeAttemptId` moves with its
   run graph;
+- applied pruning records each released handoff ref in the trash manifest,
+  deletes it from the consumer repository only when it still resolves to the
+  recorded commit, protects the run with `handoff-ref-unremovable` otherwise,
+  and trash-intent recovery removes manifest-listed refs before resuming moves;
 - an incomplete trash manifest resumes under retention and run leases before new
   prune selection, moving the run-record commit marker last;
 - incompatible persisted contract revisions are rejected with discard guidance;

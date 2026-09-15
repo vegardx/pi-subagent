@@ -21,11 +21,21 @@ import {
 	AttemptIdSchema,
 	assertContractRevision,
 	CONTRACT_REVISION,
+	IncompatibleContractRevisionError,
 	type RunId,
 	RunIdSchema,
 	type RunStatus,
 	RunStatusSchema,
 } from "../contracts.js";
+import {
+	HANDOFF_REF_PATTERN,
+	type HandoffRefTarget,
+	handoffRefTarget,
+	inspectHandoffRef,
+	readWorktreeRecord,
+	removeHandoffRef,
+	WorktreeError,
+} from "../workspace/worktree.js";
 import { OperationRecordSchema } from "./operation-index.js";
 import {
 	acquireRunLease,
@@ -313,7 +323,57 @@ type TrashManifest = {
 	createdAt: string;
 	commitPath: string;
 	paths: string[];
+	handoffRefs: HandoffRefTarget[];
 };
+
+const HandoffRefTargetSchema = Type.Object(
+	{
+		runId: RunIdSchema,
+		repositoryRoot: Type.String({ minLength: 1, maxLength: 4096 }),
+		ref: Type.String({ pattern: HANDOFF_REF_PATTERN, maxLength: 1024 }),
+		commit: Type.Optional(Type.String({ pattern: "^[a-f0-9]{40,64}$" })),
+	},
+	{ additionalProperties: false },
+);
+
+async function runHandoffRefs(
+	root: string,
+	run: RetentionRun,
+): Promise<HandoffRefTarget[]> {
+	const targets: HandoffRefTarget[] = [];
+	for (const worktreeAttemptId of run.worktreeAttemptIds) {
+		const recordPath = path.join(
+			root,
+			"workspace",
+			"records",
+			`${worktreeAttemptId}.json`,
+		);
+		if (!(await pathExists(recordPath))) continue;
+		let record: Awaited<ReturnType<typeof readWorktreeRecord>>;
+		try {
+			record = await readWorktreeRecord(recordPath);
+		} catch (error) {
+			if (error instanceof IncompatibleContractRevisionError) throw error;
+			throw new Error("invalid worktree record during retention", {
+				cause: error,
+			});
+		}
+		if (record.runId !== run.runId) {
+			throw new Error("worktree record run identity mismatch during retention");
+		}
+		targets.push(handoffRefTarget(record));
+	}
+	return targets;
+}
+
+async function removeHandoffRefs(
+	targets: HandoffRefTarget[],
+	lease: RunLease,
+): Promise<void> {
+	for (const target of targets) {
+		await removeHandoffRef(target, lease);
+	}
+}
 
 function safeTrashRelative(value: string): boolean {
 	return (
@@ -350,6 +410,13 @@ async function recoverTrashIntents(
 			manifest.paths.some(
 				(relative) =>
 					typeof relative !== "string" || !safeTrashRelative(relative),
+			) ||
+			!Array.isArray(manifest.handoffRefs) ||
+			manifest.handoffRefs.length > 32 ||
+			manifest.handoffRefs.some(
+				(target) =>
+					!Value.Check(HandoffRefTargetSchema, target) ||
+					target.runId !== manifest.runId,
 			)
 		) {
 			throw new Error("invalid retention trash manifest");
@@ -365,6 +432,7 @@ async function recoverTrashIntents(
 			throw error;
 		}
 		try {
+			await removeHandoffRefs(manifest.handoffRefs, lease);
 			const leaseRelative = path.join("leases", `${manifest.runId}.lease.json`);
 			const orderedPaths = [
 				...manifest.paths.filter(
@@ -417,6 +485,8 @@ async function moveRunToTrash(options: {
 	trashRoot: string;
 	run: RetentionRun;
 	paths: string[];
+	handoffRefs: HandoffRefTarget[];
+	lease: RunLease;
 	now: Date;
 }): Promise<string> {
 	const trashPath = path.join(
@@ -442,12 +512,14 @@ async function moveRunToTrash(options: {
 		paths: orderedPaths.map((candidate) =>
 			relativeWithin(options.root, candidate),
 		),
+		handoffRefs: options.handoffRefs,
 	};
 	await writeDurable(
 		path.join(trashPath, "manifest.json"),
 		`${JSON.stringify(manifest, null, 2)}\n`,
 	);
 	await syncDirectory(trashPath);
+	await removeHandoffRefs(options.handoffRefs, options.lease);
 	for (const source of orderedPaths) {
 		if (!(await pathExists(source))) continue;
 		const destination = path.join(
@@ -750,6 +822,21 @@ export async function createRetentionManager(options: {
 						}
 						try {
 							await lease.assertCurrent();
+							let handoffRefs: HandoffRefTarget[];
+							try {
+								handoffRefs = await runHandoffRefs(root, item.run);
+								for (const target of handoffRefs) {
+									await inspectHandoffRef(target);
+								}
+							} catch (error) {
+								if (!(error instanceof WorktreeError)) throw error;
+								protectedRuns.push({
+									...report,
+									reasons: ["handoff-ref-unremovable"],
+								});
+								ordinaryBytesAfter += item.bytes;
+								continue;
+							}
 							const leasePath = path.join(
 								root,
 								"leases",
@@ -761,6 +848,8 @@ export async function createRetentionManager(options: {
 								trashRoot,
 								run: item.run,
 								paths: item.paths,
+								handoffRefs,
+								lease,
 								now,
 							});
 							pruned.push({ ...report, trashPath });
