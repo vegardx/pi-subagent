@@ -360,7 +360,8 @@ type ActiveRun = {
 
 type AttemptExecutor = typeof runNativeAttempt;
 
-const IMPLEMENTED_TOOLS = new Set([
+/** Tool names this runtime implements inside the attempt VM. */
+export const IMPLEMENTED_TOOLS = new Set([
 	"read",
 	"write",
 	"edit",
