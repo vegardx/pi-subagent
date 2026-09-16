@@ -286,6 +286,9 @@ Using bounded disposable fixtures:
 
 - packed package contains compiled ESM/declarations and excludes source, tests,
   spikes, local state, archives, and build-only scripts;
+- packed package declares and contains the `subagents` operating skill, whose
+  tool surface, command tokens, statuses, actions, and quoted runtime messages
+  are pinned against the implementation;
 - packed package installs into a fresh project, public and extension exports
   import under plain Node.js, and the extension loads in a fresh
   `PI_CODING_AGENT_DIR` without starting QEMU;

@@ -54,6 +54,11 @@ authority:
 /subagents prune [--apply]
 ```
 
+The package also ships the `subagents` operating skill
+(`skills/subagents/SKILL.md`), declared through `pi.skills`, which tells a
+calling model what the `subagent` tool accepts, how workspace isolation is
+inferred, and what a worktree handoff requires from a human.
+
 The project does not provide backwards compatibility. Public contracts and
 persisted formats may change incompatibly; consumers must use the exact supported
 contract revision.
