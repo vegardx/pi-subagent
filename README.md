@@ -61,7 +61,53 @@ inferred, and what a worktree handoff requires from a human.
 
 The project does not provide backwards compatibility. Public contracts and
 persisted formats may change incompatibly; consumers must use the exact supported
-contract revision.
+contract revision. The current contract revision is 7.
+
+## Agent definitions
+
+Named agents are Markdown files with strict YAML frontmatter in
+`<getAgentDir()>/agents/*.md` or, for trusted projects, `<cwd>/.pi/agents/*.md`.
+The file name must match `name`. Every declared value is a ceiling that a launch
+request may narrow but never widen:
+
+```yaml
+---
+name: reviewer
+model:
+  provider: github-copilot
+  id: gpt-5.6-luna
+  thinking: low
+allowedModels: [github-copilot/gpt-5.6-luna:low]
+tools: [read, grep]
+preloadSkills: []
+contextScopes: [project]
+workspaceModes: [read-only]
+memoryBytes: 2147483648
+limits:
+  cumulativeRuntimeMs: 600000
+  attemptTimeoutMs: 300000
+  totalTokens: 1000000
+  cost: 10
+  outputBytes: 1048576
+  workspaceWriteBytes: 0
+  retries: 1
+  resumes: 1
+---
+Agent prompt.
+```
+
+`memoryBytes` is optional and bounds the attempt VM's memory. It defaults to
+512 MiB, must be a positive integer multiple of 64 MiB, and may not exceed
+4 GiB; a request above the agent ceiling fails preflight. Raise it for
+memory-hungry guest toolchains such as a full-repository `tsc --noEmit`. Guest
+vCPU count is fixed at one. Host memory exposure is the VM capacity slot count
+(4) times the per-run grant.
+
+Guest package-manager caches are redirected outside the workspace
+(`XDG_CACHE_HOME=/tmp/cache`), so they never consume `workspaceWriteBytes` and
+never appear in a handoff patch. When a writing attempt does exhaust
+`workspaceWriteBytes`, guest writes fail with `EDQUOT` and the attempt records
+the `workspace-budget` failure code.
 
 ## Package
 
@@ -106,7 +152,10 @@ with the qualified Gondolin/QEMU stack.
 [`pi-workflow`](https://github.com/vegardx/pi-workflow) consumes the registered
 `SubagentService` through the typed service-provider export. It checks the exact
 runtime contract before starting work and never creates, replaces, or shuts down
-the physical execution service.
+the physical execution service. Revision 7 adds the `vmMemoryCeiling` and
+`workspaceBudgetRefusal` features and the `workspace-budget` failure code; a
+consumer pinned to revision 6 must move to 7, because persisted state and the
+feature set are not backwards compatible.
 
 ## License
 

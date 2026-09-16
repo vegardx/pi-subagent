@@ -140,7 +140,8 @@ Before launch it validates:
 
 - original run ownership and interrupted state;
 - retained Pi session existence and identity;
-- agent definition and authority ceiling;
+- agent definition and authority ceiling, including the resolved VM memory
+  grant recovered from the persisted plan;
 - model, tools, skills, and context projection;
 - workspace/worktree and baseline identity;
 - Gondolin package and image compatibility;

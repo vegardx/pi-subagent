@@ -297,7 +297,8 @@ repository/subdirectory identity, requires clean writing baselines, and binds
 HEAD plus tracked diff, status, and untracked content for dirty read-only
 reviews.
 Agent discovery now parses bounded strict frontmatter, requires trusted project
-sources, validates default-model ceilings, rejects same-scope collisions, and
+sources, validates default-model ceilings and the optional `memoryBytes` VM
+ceiling, rejects same-scope collisions, and
 applies deterministic builtin → package → global → project precedence. Exact Pi
 model preflight now checks catalog identity, supported thinking levels, and
 provider authentication through `ModelRuntime` without clamping or fallback.
@@ -678,6 +679,7 @@ The extension entry is separate:
 | 0.5 | Service lifecycle, retry, and fresh-VM resume |
 | 0.9 | Extension, UI, and full acceptance candidate |
 | 0.10 | Contract revision 6: durable handoff export (`handoffExport`) |
+| 0.11 | Contract revision 7: per-agent VM memory ceiling (`vmMemoryCeiling`), guest cache redirection, and the typed workspace write-budget refusal (`workspaceBudgetRefusal`) |
 | 1.0 | Production-core stable contract |
 
 Versions are capability milestones, not deadlines.

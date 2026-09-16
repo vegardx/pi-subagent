@@ -122,7 +122,13 @@ Using bounded disposable fixtures:
 - global and per-owner VM concurrency limits prevent accidental fan-out across
   multiple Pi seat processes;
 - guest root-overlay growth has a hard maximum;
-- writes through the workspace VFS stop at a configured byte quota;
+- writes through the workspace VFS stop at a configured byte quota, are refused
+  with `EDQUOT` rather than a generic I/O error, and classify the attempt as
+  `workspace-budget`;
+- package-manager caches resolve outside `/workspace` and consume none of
+  `workspaceWriteBytes`;
+- a per-agent VM memory ceiling is enforced: a request above the ceiling fails
+  preflight and the resolved grant is bound into the launch identity;
 - output and artifact streams truncate or fail at documented bounds;
 - a fork loop or CPU loop remains confined and is stopped by cancellation or
   timeout;

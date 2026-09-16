@@ -25,6 +25,7 @@ transient.
 | Lease loss | Seat lost fenced ownership of run/session/worktree | Abort local work; reconcile before retry |
 | Sandbox cleanup | VM closure or QEMU identity cannot be proved | Reconcile; cleanup blocked |
 | Workspace | Worktree preparation, handoff, handoff ref, or cleanup failed | Preparation may retry; cleanup fails closed |
+| Workspace budget | Guest writes exhausted `workspaceWriteBytes` and were refused with `EDQUOT` | Never; launch a new run with a larger budget or a smaller change |
 | Persistence | Journal, receipt, or fsync failure | Fail closed before authority release |
 | Resource drift | Agent, skill, context, image, or policy changed after preflight | Re-preflight; never continue old plan |
 | Unknown | Unclassified error or unprovable external state | Reconcile/operator action |
@@ -80,6 +81,16 @@ failed, cancelled, or cleanup-blocked state, has no handoff commit, exceeds the
 requested or absolute byte bound, or when the handoff ref no longer resolves to
 the recorded commit; the caller retries after correcting the request or pinning
 the run, never by reading private repository state.
+
+The `workspace-budget` code is distinct from `workspace`. The budgeted workspace
+VFS refuses an over-budget write with Linux `EDQUOT` instead of the generic
+`EIO` an untyped refusal would produce, the process tool appends one notice line
+naming the limit, the reserved bytes, and the refusal count, and the attempt
+records `workspace-budget` with workspace origin and retry `never`. A budget
+refusal is a declared bound, not a disk failure and not a transient error: the
+remedy is a new run with a larger `workspaceWriteBytes`, a smaller change, or
+moving bulk output out of the workspace. Package-manager caches already live
+under `XDG_CACHE_HOME` (`/tmp/cache`), outside the budget.
 
 A filesystem escape or denied host/internal-network destination is a boundary
 result, not a transient infrastructure failure. The runtime must not retry it
