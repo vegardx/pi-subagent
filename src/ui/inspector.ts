@@ -406,6 +406,16 @@ function detailBody(
 			keyValue("Context files", plan.contextScopes.join(", ") || "none", width),
 			keyValue("Tools", plan.tools.join(", ") || "none", width),
 			keyValue("Gondolin", plan.sandbox.packageVersion, width),
+			keyValue(
+				"VM memory",
+				`${formatBytes(plan.sandbox.memoryBytes)} · 1 vCPU`,
+				width,
+			),
+			keyValue(
+				"Workspace writes",
+				formatBytes(plan.sandbox.workspaceWriteBytes),
+				width,
+			),
 			keyValue("Image", plan.sandbox.imageSha256, width),
 			keyValue("Mount policy", plan.sandbox.mountPolicySha256, width),
 			keyValue("Network policy", plan.sandbox.networkPolicySha256, width),

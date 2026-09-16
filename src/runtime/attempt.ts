@@ -328,16 +328,13 @@ export async function runNativeAttempt(options: {
 			options.plan.model,
 			runSignal,
 		);
-		if (options.plan.sandbox.memoryBytes % (1024 * 1024) !== 0) {
-			throw new Error("sandbox memory must be whole MiB");
-		}
 		sandbox = await createGondolinAttemptSandbox({
 			owner: `${options.plan.runId}/${options.plan.attemptId}`,
 			workspace: options.workspacePath,
 			readOnly: options.plan.workspace.mode === "read-only",
 			workspaceWriteBytes: options.plan.limits.workspaceWriteBytes,
 			capacity: options.capacity,
-			memory: `${options.plan.sandbox.memoryBytes / (1024 * 1024)}M`,
+			memoryBytes: options.plan.sandbox.memoryBytes,
 			...(options.workspaceAliases
 				? { workspaceAliases: options.workspaceAliases }
 				: {}),
@@ -753,6 +750,7 @@ export async function runNativeAttempt(options: {
 			...(options.signal?.aborted
 				? { externalAbortReason: options.signal.reason }
 				: {}),
+			workspaceBudgetExhausted: sandbox?.writeBudget?.exhausted === true,
 			sandboxCleanup,
 			workspaceCleanup,
 		});

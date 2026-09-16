@@ -5,7 +5,9 @@ import { Value } from "typebox/value";
 import { parse } from "yaml";
 import {
 	ContextScopeSchema,
+	DEFAULT_MEMORY_BYTES,
 	ExactModelRequestSchema,
+	MemoryBytesSchema,
 	RunLimitsSchema,
 } from "../launch-contracts.js";
 import type { AgentDefinition } from "./compile.js";
@@ -62,6 +64,7 @@ export const AgentFrontmatterSchema = Type.Object(
 			{ minItems: 1, maxItems: 2, uniqueItems: true },
 		),
 		limits: RunLimitsSchema,
+		memoryBytes: Type.Optional(MemoryBytesSchema),
 	},
 	{ additionalProperties: false },
 );
@@ -123,6 +126,7 @@ async function loadAgent(
 		contextScopes: DiscoveredAgent["contextScopes"];
 		workspaceModes: DiscoveredAgent["workspaceModes"];
 		limits: DiscoveredAgent["limitCeiling"];
+		memoryBytes?: number;
 	};
 	if (path.basename(filePath, ".md") !== frontmatter.name) {
 		throw new AgentDiscoveryError(
@@ -147,6 +151,7 @@ async function loadAgent(
 		contextScopes: [...frontmatter.contextScopes],
 		workspaceModes: [...frontmatter.workspaceModes],
 		limitCeiling: frontmatter.limits,
+		memoryCeilingBytes: frontmatter.memoryBytes ?? DEFAULT_MEMORY_BYTES,
 		prompt,
 		scope,
 	};

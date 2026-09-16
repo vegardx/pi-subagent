@@ -65,6 +65,16 @@ export type WorkspaceRequest = Static<typeof WorkspaceRequestSchema>;
 
 export const DEFAULT_MAX_TASK_COST = 100;
 
+export const MEMORY_GRANULARITY_BYTES = 64 * 1024 * 1024;
+export const DEFAULT_MEMORY_BYTES = 512 * 1024 * 1024;
+export const MAX_MEMORY_BYTES = 4 * 1024 * 1024 * 1024;
+
+export const MemoryBytesSchema = Type.Integer({
+	minimum: MEMORY_GRANULARITY_BYTES,
+	maximum: MAX_MEMORY_BYTES,
+	multipleOf: MEMORY_GRANULARITY_BYTES,
+});
+
 export const RunLimitsSchema = Type.Object(
 	{
 		cumulativeRuntimeMs: Type.Integer({ minimum: 1_000, maximum: 3_600_000 }),
@@ -111,6 +121,7 @@ export const SubagentRequestSchema = Type.Object(
 			uniqueItems: true,
 		}),
 		workspace: WorkspaceRequestSchema,
+		memoryBytes: Type.Optional(MemoryBytesSchema),
 		outputSchema: Type.Optional(Type.Unknown()),
 		limits: RunLimitsSchema,
 	},
@@ -202,7 +213,7 @@ export const AgentLaunchPlanSchema = Type.Object(
 				mountPolicySha256: Sha256Schema,
 				networkPolicySha256: Sha256Schema,
 				capacityPolicySha256: Sha256Schema,
-				memoryBytes: Type.Integer({ minimum: 128 * 1024 * 1024 }),
+				memoryBytes: MemoryBytesSchema,
 				guestDiskBytes: Type.Integer({ minimum: 1 }),
 				workspaceWriteBytes: Type.Integer({ minimum: 0 }),
 			},

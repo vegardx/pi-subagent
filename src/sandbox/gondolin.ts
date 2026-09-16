@@ -17,6 +17,24 @@ import { createGondolinTools } from "./tools.js";
 import { type WriteBudget, withWriteBudget } from "./write-budget.js";
 
 const GONDOLIN_VERSION = "0.12.0";
+const DEFAULT_CPUS = 1;
+
+/**
+ * Convert a resolved per-run memory ceiling into a Gondolin memory size. The
+ * value is a launch-plan grant, so there is no host-side default.
+ */
+export function guestMemorySize(memoryBytes: number): string {
+	if (
+		!Number.isSafeInteger(memoryBytes) ||
+		memoryBytes <= 0 ||
+		memoryBytes % (1024 * 1024) !== 0
+	) {
+		throw new GondolinSandboxError(
+			"sandbox memory must be a positive whole number of MiB",
+		);
+	}
+	return `${memoryBytes / (1024 * 1024)}M`;
+}
 
 export type GondolinSandboxRecord = {
 	backend: "gondolin";
@@ -69,7 +87,7 @@ export async function createGondolinAttemptSandbox(options: {
 	readOnly: boolean;
 	workspaceWriteBytes: number;
 	capacity: VmCapacityManager;
-	memory?: string;
+	memoryBytes: number;
 	cpus?: number;
 	startTimeoutMs?: number;
 	workspaceAliases?: string[];
@@ -137,8 +155,8 @@ export async function createGondolinAttemptSandbox(options: {
 		mounts[guestDir] = new ReadonlyProvider(provider);
 	}
 	const { httpHooks } = createHttpHooks({ blockInternalRanges: true });
-	const memory = options.memory ?? "512M";
-	const cpus = options.cpus ?? 1;
+	const memory = guestMemorySize(options.memoryBytes);
+	const cpus = options.cpus ?? DEFAULT_CPUS;
 	const capacityLease = await options.capacity.acquire(options.owner);
 	let vm: VM;
 	try {
@@ -197,6 +215,7 @@ export async function createGondolinAttemptSandbox(options: {
 						options.onFatalToolAbort?.();
 					}
 				},
+				...(writeBudget ? { writeBudget } : {}),
 			},
 		);
 		const record: GondolinSandboxRecord = {

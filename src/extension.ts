@@ -13,7 +13,10 @@ import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import {
 	DEFAULT_MAX_TASK_COST,
+	DEFAULT_MEMORY_BYTES,
 	type ExactModelRequest,
+	MAX_MEMORY_BYTES,
+	MEMORY_GRANULARITY_BYTES,
 } from "./launch-contracts.js";
 import { type DiscoveredAgent, discoverAgents } from "./preflight/agents.js";
 import { canonicalSha256 } from "./preflight/canonical.js";
@@ -112,6 +115,15 @@ const parameters = Type.Object({
 	),
 	timeoutMs: Type.Optional(
 		Type.Integer({ minimum: 1_000, maximum: 3_600_000 }),
+	),
+	memoryBytes: Type.Optional(
+		Type.Integer({
+			minimum: MEMORY_GRANULARITY_BYTES,
+			maximum: MAX_MEMORY_BYTES,
+			multipleOf: MEMORY_GRANULARITY_BYTES,
+			description:
+				"Guest VM memory ceiling in bytes; a multiple of 64 MiB up to 4 GiB. Defaults to 512 MiB.",
+		}),
 	),
 });
 
@@ -217,6 +229,9 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 					if (!manifest) {
 						throw new Error("Gondolin image manifest is unavailable.");
 					}
+					// Host memory exposure is slots x per-run memoryBytes. With four
+					// slots and the 4 GiB per-run ceiling the worst case is 16 GiB of
+					// guest memory; there is no separate total-memory budget.
 					const capacity = await capacityModule.createVmCapacityManager({
 						root: path.join(getAgentDir(), "subagents", "capacity"),
 						maxSlots: 4,
@@ -241,7 +256,6 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 								basePort: capacity.basePort,
 								maxSlots: capacity.maxSlots,
 							}),
-							memoryBytes: 512 * 1024 * 1024,
 							guestDiskBytes: rootfs.size,
 						},
 					};
@@ -782,6 +796,7 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 			const thinking = resolveThinking(params.thinking, ctx);
 			const tools = params.tools ?? READ_ONLY_TOOLS;
 			const attemptTimeoutMs = params.timeoutMs ?? DEFAULT_ATTEMPT_TIMEOUT_MS;
+			const memoryBytes = params.memoryBytes ?? DEFAULT_MEMORY_BYTES;
 			const cumulativeRuntimeMs = Math.min(
 				MAX_CUMULATIVE_RUNTIME_MS,
 				attemptTimeoutMs * 3,
@@ -802,6 +817,7 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 				contextScopes: params.contextScopes ?? [],
 				workspaceMode,
 				timeoutMs: attemptTimeoutMs,
+				memoryBytes,
 			});
 			const agent = {
 				name: `dynamic-${agentIdentity.slice(0, 32)}`,
@@ -819,6 +835,7 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 					attemptTimeoutMs,
 					...SUBAGENT_LIMIT_CEILING,
 				},
+				memoryCeilingBytes: memoryBytes,
 				prompt,
 				scope: "builtin" as const,
 			};
@@ -847,6 +864,7 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 				preloadSkills: [...(params.preloadSkills ?? [])],
 				contextScopes: [...(params.contextScopes ?? [])],
 				workspace: { mode: workspaceMode, cwd: ctx.cwd },
+				memoryBytes,
 				limits: agent.limitCeiling,
 			});
 			signal?.throwIfAborted();

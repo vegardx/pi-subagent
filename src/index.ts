@@ -41,10 +41,14 @@ export {
 	type ContextScope,
 	ContextScopeSchema,
 	DEFAULT_MAX_TASK_COST,
+	DEFAULT_MEMORY_BYTES,
 	type DelegatedTask,
 	DelegatedTaskSchema,
 	type ExactModelRequest,
 	ExactModelRequestSchema,
+	MAX_MEMORY_BYTES,
+	MEMORY_GRANULARITY_BYTES,
+	MemoryBytesSchema,
 	type ResourceGrant,
 	ResourceGrantSchema,
 	type RunLimits,
@@ -204,16 +208,22 @@ export {
 	type GondolinAttemptSandbox,
 	GondolinSandboxError,
 	type GondolinSandboxRecord,
+	guestMemorySize,
 } from "./sandbox/gondolin.js";
 export {
 	createGondolinTools,
+	GUEST_CACHE_HOME,
 	GUEST_WORKSPACE,
+	sanitizeGuestEnvironment,
 	toGuestPath,
 	type WorkspacePathMap,
 } from "./sandbox/tools.js";
 export {
+	WORKSPACE_BUDGET_ERRNO_CODE,
+	WorkspaceWriteBudgetError,
 	type WriteBudget,
 	withWriteBudget,
+	workspaceBudgetNotice,
 } from "./sandbox/write-budget.js";
 export {
 	type AttemptSummary,
