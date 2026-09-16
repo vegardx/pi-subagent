@@ -22,7 +22,14 @@ import {
 	type WriteOperations,
 } from "@earendil-works/pi-coding-agent";
 
+import { type WriteBudget, workspaceBudgetNotice } from "./write-budget.js";
+
 export const GUEST_WORKSPACE = "/workspace";
+/**
+ * Guest cache root. It lives on the VM's own rootfs, so package-manager caches
+ * never consume the workspace write budget and never reach the handoff patch.
+ */
+export const GUEST_CACHE_HOME = "/tmp/cache";
 const DEFAULT_GREP_LIMIT = 100;
 
 type TextToolResult<TDetails> = {
@@ -402,6 +409,11 @@ export function sanitizeGuestEnvironment(
 	const result: Record<string, string> = {
 		HOME: GUEST_WORKSPACE,
 		TMPDIR: "/tmp",
+		XDG_CACHE_HOME: GUEST_CACHE_HOME,
+		npm_config_cache: `${GUEST_CACHE_HOME}/npm`,
+		YARN_CACHE_FOLDER: `${GUEST_CACHE_HOME}/yarn`,
+		PNPM_STORE_DIR: `${GUEST_CACHE_HOME}/pnpm`,
+		PIP_CACHE_DIR: `${GUEST_CACHE_HOME}/pip`,
 	};
 	if (!environment) return result;
 	for (const [key, value] of Object.entries(environment)) {
@@ -426,10 +438,19 @@ function createGondolinBashOps(
 	hostWorkspace: WorkspacePathContext,
 	shellPath: string,
 	onCommandAbort?: () => Promise<void>,
+	writeBudget?: WriteBudget,
 ): BashOperations {
 	return {
 		exec: async (command, cwd, { onData, signal, timeout, env }) => {
 			signal?.throwIfAborted();
+			const refusalsBefore = writeBudget?.refusals ?? 0;
+			const reportBudgetRefusals = () => {
+				if (!writeBudget) return;
+				if (writeBudget.refusals <= refusalsBefore) return;
+				onData(
+					Buffer.from(`\n${workspaceBudgetNotice(writeBudget)}\n`, "utf8"),
+				);
+			};
 			const guestCwd = toGuestPath(hostWorkspace, cwd);
 			const controller = new AbortController();
 			const onAbort = () => controller.abort();
@@ -455,8 +476,10 @@ function createGondolinBashOps(
 				});
 				for await (const chunk of process.output()) onData(chunk.data);
 				const result = await process;
+				reportBudgetRefusals();
 				return { exitCode: result.exitCode };
 			} catch (error) {
+				reportBudgetRefusals();
 				if (signal?.aborted || timedOut) {
 					try {
 						await onCommandAbort?.();
@@ -491,7 +514,10 @@ type GondolinTools = {
 export async function createGondolinTools(
 	vm: VM,
 	hostWorkspace: WorkspacePathContext,
-	options: { onCommandAbort?: () => Promise<void> } = {},
+	options: {
+		onCommandAbort?: () => Promise<void>;
+		writeBudget?: WriteBudget;
+	} = {},
 ): Promise<GondolinTools> {
 	const shellProbe = await vm.exec([
 		"/bin/sh",
@@ -514,6 +540,7 @@ export async function createGondolinTools(
 			hostWorkspace,
 			shellPath,
 			options.onCommandAbort,
+			options.writeBudget,
 		),
 		exposeSessionEnvironment: false,
 	});

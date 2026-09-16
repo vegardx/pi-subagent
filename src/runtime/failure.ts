@@ -36,6 +36,7 @@ export function classifyAttemptFailure(options: {
 	timedOut: boolean;
 	fatalToolAbort?: boolean;
 	externalAbortReason?: unknown;
+	workspaceBudgetExhausted?: boolean;
 	sandboxCleanup: CleanupOutcome;
 	workspaceCleanup: CleanupOutcome;
 }): ClassifiedFailure {
@@ -84,6 +85,20 @@ export function classifyAttemptFailure(options: {
 			"never",
 			"The operator cancelled the active attempt",
 			"Start a new run if the cancelled task is still required.",
+		);
+	}
+	if (
+		options.workspaceBudgetExhausted ||
+		normalized.includes("workspace write budget exceeded")
+	) {
+		return failure(
+			"workspace-budget",
+			"workspace",
+			"never",
+			options.workspaceBudgetExhausted
+				? "Workspace write budget exhausted; guest writes were refused with EDQUOT"
+				: message,
+			"Launch a new run with a larger workspaceWriteBytes budget or a smaller change; package caches belong outside /workspace.",
 		);
 	}
 	if (options.fatalToolAbort) {

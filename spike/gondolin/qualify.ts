@@ -35,7 +35,11 @@ import {
 	driveNativeSession,
 	type NativeSessionDrive,
 } from "./session-drive.js";
-import { createGondolinTools } from "./tools.js";
+import {
+	createGondolinTools,
+	GUEST_CACHE_HOME,
+	sanitizeGuestEnvironment,
+} from "./tools.js";
 import { withWriteBudget } from "./write-budget.js";
 
 type CheckStatus = "passed" | "failed" | "blocked";
@@ -412,9 +416,37 @@ async function qualifyWriteBudget() {
 			budget.reservedBytes <= limitBytes,
 			"write budget reserved beyond its limit",
 		);
+		assert(budget.exhausted, "budget refusal was not recorded");
+		assert(
+			/quota/i.test(result.stderr),
+			`budget refusal was not reported as a quota error: ${result.stderr.trim()}`,
+		);
 		const file = await stat(path.join(workspace, "large.bin"));
 		assert(file.size <= limitBytes, `host file exceeded quota: ${file.size}`);
-		return `A 1MiB guest write stopped at ${file.size} bytes under a ${limitBytes}-byte cumulative budget.`;
+		const reservedAfterRefusal = budget.reservedBytes;
+		const environment = sanitizeGuestEnvironment(undefined);
+		const cache = environment.npm_config_cache;
+		assert(
+			cache !== undefined && !cache.startsWith("/workspace"),
+			"guest package cache is inside the workspace",
+		);
+		const cacheWrite = await vm.exec(
+			[
+				"/bin/sh",
+				"-lc",
+				`mkdir -p "$npm_config_cache" && dd if=/dev/zero of="$npm_config_cache/blob.bin" bs=65536 count=16`,
+			],
+			{ env: environment },
+		);
+		assert(
+			cacheWrite.ok,
+			`guest cache write failed: ${cacheWrite.stderr.trim()}`,
+		);
+		assert(
+			budget.reservedBytes === reservedAfterRefusal,
+			"package cache write consumed the workspace write budget",
+		);
+		return `A 1MiB guest write stopped at ${file.size} bytes under a ${limitBytes}-byte cumulative budget and was refused as a quota error; a 1MiB write to ${GUEST_CACHE_HOME} consumed none of it.`;
 	} finally {
 		await closeVm(vm);
 	}
@@ -461,6 +493,7 @@ async function qualifyProductionAdapter(): Promise<string> {
 		owner: "qualification-adapter",
 		workspace,
 		readOnly: false,
+		memoryBytes: 512 * 1024 * 1024,
 		workspaceWriteBytes: 64 * 1024,
 		capacity,
 		skillMounts: [
@@ -620,6 +653,7 @@ async function qualifyForegroundService(): Promise<string> {
 		contextScopes: ["project" as const],
 		workspaceModes: ["read-only" as const],
 		limitCeiling: limits,
+		memoryCeilingBytes: 512 * 1024 * 1024,
 		prompt:
 			"Read task.txt with the read tool, then call final_answer exactly once with an object whose marker is the single-line file content.",
 		scope: "builtin" as const,
@@ -640,7 +674,6 @@ async function qualifyForegroundService(): Promise<string> {
 			mountPolicySha256: canonicalSha256("qualification-mount"),
 			networkPolicySha256: canonicalSha256("qualification-network"),
 			capacityPolicySha256: canonicalSha256("qualification-capacity"),
-			memoryBytes: 512 * 1024 * 1024,
 			guestDiskBytes: 2 * 1024 * 1024 * 1024,
 		},
 	});
@@ -721,7 +754,6 @@ async function qualifyForegroundService(): Promise<string> {
 			mountPolicySha256: canonicalSha256("qualification-mount"),
 			networkPolicySha256: canonicalSha256("qualification-network"),
 			capacityPolicySha256: canonicalSha256("qualification-capacity"),
-			memoryBytes: 512 * 1024 * 1024,
 			guestDiskBytes: 2 * 1024 * 1024 * 1024,
 		},
 	});
@@ -773,6 +805,7 @@ async function qualifyAttemptRunner(): Promise<string> {
 			retries: 0,
 			resumes: 0,
 		},
+		memoryCeilingBytes: 512 * 1024 * 1024,
 		prompt:
 			"Read task.txt with the read tool, then respond with exactly its single-line content and nothing else.",
 		scope: "builtin" as const,
@@ -825,7 +858,6 @@ async function qualifyAttemptRunner(): Promise<string> {
 			mountPolicySha256: canonicalSha256("qualification-mount"),
 			networkPolicySha256: canonicalSha256("qualification-network"),
 			capacityPolicySha256: canonicalSha256("qualification-capacity"),
-			memoryBytes: 512 * 1024 * 1024,
 			guestDiskBytes: 2 * 1024 * 1024 * 1024,
 		},
 		resolveModel: createExactModelResolver(modelRuntime),
