@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -23,8 +24,16 @@ for (const required of [
 	"dist/service-provider.d.ts",
 	"dist/service-provider.js",
 	"package.json",
+	"skills/subagents/SKILL.md",
 ]) {
 	if (!paths.has(required)) throw new Error(`packed file missing: ${required}`);
+}
+const skill = await readFile(
+	new URL("../skills/subagents/SKILL.md", import.meta.url),
+	"utf8",
+);
+if (!skill.startsWith("---\nname: subagents\ndescription: ")) {
+	throw new Error("packed operating skill is missing its frontmatter header");
 }
 for (const filePath of paths) {
 	if (

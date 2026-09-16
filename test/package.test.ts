@@ -10,7 +10,8 @@ type PackageJson = {
 	dependencies?: Record<string, string>;
 	peerDependencies?: Record<string, string>;
 	exports?: Record<string, unknown>;
-	pi?: { extensions?: string[] };
+	files?: string[];
+	pi?: { extensions?: string[]; skills?: string[] };
 };
 
 describe("package contract", () => {
@@ -38,6 +39,24 @@ describe("package contract", () => {
 			import: "./dist/service-provider.js",
 		});
 		expect(packageJson.pi?.extensions).toEqual(["./dist/extension.js"]);
+	});
+
+	it("declares the operating skill to Pi and ships it", async () => {
+		const packageJson = JSON.parse(
+			await readFile(new URL("../package.json", import.meta.url), "utf8"),
+		) as PackageJson;
+		expect(packageJson.pi).toEqual({
+			extensions: ["./dist/extension.js"],
+			skills: ["./skills"],
+		});
+		expect(packageJson.files).toEqual(
+			expect.arrayContaining(["dist", "docs", "skills"]),
+		);
+		const skill = await readFile(
+			new URL("../skills/subagents/SKILL.md", import.meta.url),
+			"utf8",
+		);
+		expect(skill.startsWith("---\nname: subagents\n")).toBe(true);
 	});
 
 	it("loads the extension and public module", async () => {

@@ -7,6 +7,7 @@
 	"files": [
 		"dist",
 		"docs",
+		"skills",
 		"README.md",
 		"LICENSE",
 		"LICENSES",
@@ -31,6 +32,9 @@
 	"pi": {
 		"extensions": [
 			"./dist/extension.js"
+		],
+		"skills": [
+			"./skills"
 		]
 	},
 	"scripts": {
