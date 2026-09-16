@@ -631,6 +631,7 @@ function agentFromPlan(plan: AgentLaunchPlan): DiscoveredAgent {
 		contextScopes: [...plan.contextScopes],
 		workspaceModes: [plan.workspace.mode],
 		limitCeiling: { ...plan.limits },
+		memoryCeilingBytes: plan.sandbox.memoryBytes,
 	};
 }
 

@@ -1,7 +1,7 @@
 import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
 
-export const CONTRACT_REVISION = 6 as const;
+export const CONTRACT_REVISION = 7 as const;
 
 export class IncompatibleContractRevisionError extends Error {
 	constructor(
@@ -145,6 +145,7 @@ export const FailureCodeSchema = Type.Union([
 	Type.Literal("unknown"),
 	Type.Literal("validation"),
 	Type.Literal("workspace"),
+	Type.Literal("workspace-budget"),
 ]);
 export type FailureCode = Static<typeof FailureCodeSchema>;
 
@@ -257,6 +258,8 @@ export const SubagentRuntimeContractSchema = Type.Object(
 				deepReconciliation: Type.Boolean(),
 				worktrees: Type.Boolean(),
 				handoffExport: Type.Boolean(),
+				vmMemoryCeiling: Type.Boolean(),
+				workspaceBudgetRefusal: Type.Boolean(),
 				publicNetworkEgress: Type.Boolean(),
 				explicitResources: Type.Boolean(),
 				ambientExtensionsControl: Type.Boolean(),
@@ -293,6 +296,8 @@ export const SUBAGENT_RUNTIME_CONTRACT: SubagentRuntimeContract = Object.freeze(
 			deepReconciliation: true,
 			worktrees: true,
 			handoffExport: true,
+			vmMemoryCeiling: true,
+			workspaceBudgetRefusal: true,
 			publicNetworkEgress: true,
 			explicitResources: true,
 			ambientExtensionsControl: true,

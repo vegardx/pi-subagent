@@ -5,6 +5,7 @@ import {
 	AgentLaunchPlanSchema,
 	type ContextScope,
 	type ExactModelRequest,
+	MemoryBytesSchema,
 	type ResourceGrant,
 	type RunLimits,
 	type SubagentRequest,
@@ -27,6 +28,7 @@ export type AgentDefinition = {
 	contextScopes: ContextScope[];
 	workspaceModes: Array<"read-only" | "worktree">;
 	limitCeiling: RunLimits;
+	memoryCeilingBytes: number;
 };
 
 export type ResolvedWorkspace = {
@@ -41,7 +43,6 @@ export type ResolvedSandbox = {
 	mountPolicySha256: string;
 	networkPolicySha256: string;
 	capacityPolicySha256: string;
-	memoryBytes: number;
 	guestDiskBytes: number;
 };
 
@@ -166,6 +167,14 @@ export async function compileLaunchPlan(input: {
 		throw new PreflightError("workspace resolution mismatch");
 	}
 	assertLimits(input.request.limits, input.agent.limitCeiling);
+	if (!Value.Check(MemoryBytesSchema, input.agent.memoryCeilingBytes)) {
+		throw new PreflightError("agent memory ceiling is invalid");
+	}
+	const memoryBytes =
+		input.request.memoryBytes ?? input.agent.memoryCeilingBytes;
+	if (memoryBytes > input.agent.memoryCeilingBytes) {
+		throw new PreflightError("memory request exceeds agent ceiling");
+	}
 	const contextScopes = [
 		...new Set([...input.agent.contextScopes, ...input.request.contextScopes]),
 	].sort() as ContextScope[];
@@ -240,6 +249,7 @@ export async function compileLaunchPlan(input: {
 		sandbox: {
 			backend: "gondolin" as const,
 			...input.sandbox,
+			memoryBytes,
 			workspaceWriteBytes: input.request.limits.workspaceWriteBytes,
 		},
 		network: {

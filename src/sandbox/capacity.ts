@@ -165,6 +165,14 @@ async function writeRecord(filePath: string, record: VmCapacityLeaseRecord) {
 	await rename(temporary, filePath);
 }
 
+/**
+ * Host VM capacity is counted in slots, not bytes. Host memory exposure is
+ * `maxSlots x` the per-run `sandbox.memoryBytes` grant, so the worst case for
+ * the default four slots is four times the 4 GiB per-agent ceiling. There is no
+ * cross-process total-memory budget: slots are held by OS-owned localhost
+ * listeners, and a byte budget would need durable, fenced per-slot accounting
+ * that the listener scheme deliberately does not provide.
+ */
 export async function createVmCapacityManager(options: {
 	root: string;
 	maxSlots: number;
