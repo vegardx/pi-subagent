@@ -110,6 +110,9 @@ function provider(value: unknown): value is WebProvider {
 	);
 }
 
+/** Tool names the pi-web provider must broker from the host seat. */
+export const HOST_TOOL_NAMES = Object.freeze(["search", "fetch"] as const);
+
 const EXPECTED_TOOL_IDENTITIES: Readonly<Record<"search" | "fetch", string>> =
 	Object.freeze({
 		search: "f3f1b20c59db3b10c3b3e73757711b8f540bff10af39621fb8c106fe396fc62e",
@@ -222,7 +225,10 @@ export function discoverWebHostTools(
 			source: `@vegardx/pi-web/service-provider@4#${declaration.name}`,
 		});
 	});
-	if (names.size !== 2 || !names.has("search") || !names.has("fetch")) {
+	if (
+		names.size !== HOST_TOOL_NAMES.length ||
+		HOST_TOOL_NAMES.some((name) => !names.has(name))
+	) {
 		throw new HostToolProviderError(
 			"incompatible",
 			"The pi-web provider must declare exactly search and fetch.",

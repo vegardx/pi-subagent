@@ -11,13 +11,17 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import type { ExactModelRequest } from "./launch-contracts.js";
+import {
+	DEFAULT_MAX_TASK_COST,
+	type ExactModelRequest,
+} from "./launch-contracts.js";
 import { type DiscoveredAgent, discoverAgents } from "./preflight/agents.js";
 import { canonicalSha256 } from "./preflight/canonical.js";
 import { discoverWebHostTools } from "./runtime/host-tools.js";
 import {
 	isRunAction,
 	RUN_ACTIONS,
+	type RunAction,
 	type RunSummary,
 	type SubagentService,
 } from "./service.js";
@@ -31,8 +35,8 @@ import {
 	showSubagentInspector,
 } from "./ui/inspector.js";
 
-const READ_ONLY_TOOLS = ["read", "grep", "find", "ls"];
-const THINKING_LEVELS = [
+export const READ_ONLY_TOOLS = ["read", "grep", "find", "ls"];
+export const THINKING_LEVELS = [
 	"off",
 	"minimal",
 	"low",
@@ -40,7 +44,7 @@ const THINKING_LEVELS = [
 	"high",
 	"xhigh",
 ] as const;
-const MUTATING_TOOLS = new Set(["write", "edit", "bash"]);
+export const MUTATING_TOOLS = new Set(["write", "edit", "bash"]);
 const OPERATOR_SUBCOMMANDS = [
 	"list",
 	"show",
@@ -50,6 +54,37 @@ const OPERATOR_SUBCOMMANDS = [
 	...RUN_ACTIONS,
 	"prune",
 ];
+
+/** Run actions whose `/subagents` invocation accepts trailing free text. */
+export const TEXT_ACTIONS: readonly RunAction[] = [
+	"steer",
+	"follow-up",
+	"pin",
+	"export-output",
+	"export-handoff",
+];
+
+/** Run actions that ask the operator to confirm whenever the seat has a UI. */
+export const CONFIRMED_ACTIONS: readonly RunAction[] = [
+	"stop",
+	"retry",
+	"resume",
+	"release-workspace",
+	"abandon",
+];
+
+export const DEFAULT_ATTEMPT_TIMEOUT_MS = 600_000;
+export const MAX_CUMULATIVE_RUNTIME_MS = 3_600_000;
+
+/** Authority ceiling the tool grants its ephemeral agent. */
+export const SUBAGENT_LIMIT_CEILING = Object.freeze({
+	totalTokens: 10_000_000,
+	cost: DEFAULT_MAX_TASK_COST,
+	outputBytes: 1024 * 1024,
+	workspaceWriteBytes: 512 * 1024 * 1024,
+	retries: 1,
+	resumes: 1,
+});
 
 const parameters = Type.Object({
 	agent: Type.String({ minLength: 1, maxLength: 128 }),
@@ -336,12 +371,7 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 		confirmed = false,
 	): Promise<void> {
 		const client = ownerClient(runtime, run, ctx);
-		if (
-			!confirmed &&
-			["stop", "retry", "resume", "release-workspace", "abandon"].includes(
-				action,
-			)
-		) {
+		if (!confirmed && CONFIRMED_ACTIONS.includes(action)) {
 			const descriptions: Record<string, string> = {
 				stop: "The active model session will stop and its VM will close.",
 				retry: "A new attempt and fresh VM will consume remaining budgets.",
@@ -699,16 +729,7 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 					`${subcommand} is unavailable while the run is ${run.status}`,
 				);
 			}
-			if (
-				rest.length > 0 &&
-				![
-					"steer",
-					"follow-up",
-					"pin",
-					"export-output",
-					"export-handoff",
-				].includes(action)
-			) {
+			if (rest.length > 0 && !TEXT_ACTIONS.includes(action)) {
 				throw new Error(`Unexpected arguments for ${subcommand}.`);
 			}
 			await performAction(
@@ -716,15 +737,7 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 				run,
 				ctx,
 				runtime,
-				[
-					"steer",
-					"follow-up",
-					"pin",
-					"export-output",
-					"export-handoff",
-				].includes(action)
-					? rest.join(" ") || undefined
-					: undefined,
+				TEXT_ACTIONS.includes(action) ? rest.join(" ") || undefined : undefined,
 			);
 		},
 	});
@@ -768,8 +781,11 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 				modelRuntime?.registerNativeProvider(selectedProvider);
 			const thinking = resolveThinking(params.thinking, ctx);
 			const tools = params.tools ?? READ_ONLY_TOOLS;
-			const attemptTimeoutMs = params.timeoutMs ?? 600_000;
-			const cumulativeRuntimeMs = Math.min(3_600_000, attemptTimeoutMs * 3);
+			const attemptTimeoutMs = params.timeoutMs ?? DEFAULT_ATTEMPT_TIMEOUT_MS;
+			const cumulativeRuntimeMs = Math.min(
+				MAX_CUMULATIVE_RUNTIME_MS,
+				attemptTimeoutMs * 3,
+			);
 			const workspaceMode: "read-only" | "worktree" = tools.some((tool) =>
 				MUTATING_TOOLS.has(tool),
 			)
@@ -785,7 +801,7 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 				preloadSkills: params.preloadSkills ?? [],
 				contextScopes: params.contextScopes ?? [],
 				workspaceMode,
-				timeoutMs: params.timeoutMs ?? 600_000,
+				timeoutMs: attemptTimeoutMs,
 			});
 			const agent = {
 				name: `dynamic-${agentIdentity.slice(0, 32)}`,
@@ -799,14 +815,9 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 				contextScopes: [...(params.contextScopes ?? [])],
 				workspaceModes: [workspaceMode],
 				limitCeiling: {
-					cumulativeRuntimeMs: cumulativeRuntimeMs,
+					cumulativeRuntimeMs,
 					attemptTimeoutMs,
-					totalTokens: 10_000_000,
-					cost: 100,
-					outputBytes: 1024 * 1024,
-					workspaceWriteBytes: 512 * 1024 * 1024,
-					retries: 1,
-					resumes: 1,
+					...SUBAGENT_LIMIT_CEILING,
 				},
 				prompt,
 				scope: "builtin" as const,

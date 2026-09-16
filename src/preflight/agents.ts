@@ -34,7 +34,8 @@ const ModelRouteSchema = Type.String({
 	maxLength: 512,
 });
 
-const FrontmatterSchema = Type.Object(
+/** Closed frontmatter contract for a discovered agent definition. */
+export const AgentFrontmatterSchema = Type.Object(
 	{
 		name: Type.String({
 			pattern: "^[a-zA-Z0-9][a-zA-Z0-9._-]*$",
@@ -110,7 +111,7 @@ async function loadAgent(
 ): Promise<DiscoveredAgent> {
 	const content = await readFile(filePath, "utf8");
 	const { metadata, prompt } = splitFrontmatter(content);
-	if (!Value.Check(FrontmatterSchema, metadata)) {
+	if (!Value.Check(AgentFrontmatterSchema, metadata)) {
 		throw new AgentDiscoveryError(`invalid agent frontmatter: ${filePath}`);
 	}
 	const frontmatter = metadata as {
