@@ -88,6 +88,29 @@ describe("attempt failure classification", () => {
 			retry: "never",
 		},
 		{
+			name: "exhausted workspace write budget",
+			input: {
+				error: new Error("command failed"),
+				timedOut: false,
+				workspaceBudgetExhausted: true,
+				...cleanup,
+			},
+			code: "workspace-budget",
+			retry: "never",
+		},
+		{
+			name: "reported workspace write budget refusal",
+			input: {
+				error: new Error(
+					"workspace write budget exceeded: requested=10 remaining=2 limit=12",
+				),
+				timedOut: false,
+				...cleanup,
+			},
+			code: "workspace-budget",
+			retry: "never",
+		},
+		{
 			name: "cleanup block",
 			input: {
 				error: new Error("close failed"),
@@ -102,6 +125,27 @@ describe("attempt failure classification", () => {
 		const classified = classifyAttemptFailure(input);
 		expect(classified.code).toBe(code);
 		expect(classified.retry).toBe(retry);
+	});
+
+	it("separates budget exhaustion from generic workspace failures", () => {
+		const budget = classifyAttemptFailure({
+			error: new Error("command failed"),
+			timedOut: false,
+			workspaceBudgetExhausted: true,
+			...cleanup,
+		});
+		expect(budget.code).toBe("workspace-budget");
+		expect(budget.origin).toBe("workspace");
+		expect(budget.message).toContain("Workspace write budget exhausted");
+		expect(budget.guidance).toContain("workspaceWriteBytes");
+		expect(
+			classifyAttemptFailure({
+				error: new Error("worktree handoff failed"),
+				timedOut: false,
+				workspaceBudgetExhausted: false,
+				...cleanup,
+			}).code,
+		).toBe("workspace");
 	});
 
 	it("fails unknown errors closed to reconciliation", () => {

@@ -5,6 +5,7 @@ import { createVmCapacityManager } from "../src/sandbox/capacity.js";
 import {
 	createGondolinAttemptSandbox,
 	GondolinSandboxError,
+	guestMemorySize,
 } from "../src/sandbox/gondolin.js";
 
 describe("production Gondolin adapter", () => {
@@ -20,6 +21,7 @@ describe("production Gondolin adapter", () => {
 				workspace: path.join(root, "missing"),
 				readOnly: true,
 				workspaceWriteBytes: 0,
+				memoryBytes: 512 * 1024 * 1024,
 				capacity,
 			}),
 		).rejects.toBeInstanceOf(GondolinSandboxError);
@@ -32,5 +34,15 @@ describe("production Gondolin adapter", () => {
 		expect(new GondolinSandboxError("failure").name).toBe(
 			"GondolinSandboxError",
 		);
+	});
+
+	it("passes the resolved plan memory to the guest without a host default", () => {
+		expect(guestMemorySize(512 * 1024 * 1024)).toBe("512M");
+		expect(guestMemorySize(2 * 1024 * 1024 * 1024)).toBe("2048M");
+		for (const invalid of [0, -512 * 1024 * 1024, 1024, 1.5 * 1024 * 1024]) {
+			expect(() => guestMemorySize(invalid)).toThrow(
+				"sandbox memory must be a positive whole number of MiB",
+			);
+		}
 	});
 });

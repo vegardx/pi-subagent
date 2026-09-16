@@ -23,10 +23,16 @@ import piSubagentExtension, {
 	TEXT_ACTIONS,
 	THINKING_LEVELS,
 } from "../src/extension.js";
-import { DEFAULT_MAX_TASK_COST } from "../src/launch-contracts.js";
+import {
+	DEFAULT_MAX_TASK_COST,
+	DEFAULT_MEMORY_BYTES,
+	MAX_MEMORY_BYTES,
+	MEMORY_GRANULARITY_BYTES,
+} from "../src/launch-contracts.js";
 import { AgentFrontmatterSchema } from "../src/preflight/agents.js";
 import { BUDGET_STEERING_STAGES } from "../src/runtime/budget.js";
 import { HOST_TOOL_NAMES } from "../src/runtime/host-tools.js";
+import { GUEST_CACHE_HOME } from "../src/sandbox/tools.js";
 import {
 	HANDOFF_EXPORT_STATUSES,
 	IMPLEMENTED_TOOLS,
@@ -202,6 +208,16 @@ describe("operating skill tool surface", () => {
 		expect(rows.get("timeoutMs")).toContain(
 			`Default \`${DEFAULT_ATTEMPT_TIMEOUT_MS}\``,
 		);
+		expect(MEMORY_GRANULARITY_BYTES).toBe(64 * 1024 * 1024);
+		expect(DEFAULT_MEMORY_BYTES).toBe(512 * 1024 * 1024);
+		expect(MAX_MEMORY_BYTES).toBe(4 * 1024 * 1024 * 1024);
+		const memory = rows.get("memoryBytes") ?? "";
+		expect(memory).toContain(
+			`${MEMORY_GRANULARITY_BYTES}..${MAX_MEMORY_BYTES}`,
+		);
+		expect(memory).toContain(`Default \`${DEFAULT_MEMORY_BYTES}\``);
+		expect(memory).toContain(`max \`${MAX_MEMORY_BYTES}\``);
+		expect(flatSkill).toContain("64 MiB steps");
 		expect(MAX_CUMULATIVE_RUNTIME_MS).toBe(60 * 60 * 1000);
 		expect(flatSkill).toContain(
 			"the smaller of one hour and `timeoutMs` times three",
@@ -341,13 +357,17 @@ describe("operating skill budgets, isolation, and evidence", () => {
 	it("states the sandbox facts the runtime configures", () => {
 		const extension = sources.get("extension.ts") ?? "";
 		const gondolin = sources.get("sandbox/gondolin.ts") ?? "";
-		expect(extension).toContain("memoryBytes: 512 * 1024 * 1024");
 		expect(extension).toContain("maxSlots: 4");
 		expect(extension).toContain('mode: "public-egress"');
 		expect(extension).toContain("blockInternalRanges: true");
 		expect(extension).toContain("allowWebSockets: false");
-		expect(gondolin).toContain('options.memory ?? "512M"');
-		expect(gondolin).toContain("options.cpus ?? 1");
+		expect(gondolin).toContain("guestMemorySize(options.memoryBytes)");
+		expect(gondolin).toContain("const DEFAULT_CPUS = 1;");
+		expect(gondolin).toContain("options.cpus ?? DEFAULT_CPUS");
+		expect(GUEST_CACHE_HOME).toBe("/tmp/cache");
+		expect(sources.get("sandbox/tools.ts")).toContain(
+			"XDG_CACHE_HOME: GUEST_CACHE_HOME",
+		);
 		expect(sources.get("launch-contracts.ts")).toContain(
 			'cwd: Type.Literal("/workspace")',
 		);
@@ -355,13 +375,22 @@ describe("operating skill budgets, isolation, and evidence", () => {
 		expect(flatSkill).toContain("At most four VMs run concurrently");
 		expect(flatSkill).toContain("`public-egress` with internal ranges blocked");
 		expect(flatSkill).toContain("guest working directory `/workspace`");
+		expect(flatSkill).toContain(
+			`\`$XDG_CACHE_HOME\` is \`${GUEST_CACHE_HOME}\` in the guest`,
+		);
 	});
 
 	it("states the contract features that bound delegation", () => {
 		expect(SUBAGENT_RUNTIME_CONTRACT.features.background).toBe(false);
 		expect(SUBAGENT_RUNTIME_CONTRACT.features.survivesSeatExit).toBe(false);
+		expect(SUBAGENT_RUNTIME_CONTRACT.features.vmMemoryCeiling).toBe(true);
+		expect(SUBAGENT_RUNTIME_CONTRACT.features.workspaceBudgetRefusal).toBe(
+			true,
+		);
 		expect(flatSkill).toContain("`background: false`");
 		expect(flatSkill).toContain("`survivesSeatExit: false`");
+		expect(flatSkill).toContain("`vmMemoryCeiling: true`");
+		expect(flatSkill).toContain("`workspaceBudgetRefusal: true`");
 	});
 
 	it("points at the real service state locations", () => {
@@ -386,6 +415,11 @@ describe("operating skill agent definitions", () => {
 		expect(documented.sort()).toEqual([...(schema.required ?? [])].sort());
 		expect(Object.keys(schema.properties ?? {})).toContain("allowedModels");
 		expect(schema.required).not.toContain("allowedModels");
+		expect(Object.keys(schema.properties ?? {})).toContain("memoryBytes");
+		expect(schema.required).not.toContain("memoryBytes");
+		expect(sources.get("preflight/agents.ts")).toContain(
+			"frontmatter.memoryBytes ?? DEFAULT_MEMORY_BYTES",
+		);
 		expect(sources.get("preflight/agents.ts")).toContain("256 * 1024");
 	});
 });
