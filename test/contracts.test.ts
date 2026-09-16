@@ -34,6 +34,8 @@ describe("runtime contracts", () => {
 			deepReconciliation: true,
 			worktrees: true,
 			handoffExport: true,
+			vmMemoryCeiling: true,
+			workspaceBudgetRefusal: true,
 			publicNetworkEgress: true,
 			explicitResources: true,
 			ambientExtensionsControl: true,

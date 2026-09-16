@@ -54,6 +54,7 @@ const agent: AgentDefinition = {
 	contextScopes: [],
 	workspaceModes: ["worktree"],
 	limitCeiling: { ...limits },
+	memoryCeilingBytes: 512 * 1024 * 1024,
 };
 const resources = [
 	{
@@ -82,7 +83,6 @@ const sandbox = {
 	mountPolicySha256: b,
 	networkPolicySha256: a,
 	capacityPolicySha256: b,
-	memoryBytes: 512 * 1024 * 1024,
 	guestDiskBytes: 2 * 1024 * 1024 * 1024,
 };
 
@@ -121,6 +121,46 @@ describe("semantic preflight", () => {
 		expect(first.agentPrompt).toBe("Worker prompt");
 		expect(first.cwd).toBe("/workspace");
 		expect(first.network.blockInternalRanges).toBe(true);
+	});
+
+	it("resolves VM memory from the agent ceiling and the request", async () => {
+		const ceiling = 2 * 1024 * 1024 * 1024;
+		const defaulted = await compile({
+			agent: { ...agent, memoryCeilingBytes: ceiling },
+		});
+		expect(defaulted.sandbox.memoryBytes).toBe(ceiling);
+		expect(verifyLaunchPlanIdentity(defaulted)).toBe(true);
+
+		const narrowed = await compile({
+			agent: { ...agent, memoryCeilingBytes: ceiling },
+			request: { ...request, memoryBytes: 1024 * 1024 * 1024 },
+		});
+		expect(narrowed.sandbox.memoryBytes).toBe(1024 * 1024 * 1024);
+		expect(narrowed.identitySha256).not.toBe(defaulted.identitySha256);
+
+		const inherited = await compile();
+		expect(inherited.sandbox.memoryBytes).toBe(512 * 1024 * 1024);
+	});
+
+	it("refuses a memory request above the agent ceiling", async () => {
+		await expect(
+			compile({
+				request: { ...request, memoryBytes: 1024 * 1024 * 1024 },
+			}),
+		).rejects.toThrow("memory request exceeds agent ceiling");
+		await expect(
+			compile({
+				request: { ...request, memoryBytes: 1024 * 1024 * 1024 },
+			}),
+		).rejects.toBeInstanceOf(PreflightError);
+		await expect(
+			compile({
+				request: { ...request, memoryBytes: 100 * 1024 * 1024 },
+			}),
+		).rejects.toThrow("request violates schema");
+		await expect(
+			compile({ agent: { ...agent, memoryCeilingBytes: 100 } }),
+		).rejects.toThrow("agent memory ceiling is invalid");
 	});
 
 	it("unions agent-required and requested context scopes", async () => {

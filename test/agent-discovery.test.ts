@@ -99,6 +99,51 @@ describe("agent discovery", () => {
 		).rejects.toThrow("agent name does not match file");
 	});
 
+	it("defaults, accepts, and validates the VM memory ceiling", async () => {
+		const directory = await sourceDirectory("memory");
+		await writeFile(
+			path.join(directory, "default-memory.md"),
+			definition("default-memory", "prompt"),
+		);
+		await writeFile(
+			path.join(directory, "raised-memory.md"),
+			definition("raised-memory", "prompt").replace(
+				"---\nprompt",
+				`memoryBytes: ${2 * 1024 * 1024 * 1024}\n---\nprompt`,
+			),
+		);
+		const agents = await discoverAgents([
+			{ scope: "global", directory, trusted: true },
+		]);
+		expect(agents.get("default-memory")?.memoryCeilingBytes).toBe(
+			512 * 1024 * 1024,
+		);
+		expect(agents.get("raised-memory")?.memoryCeilingBytes).toBe(
+			2 * 1024 * 1024 * 1024,
+		);
+
+		for (const invalid of [
+			0,
+			100 * 1024 * 1024,
+			-64 * 1024 * 1024,
+			5 * 1024 * 1024 * 1024,
+		]) {
+			const rejected = await sourceDirectory(`memory-${invalid}`);
+			await writeFile(
+				path.join(rejected, "worker.md"),
+				definition("worker", "prompt").replace(
+					"---\nprompt",
+					`memoryBytes: ${invalid}\n---\nprompt`,
+				),
+			);
+			await expect(
+				discoverAgents([
+					{ scope: "global", directory: rejected, trusted: true },
+				]),
+			).rejects.toThrow("invalid agent frontmatter");
+		}
+	});
+
 	it("rejects duplicate names in one scope across source directories", async () => {
 		const first = await sourceDirectory("duplicate-a");
 		const second = await sourceDirectory("duplicate-b");
