@@ -13,6 +13,8 @@
 - A requested boundary never silently degrades.
 - VM count, memory, guest storage, workspace writes, runtime, and output are
   bounded below the prompt layer and across concurrent seat processes.
+- VM memory is a per-agent ceiling, not a global constant: an agent definition
+  declares it and a launch request may only narrow it.
 
 ## Capability resolution
 
@@ -68,6 +70,9 @@ not a sufficient grant.
 | Built-in tools | Explicit allowlist |
 | Recursive subagent tool | Denied |
 | Workspace | Read-only |
+| VM memory | 512 MiB; agent ceiling up to 4 GiB in 64 MiB steps; a request may only narrow it |
+| VM CPUs | 1; not configurable per agent |
+| Package-manager caches | `/tmp/cache` through `XDG_CACHE_HOME`; never inside `/workspace` |
 | Network | Public internet; internal ranges blocked |
 | Repository-local files | Visible, including `.env` and similar files |
 | Host credentials and home | Not mounted |
@@ -76,6 +81,16 @@ Guest shell environments are reconstructed rather than copied. Only bounded
 locale/terminal variables are accepted from Pi; guest `HOME` and `TMPDIR` are
 fixed to `/workspace` and `/tmp`. Host `PATH`, tokens, provider variables, proxy
 configuration, and arbitrary extension environment are denied.
+
+Every VM-backed process tool also receives fixed cache locations outside the
+workspace: `XDG_CACHE_HOME=/tmp/cache`, `npm_config_cache=/tmp/cache/npm`,
+`YARN_CACHE_FOLDER=/tmp/cache/yarn`, `PNPM_STORE_DIR=/tmp/cache/pnpm`, and
+`PIP_CACHE_DIR=/tmp/cache/pip`. `HOME` stays `/workspace` because guest tooling
+expects a writable home, but a package cache under `HOME` would otherwise
+consume `workspaceWriteBytes` and land in the handoff patch. `/tmp` is part of
+the VM's own memory-backed rootfs, so cache bytes are charged to the VM memory
+and guest-disk grants instead of the workspace budget, and they never reach the
+host checkout.
 
 ## Filesystem policy
 
@@ -90,7 +105,10 @@ Host home, Pi configuration, provider authentication, runtime state, and
 unrelated repositories are absent.
 
 Read-only attempts receive a `ReadonlyProvider`. Writing attempts receive a
-`RealFSProvider` rooted at a private worktree. Repository-local files are not
+`RealFSProvider` rooted at a private worktree and wrapped in the
+`workspaceWriteBytes` budget. A write past the budget is refused with `EDQUOT`
+(Disk quota exceeded) rather than a generic I/O error, so a guest process can
+tell budget exhaustion from disk failure. Repository-local files are not
 filtered merely because they may contain secrets. Canonicalization and provider
 containment must prevent traversal and symlink escape beyond the selected root.
 

@@ -71,6 +71,10 @@ release, and retention cleanup of those refs, so a consumer can import writer
 evidence as bounded digest-verified bytes without reading private branches or
 host paths.
 
+Contract revision 7 adds the per-agent VM memory ceiling (`vmMemoryCeiling`) and
+the typed workspace write-budget refusal (`workspaceBudgetRefusal`). A consumer
+that pins revision 6 must move to 7; there is no compatibility path.
+
 Consumer integration starts only after pi-subagent completes full acceptance,
 dogfood cutover, and stable release qualification:
 

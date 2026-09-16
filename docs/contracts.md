@@ -65,6 +65,7 @@ interface SubagentRequest {
 	preloadSkills?: string[];
 	contextScopes: Array<"global" | "project">;
 	workspace: WorkspaceRequest;
+	memoryBytes?: number;
 	outputSchema?: JsonSchema;
 	limits: RunLimits;
 }
@@ -113,6 +114,13 @@ explicit cost limit must fit both its agent ceiling and the service policy.
 `totalTokens` is optional; when absent, cost and runtime remain the task budget
 authorities.
 
+`memoryBytes` is the guest VM memory grant. It is a positive integer multiple of
+64 MiB, at most 4 GiB. An agent definition declares the ceiling; a request may
+only narrow it. When the request omits it, the plan uses the agent ceiling; when
+the agent definition omits it, the ceiling is 512 MiB. A request above the
+ceiling fails preflight with `memory request exceeds agent ceiling`. Guest CPU
+count is fixed at one and is not a per-agent knob.
+
 Preflight resolves and hashes all effective resources without starting a model
 session or VM. Project trust, provenance, canonical paths, symlink policy,
 public-egress policy, sandbox image, and caller operation identity are part of
@@ -121,6 +129,33 @@ the plan.
 The initial release does not accept arbitrary child extensions. A capability
 implemented by trusted host code must be declared through a pi-subagent-owned
 adapter and represented in the launch identity.
+
+## Agent definition frontmatter
+
+```yaml
+name: reviewer
+model:
+  provider: github-copilot
+  id: gpt-5.6-luna
+  thinking: low
+tools: [read, grep]
+preloadSkills: []
+contextScopes: [project]
+workspaceModes: [read-only]
+memoryBytes: 2147483648   # optional; default 512 MiB, maximum 4 GiB
+limits:
+  cumulativeRuntimeMs: 600000
+  attemptTimeoutMs: 300000
+  cost: 10
+  outputBytes: 1048576
+  workspaceWriteBytes: 0
+  retries: 1
+  resumes: 1
+```
+
+Frontmatter is strict: unknown keys, a `memoryBytes` that is not a positive
+integer multiple of 64 MiB, and a `memoryBytes` above 4 GiB are rejected at
+discovery. Every declared value is a ceiling, never a floor.
 
 ## Effective launch plan
 
@@ -177,6 +212,14 @@ digest-bound, injected through Pi's context-file mechanism, and exposed through
 synthetic read-only guest `/context` mounts. Repository context symlinks may not
 escape the selected checkout. Transcript inheritance remains separately
 controlled by `contextMode`.
+
+`sandbox.memoryBytes` is the resolved per-run memory grant, so it is part of the
+launch identity digest and of the persisted run and attempt records. Host VM
+capacity stays slot-counted: host memory exposure is `maxSlots` x the per-run
+grant, which for the default four slots and the 4 GiB ceiling is 16 GiB. There
+is no separate total-memory budget; slots are held by OS-owned localhost
+listeners and a byte budget would require durable fenced per-slot accounting
+that the listener scheme does not provide.
 
 Resource grants include canonical path, source provenance, content/tree digest,
 and classification. Referenced resources and sandbox capabilities are
@@ -402,6 +445,8 @@ interface SubagentRuntimeContract {
 		deepReconciliation: boolean;
 		worktrees: boolean;
 		handoffExport: boolean;
+		vmMemoryCeiling: boolean;
+		workspaceBudgetRefusal: boolean;
 		publicNetworkEgress: boolean;
 		explicitResources: boolean;
 		ambientExtensionsControl: boolean;
@@ -410,9 +455,14 @@ interface SubagentRuntimeContract {
 }
 ```
 
-The current revision is 6. `handoffExport` states that `exportHandoff`,
+The current revision is 7. `handoffExport` states that `exportHandoff`,
 `HandoffRef`, the `export-handoff` action, durable handoff refs, and the
-`handoff-exported` receipt are implemented. Consumers check the exact contract
+`handoff-exported` receipt are implemented. `vmMemoryCeiling` states that agent
+definitions carry an optional `memoryBytes` ceiling, that a request may narrow
+it, and that the resolved value is bound into the launch plan and the sandbox
+identity. `workspaceBudgetRefusal` states that an exhausted `workspaceWriteBytes`
+budget refuses guest writes with `EDQUOT` and classifies the attempt failure as
+`workspace-budget`. Consumers check the exact contract
 revision and required features rather than
 infer support from package versions. Revisions are not backwards-compatible:
 a consumer either supports the current revision or refuses to start. The
