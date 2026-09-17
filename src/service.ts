@@ -46,6 +46,10 @@ import {
 	RunLeaseUnavailableError,
 } from "./persistence/run-lease.js";
 import { RunRecordStore } from "./persistence/run-record.js";
+import {
+	describeQuarantine,
+	quarantineStaleState,
+} from "./persistence/store-revision.js";
 import type { DiscoveredAgent } from "./preflight/agents.js";
 import { canonicalSha256 } from "./preflight/canonical.js";
 import {
@@ -717,12 +721,18 @@ export async function createSubagentService(options: {
 	hostTools?: readonly HostToolDeclaration[];
 	resolveHostTools?: () => readonly HostToolDeclaration[];
 	maxTaskCost?: number;
+	/** One-line operator notices from store open; the seat decides how to show them. */
+	onNotice?: (message: string) => void;
 }): Promise<SubagentService> {
 	const maxTaskCost = options.maxTaskCost ?? DEFAULT_MAX_TASK_COST;
 	if (!Number.isFinite(maxTaskCost) || maxTaskCost < 0) {
 		throw new Error("invalid maximum task cost policy");
 	}
 	await mkdir(options.root, { recursive: true, mode: 0o700 });
+	// Revision gate before any store opens: state from an older revision is
+	// moved aside so this build starts clean, and a newer revision refuses.
+	const quarantine = await quarantineStaleState(options.root);
+	if (quarantine) options.onNotice?.(describeQuarantine(quarantine));
 	const builtToolImplementation = fileURLToPath(
 		new URL("./sandbox/tools.js", import.meta.url),
 	);

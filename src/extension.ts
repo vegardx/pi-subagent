@@ -206,6 +206,7 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 				resolveHostTools: () => discoverWebHostTools(pi.events),
 				agentDir: getAgentDir(),
 				isProjectTrusted: (cwd) => cwd === ctx.cwd && ctx.isProjectTrusted(),
+				onNotice: (message) => operatorOutput(ctx, message, "warning"),
 				async loadExecution() {
 					const [gondolin, capacityModule] = await Promise.all([
 						import("@earendil-works/gondolin"),
