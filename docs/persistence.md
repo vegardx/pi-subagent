@@ -93,6 +93,17 @@ Recovery ignores one provably torn tail record and rejects interior corruption
 or an unknown contract revision. Persisted-state compatibility and migrations
 are not supported; incompatible state receives explicit discard guidance.
 
+Store open runs one revision gate before any sub-store opens. It reads nothing
+but the `contractRevision` field. State from a newer revision refuses the start,
+because a downgrade cannot reason about state it never wrote. State from an
+older revision is discarded rather than read: the affected run records, leases,
+journals, attempt records, sessions, worktree records, operation records, and
+retention pins are moved whole into `<store>/quarantine/<revision>/`, the seat
+receives one notice naming the revision and the count, and the service starts on
+the remaining history. This is a discard with the bytes kept for the operator,
+not a migration: no old record is ever parsed, and quarantined runs disappear
+from listings, inspection, and retention.
+
 ## Cross-seat ownership
 
 One seat instance owns an active attempt. A private cross-process lease records
