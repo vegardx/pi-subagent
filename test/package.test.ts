@@ -19,7 +19,7 @@ describe("package contract", () => {
 		const packageJson = JSON.parse(
 			await readFile(new URL("../package.json", import.meta.url), "utf8"),
 		) as PackageJson;
-		expect(packageJson.version).toBe("0.11.0");
+		expect(packageJson.version).toBe("0.12.0");
 		expect(packageJson.private).not.toBe(true);
 		expect(packageJson.main).toBe("./dist/index.js");
 		expect(packageJson.types).toBe("./dist/index.d.ts");
