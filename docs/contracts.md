@@ -58,6 +58,7 @@ its owning seat exits.
 interface SubagentRequest {
 	operationId: OperationId;
 	agent: AgentSelector;
+	agentRoots?: string[]; // absolute; at most 8
 	task: DelegatedTask;
 	contextMode: "fresh" | "fork";
 	model?: ExactModelRequest;
@@ -104,6 +105,17 @@ interface OwnerRegistration {
 	resultDestination?: string;
 }
 ```
+
+`agentRoots` lets an owner that ships agent definitions with its own package
+name the directories holding them. Each entry must be absolute; a relative entry
+fails preflight with `agent root must be absolute`. They are consulted only when
+the service's own discovery has no definition of the requested name, so a global
+or trusted-project definition always wins, and a name no source defines still
+fails with `agent not found: <name>`. A definition resolved from a request root
+loads under `package` scope and is bound into the launch plan by canonical path
+and digest exactly like any other definition: the launch re-resolves it and
+rejects a definition that changed after preflight. A root that does not exist
+contributes nothing.
 
 `cost` is provider-reported spend in dollars using Pi's configured model pricing
 and message usage. A model configured with zero rates is treated as free; the
