@@ -1655,3 +1655,135 @@ describe("foreground subagent service", () => {
 		expect(observedReason).toBe("caller-interrupt");
 	});
 });
+
+/** A valid agent definition file, the shape `discoverAgents` parses. */
+function agentDefinition(name: string, prompt: string): string {
+	return `---
+name: ${name}
+model:
+  provider: github-copilot
+  id: gpt-5.6-luna
+  thinking: low
+tools: [read]
+preloadSkills: []
+contextScopes: []
+workspaceModes: [read-only]
+limits:
+  cumulativeRuntimeMs: 60000
+  attemptTimeoutMs: 30000
+  totalTokens: 100000
+  cost: 10
+  outputBytes: 1048576
+  workspaceWriteBytes: 0
+  retries: 1
+  resumes: 1
+---
+${prompt}
+`;
+}
+
+describe("request-supplied agent roots", () => {
+	async function rootWith(
+		data: Awaited<ReturnType<typeof serviceFor>>,
+		files: Record<string, string>,
+	): Promise<string> {
+		const directory = path.join(data.root, "package-agents");
+		await mkdir(directory, { recursive: true });
+		for (const [name, prompt] of Object.entries(files)) {
+			await writeFile(
+				path.join(directory, `${name}.md`),
+				agentDefinition(name, prompt),
+			);
+		}
+		return directory;
+	}
+
+	it("resolves and launches a definition the service does not discover", async () => {
+		const data = await serviceFor("agent-roots", async (input) => ({
+			result: result(input.plan.runId, "completed"),
+			output: "done",
+			sessionFile: undefined,
+			handoff: undefined,
+			structuredOutput: undefined,
+			error: undefined,
+		}));
+		const directory = await rootWith(data, { shipped: "shipped prompt" });
+		const client = data.service.forOwner({ id: "owner-roots" });
+		const preflight = await client.preflight({
+			...data.request,
+			agent: "shipped",
+			agentRoots: [directory],
+		});
+		expect(preflight.launchPlan).toMatchObject({
+			agent: "shipped",
+			agentPrompt: "shipped prompt",
+			agentScope: "package",
+			agentSource: await realpath(path.join(directory, "shipped.md")),
+		});
+		const receipt = await client.launch(
+			preflight.preflightId,
+			preflight.identitySha256,
+		);
+		expect((await client.wait(receipt.runId)).result.status).toBe("completed");
+		await data.service.shutdown();
+	});
+
+	it("keeps the service's own definition ahead of a supplied root", async () => {
+		const data = await serviceFor("agent-roots-precedence");
+		const directory = await rootWith(data, { worker: "package prompt" });
+		const client = data.service.forOwner({ id: "owner-roots-precedence" });
+		const preflight = await client.preflight({
+			...data.request,
+			agentRoots: [directory],
+		});
+		expect(preflight.launchPlan).toMatchObject({
+			agent: "worker",
+			agentPrompt: "worker prompt",
+			agentScope: "global",
+		});
+		await data.service.shutdown();
+	});
+
+	it("refuses a relative root and still reports an undefined agent", async () => {
+		const data = await serviceFor("agent-roots-refusal");
+		const directory = await rootWith(data, { shipped: "shipped prompt" });
+		const client = data.service.forOwner({ id: "owner-roots-refusal" });
+		await expect(
+			client.preflight({
+				...data.request,
+				agent: "shipped",
+				agentRoots: ["package-agents"],
+			}),
+		).rejects.toThrow("agent root must be absolute");
+		await expect(
+			client.preflight({
+				...data.request,
+				agent: "missing",
+				agentRoots: [directory],
+			}),
+		).rejects.toThrow("agent not found: missing");
+		await expect(
+			client.preflight({ ...data.request, agent: "shipped" }),
+		).rejects.toThrow("agent not found: shipped");
+		await data.service.shutdown();
+	});
+
+	it("detects a supplied definition that changed after preflight", async () => {
+		const data = await serviceFor("agent-roots-drift");
+		const directory = await rootWith(data, { shipped: "shipped prompt" });
+		const client = data.service.forOwner({ id: "owner-roots-drift" });
+		const preflight = await client.preflight({
+			...data.request,
+			agent: "shipped",
+			agentRoots: [directory],
+		});
+		await writeFile(
+			path.join(directory, "shipped.md"),
+			agentDefinition("shipped", "edited prompt"),
+		);
+		await expect(
+			client.launch(preflight.preflightId, preflight.identitySha256),
+		).rejects.toThrow("agent changed after preflight");
+		await data.service.shutdown();
+	});
+});

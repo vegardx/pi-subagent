@@ -104,10 +104,25 @@ export const ContextScopeSchema = Type.Union([
 ]);
 export type ContextScope = Static<typeof ContextScopeSchema>;
 
+export const MAX_REQUEST_AGENT_ROOTS = 8;
+
 export const SubagentRequestSchema = Type.Object(
 	{
 		operationId: IdentitySchema,
 		agent: ResourceNameSchema,
+		/**
+		 * Absolute directories of agent definitions the owner ships with its own
+		 * package or definition root. They are consulted only when the service's
+		 * own discovery has no definition of that name, so a global or
+		 * trusted-project definition always wins, and they contribute
+		 * `package`-scope definitions exactly as a package agent manifest does.
+		 */
+		agentRoots: Type.Optional(
+			Type.Array(Type.String({ minLength: 1, maxLength: 4096 }), {
+				maxItems: MAX_REQUEST_AGENT_ROOTS,
+				uniqueItems: true,
+			}),
+		),
 		task: DelegatedTaskSchema,
 		contextMode: Type.Union([Type.Literal("fresh"), Type.Literal("fork")]),
 		model: Type.Optional(ExactModelRequestSchema),
