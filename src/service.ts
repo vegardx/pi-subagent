@@ -50,7 +50,7 @@ import {
 	describeQuarantine,
 	quarantineStaleState,
 } from "./persistence/store-revision.js";
-import type { DiscoveredAgent } from "./preflight/agents.js";
+import { type DiscoveredAgent, discoverAgents } from "./preflight/agents.js";
 import { canonicalSha256 } from "./preflight/canonical.js";
 import {
 	compileLaunchPlan,
@@ -335,6 +335,8 @@ type PreparedPreflight = SubagentPreflight & {
 	ownerId: string;
 	requestSha256: string;
 	agent: DiscoveredAgent;
+	/** The request's own agent roots, re-resolved for the launch drift check. */
+	agentRoots?: readonly string[];
 	workspace: WorkspacePreflight;
 	skills: SkillProjection;
 	contextFiles: ContextFileProjection;
@@ -616,6 +618,37 @@ function assertHostToolProjection(
 			throw new Error(`host tool changed after preflight: ${name}`);
 		}
 	}
+}
+
+/**
+ * The agent definition a request names. Service discovery wins: the roots a
+ * request carries are consulted only for a name the service does not define,
+ * so a global or trusted-project definition always takes precedence over a
+ * definition an owner ships with its package or definition root. Supplied
+ * definitions load under `package` scope, the same scope a package agent
+ * manifest contributes; a root that does not exist contributes nothing.
+ */
+async function resolveRequestedAgent(
+	agents: Map<string, DiscoveredAgent>,
+	request: { agent: string; agentRoots?: readonly string[] },
+): Promise<DiscoveredAgent | undefined> {
+	const discovered = agents.get(request.agent);
+	if (discovered) return discovered;
+	const roots = request.agentRoots ?? [];
+	if (roots.length === 0) return undefined;
+	for (const directory of roots) {
+		if (!path.isAbsolute(directory)) {
+			throw new Error(`agent root must be absolute: ${directory}`);
+		}
+	}
+	const supplied = await discoverAgents(
+		roots.map((directory) => ({
+			scope: "package" as const,
+			directory,
+			trusted: true,
+		})),
+	);
+	return supplied.get(request.agent);
 }
 
 function agentFromPlan(plan: AgentLaunchPlan): DiscoveredAgent {
@@ -1761,7 +1794,7 @@ export async function createSubagentService(options: {
 					if (request.outputSchema !== undefined) {
 						createFinalAnswerController(request.outputSchema);
 					}
-					const agent = options.agents.get(request.agent);
+					const agent = await resolveRequestedAgent(options.agents, request);
 					if (!agent) throw new Error(`agent not found: ${request.agent}`);
 					const workspace = await preflightWorkspace(request.workspace);
 					const projectTrusted =
@@ -1827,6 +1860,9 @@ export async function createSubagentService(options: {
 						ownerId: owner.id,
 						requestSha256: ids.requestSha256,
 						agent,
+						...(request.agentRoots
+							? { agentRoots: [...request.agentRoots] }
+							: {}),
 						workspace,
 						skills,
 						contextFiles,
@@ -1853,7 +1889,10 @@ export async function createSubagentService(options: {
 					if (prepared.identitySha256 !== expectedIdentitySha256) {
 						throw new Error("preflight identity mismatch");
 					}
-					const currentAgent = options.agents.get(prepared.agent.name);
+					const currentAgent = await resolveRequestedAgent(options.agents, {
+						agent: prepared.agent.name,
+						...(prepared.agentRoots ? { agentRoots: prepared.agentRoots } : {}),
+					});
 					if (
 						!currentAgent ||
 						currentAgent.source !== prepared.agent.source ||
