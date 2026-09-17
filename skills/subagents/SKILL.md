@@ -5,7 +5,7 @@ description: Use when delegating one bounded task to an isolated Pi subagent thr
 
 # Operating Pi subagents
 
-This skill covers `@vegardx/pi-subagent` 0.11.0, contract revision 7. Every
+This skill covers `@vegardx/pi-subagent` 0.12.0, contract revision 7. Every
 claim is taken from the runtime source (`src/extension.ts`, `src/service.ts`,
 `src/contracts.ts`, `src/launch-contracts.ts`, `src/preflight/*`,
 `src/sandbox/*`, `src/runtime/*`, `src/workspace/worktree.ts`) and is pinned
