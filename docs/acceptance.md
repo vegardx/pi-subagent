@@ -45,6 +45,9 @@ weakened and host execution must not be used as fallback.
   skill catalog;
 - effective model, thinking, session, tools, resource identities, workspace,
   image, mount policy, and network policy match preflight;
+- request-supplied agent roots resolve a package-scoped definition the service
+  does not discover, never displace a discovered definition of the same name,
+  and refuse a relative root;
 - resource or policy changes between preflight and launch are rejected;
 - project resources follow Pi trust;
 - custom provider models work without mounting host provider credentials.

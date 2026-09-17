@@ -63,7 +63,10 @@ attributable to one attempt.
    first runtime acquisition it loads named global agents and trusted-project
    agents into the same mutable registry used by direct and workflow clients;
    project scope wins deterministic name precedence.
-2. **Service** exposes the same runtime to trusted extension consumers.
+2. **Service** exposes the same runtime to trusted extension consumers. A
+   consumer that ships agent definitions with its own package names their
+   directories in the request (`agentRoots`); they resolve under `package`
+   scope and never displace a discovered global or trusted-project definition.
 3. **Policy compiler** resolves an immutable launch plan.
 4. **Lifecycle runtime** owns runs, attempts, cancellation, retry, and resume.
 5. **Session runtime** creates native `AgentSession`s with explicit resources.
