@@ -108,14 +108,20 @@ interface OwnerRegistration {
 
 `agentRoots` lets an owner that ships agent definitions with its own package
 name the directories holding them. Each entry must be absolute; a relative entry
-fails preflight with `agent root must be absolute`. They are consulted only when
-the service's own discovery has no definition of the requested name, so a global
-or trusted-project definition always wins, and a name no source defines still
-fails with `agent not found: <name>`. A definition resolved from a request root
-loads under `package` scope and is bound into the launch plan by canonical path
-and digest exactly like any other definition: the launch re-resolves it and
-rejects a definition that changed after preflight. A root that does not exist
-contributes nothing.
+fails preflight with `agent root must be absolute`. A definition's own templates
+win: the roots resolve first and the service's own discovery only fills a name
+no root defines, so a global or trusted-project definition of the same name
+cannot shadow a shipped one, and a name no source defines still fails with
+`agent not found: <name>`. Roots are read as one `package`-scope source set, so
+two roots that define the same name are refused with
+`duplicate agent in scope: package:<name>` rather than silently ordered. A
+definition resolved from a request root loads under `package` scope and is
+bound into the launch plan by canonical path and digest exactly like any other
+definition: the launch plan and its `agent` resource grant name the root's file,
+and the launch re-resolves it and rejects a definition that changed after
+preflight. A root that does not exist contributes nothing. There is no way to
+customize a shipped definition by defining a project or global agent of the same
+name.
 
 `cost` is provider-reported spend in dollars using Pi's configured model pricing
 and message usage. A model configured with zero rates is treated as free; the
@@ -463,6 +469,7 @@ interface SubagentRuntimeContract {
 		explicitResources: boolean;
 		ambientExtensionsControl: boolean;
 		hostBrokeredTools: boolean;
+		agentRootsFirst: boolean;
 	};
 }
 ```
@@ -474,7 +481,10 @@ definitions carry an optional `memoryBytes` ceiling, that a request may narrow
 it, and that the resolved value is bound into the launch plan and the sandbox
 identity. `workspaceBudgetRefusal` states that an exhausted `workspaceWriteBytes`
 budget refuses guest writes with `EDQUOT` and classifies the attempt failure as
-`workspace-budget`. Consumers check the exact contract
+`workspace-budget`. `agentRootsFirst` states that `SubagentRequest.agentRoots`
+is accepted and that those roots resolve ahead of the service's own discovery;
+a consumer that requires a discovered definition to shadow a shipped one must
+refuse this runtime. Consumers check the exact contract
 revision and required features rather than
 infer support from package versions. Revisions are not backwards-compatible:
 a consumer either supports the current revision or refuses to start. The
