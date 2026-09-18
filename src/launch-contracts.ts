@@ -112,9 +112,9 @@ export const SubagentRequestSchema = Type.Object(
 		agent: ResourceNameSchema,
 		/**
 		 * Absolute directories of agent definitions the owner ships with its own
-		 * package or definition root. They are consulted only when the service's
-		 * own discovery has no definition of that name, so a global or
-		 * trusted-project definition always wins, and they contribute
+		 * package or definition root. They resolve before the service's own
+		 * discovery, so a definition shipped here always wins over a global or
+		 * trusted-project definition of the same name, and they contribute
 		 * `package`-scope definitions exactly as a package agent manifest does.
 		 */
 		agentRoots: Type.Optional(

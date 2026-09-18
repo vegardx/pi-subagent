@@ -17,6 +17,7 @@ import { RunJournal } from "../src/persistence/journal.js";
 import { OperationIndex } from "../src/persistence/operation-index.js";
 import { acquireRunLease } from "../src/persistence/run-lease.js";
 import { RunRecordStore } from "../src/persistence/run-record.js";
+import type { DiscoveredAgent } from "../src/preflight/agents.js";
 import { digestFileResource } from "../src/preflight/resources.js";
 import { preflightWorkspace } from "../src/preflight/workspace.js";
 import type { HostToolDeclaration } from "../src/runtime/host-tools.js";
@@ -181,6 +182,9 @@ async function serviceFor(
 	>[0]["executeAttempt"],
 	hostTools: readonly HostToolDeclaration[] = [],
 	maxTaskCost?: number,
+	discover: (
+		data: Awaited<ReturnType<typeof fixture>>,
+	) => Promise<readonly DiscoveredAgent[]> = async () => [],
 ) {
 	const data = await fixture(name);
 	data.agent.tools.push(...hostTools.map((tool) => tool.name));
@@ -189,7 +193,10 @@ async function serviceFor(
 	const service = await createSubagentService({
 		root: path.join(data.root, "state"),
 		agentDir,
-		agents: new Map([[data.agent.name, data.agent]]),
+		agents: new Map([
+			[data.agent.name, data.agent],
+			...(await discover(data)).map((agent) => [agent.name, agent] as const),
+		]),
 		modelRuntime: {} as ModelRuntime,
 		capacity: await createVmCapacityManager({
 			root: path.join(data.root, "capacity"),
@@ -1686,8 +1693,9 @@ describe("request-supplied agent roots", () => {
 	async function rootWith(
 		data: Awaited<ReturnType<typeof serviceFor>>,
 		files: Record<string, string>,
+		name = "package-agents",
 	): Promise<string> {
-		const directory = path.join(data.root, "package-agents");
+		const directory = path.join(data.root, name);
 		await mkdir(directory, { recursive: true });
 		for (const [name, prompt] of Object.entries(files)) {
 			await writeFile(
@@ -1728,7 +1736,7 @@ describe("request-supplied agent roots", () => {
 		await data.service.shutdown();
 	});
 
-	it("keeps the service's own definition ahead of a supplied root", async () => {
+	it("keeps a supplied root ahead of the service's own definition", async () => {
 		const data = await serviceFor("agent-roots-precedence");
 		const directory = await rootWith(data, { worker: "package prompt" });
 		const client = data.service.forOwner({ id: "owner-roots-precedence" });
@@ -1738,9 +1746,120 @@ describe("request-supplied agent roots", () => {
 		});
 		expect(preflight.launchPlan).toMatchObject({
 			agent: "worker",
+			agentPrompt: "package prompt",
+			agentScope: "package",
+			agentSource: await realpath(path.join(directory, "worker.md")),
+		});
+		await data.service.shutdown();
+	});
+
+	it("resolves a name only discovery defines while roots are supplied", async () => {
+		const data = await serviceFor("agent-roots-discovery-fill");
+		const directory = await rootWith(data, { shipped: "shipped prompt" });
+		const client = data.service.forOwner({ id: "owner-roots-fill" });
+		const preflight = await client.preflight({
+			...data.request,
+			agentRoots: [directory],
+		});
+		expect(preflight.launchPlan).toMatchObject({
+			agent: "worker",
 			agentPrompt: "worker prompt",
 			agentScope: "global",
+			agentSource: data.agent.source,
 		});
+		await data.service.shutdown();
+	});
+
+	it("uses the root's ceiling when a narrower project agent shares the name", async () => {
+		const data = await serviceFor(
+			"agent-roots-shadow",
+			undefined,
+			[],
+			undefined,
+			async (fixtureData) => {
+				const file = path.join(fixtureData.root, "stale-implementer.md");
+				await writeFile(file, "stale project prompt\n");
+				const digest = await digestFileResource(file);
+				return [
+					{
+						...fixtureData.agent,
+						name: "implementer",
+						displayName: "Implementer",
+						source: digest.canonicalPath,
+						sha256: digest.sha256,
+						tools: [],
+						prompt: "stale project prompt",
+						scope: "project" as const,
+					},
+				];
+			},
+		);
+		const directory = await rootWith(data, {
+			implementer: "shipped implementer prompt",
+		});
+		const client = data.service.forOwner({ id: "owner-roots-shadow" });
+		await expect(
+			client.preflight({ ...data.request, agent: "implementer" }),
+		).rejects.toThrow("tool exceeds ceiling: read");
+		const digest = await digestFileResource(
+			path.join(directory, "implementer.md"),
+		);
+		const preflight = await client.preflight({
+			...data.request,
+			agent: "implementer",
+			agentRoots: [directory],
+		});
+		expect(preflight.launchPlan).toMatchObject({
+			agent: "implementer",
+			agentPrompt: "shipped implementer prompt",
+			agentScope: "package",
+			agentSource: digest.canonicalPath,
+			tools: ["read"],
+		});
+		expect(preflight.launchPlan.resources).toContainEqual({
+			kind: "agent",
+			name: "implementer",
+			source: digest.canonicalPath,
+			sha256: digest.sha256,
+		});
+		await data.service.shutdown();
+	});
+
+	it("reads several roots as one package source set", async () => {
+		const data = await serviceFor("agent-roots-order");
+		const first = await rootWith(data, { alpha: "alpha prompt" }, "first-root");
+		const second = await rootWith(data, { beta: "beta prompt" }, "second-root");
+		const clash = await rootWith(
+			data,
+			{ alpha: "other alpha prompt" },
+			"clash-root",
+		);
+		const client = data.service.forOwner({ id: "owner-roots-order" });
+		expect(
+			(
+				await client.preflight({
+					...data.request,
+					agent: "alpha",
+					agentRoots: [first, second],
+				})
+			).launchPlan,
+		).toMatchObject({ agent: "alpha", agentPrompt: "alpha prompt" });
+		expect(
+			(
+				await client.preflight({
+					...data.request,
+					agent: "beta",
+					agentRoots: [first, second],
+				})
+			).launchPlan,
+		).toMatchObject({ agent: "beta", agentPrompt: "beta prompt" });
+		await expect(
+			client.preflight({
+				...data.request,
+				agent: "alpha",
+				agentRoots: [first, clash],
+			}),
+		).rejects.toThrow("duplicate agent in scope: package:alpha");
 		await data.service.shutdown();
 	});
 
