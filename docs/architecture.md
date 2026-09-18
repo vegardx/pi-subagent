@@ -66,7 +66,9 @@ attributable to one attempt.
 2. **Service** exposes the same runtime to trusted extension consumers. A
    consumer that ships agent definitions with its own package names their
    directories in the request (`agentRoots`); they resolve under `package`
-   scope and never displace a discovered global or trusted-project definition.
+   scope ahead of discovery, so a definition's own templates always win and a
+   discovered global or trusted-project definition of the same name cannot
+   shadow one.
 3. **Policy compiler** resolves an immutable launch plan.
 4. **Lifecycle runtime** owns runs, attempts, cancellation, retry, and resume.
 5. **Session runtime** creates native `AgentSession`s with explicit resources.

@@ -126,7 +126,8 @@ bus. On first service acquisition it discovers named agents from
 Trusted peer extensions can acquire that exact service instance through the
 provider export. A consumer that ships its own agent definitions names their
 absolute directories in `SubagentRequest.agentRoots`; those definitions resolve
-under `package` scope only for names discovery does not already define. With no consumer loaded, registration does not initialize
+under `package` scope ahead of discovery, so a definition's own templates always
+win and a project or global agent of the same name cannot shadow one. With no consumer loaded, registration does not initialize
 Gondolin or alter standalone subagent behavior.
 
 Pi loads the declared extension from `dist/extension.js`. The supported release
