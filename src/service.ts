@@ -621,34 +621,36 @@ function assertHostToolProjection(
 }
 
 /**
- * The agent definition a request names. Service discovery wins: the roots a
- * request carries are consulted only for a name the service does not define,
- * so a global or trusted-project definition always takes precedence over a
- * definition an owner ships with its package or definition root. Supplied
- * definitions load under `package` scope, the same scope a package agent
- * manifest contributes; a root that does not exist contributes nothing.
+ * The agent definition a request names. A definition's own templates win: the
+ * roots a request carries resolve first, and the service's own discovery only
+ * fills a name no root defines, so an owner that ships a definition with its
+ * package always runs that definition and a global or trusted-project
+ * definition of the same name cannot shadow it. Supplied definitions load
+ * under `package` scope, the same scope a package agent manifest contributes;
+ * a root that does not exist contributes nothing.
  */
 async function resolveRequestedAgent(
 	agents: Map<string, DiscoveredAgent>,
 	request: { agent: string; agentRoots?: readonly string[] },
 ): Promise<DiscoveredAgent | undefined> {
-	const discovered = agents.get(request.agent);
-	if (discovered) return discovered;
 	const roots = request.agentRoots ?? [];
-	if (roots.length === 0) return undefined;
 	for (const directory of roots) {
 		if (!path.isAbsolute(directory)) {
 			throw new Error(`agent root must be absolute: ${directory}`);
 		}
 	}
-	const supplied = await discoverAgents(
-		roots.map((directory) => ({
-			scope: "package" as const,
-			directory,
-			trusted: true,
-		})),
-	);
-	return supplied.get(request.agent);
+	if (roots.length > 0) {
+		const supplied = await discoverAgents(
+			roots.map((directory) => ({
+				scope: "package" as const,
+				directory,
+				trusted: true,
+			})),
+		);
+		const shipped = supplied.get(request.agent);
+		if (shipped) return shipped;
+	}
+	return agents.get(request.agent);
 }
 
 function agentFromPlan(plan: AgentLaunchPlan): DiscoveredAgent {

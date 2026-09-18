@@ -264,6 +264,7 @@ export const SubagentRuntimeContractSchema = Type.Object(
 				explicitResources: Type.Boolean(),
 				ambientExtensionsControl: Type.Boolean(),
 				hostBrokeredTools: Type.Boolean(),
+				agentRootsFirst: Type.Boolean(),
 			},
 			{ additionalProperties: false },
 		),
@@ -302,6 +303,7 @@ export const SUBAGENT_RUNTIME_CONTRACT: SubagentRuntimeContract = Object.freeze(
 			explicitResources: true,
 			ambientExtensionsControl: true,
 			hostBrokeredTools: true,
+			agentRootsFirst: true,
 		}),
 	},
 );

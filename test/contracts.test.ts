@@ -40,6 +40,7 @@ describe("runtime contracts", () => {
 			explicitResources: true,
 			ambientExtensionsControl: true,
 			hostBrokeredTools: true,
+			agentRootsFirst: true,
 		});
 	});
 
