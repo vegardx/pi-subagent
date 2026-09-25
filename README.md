@@ -61,7 +61,7 @@ inferred, and what a worktree handoff requires from a human.
 
 The project does not provide backwards compatibility. Public contracts and
 persisted formats may change incompatibly; consumers must use the exact supported
-contract revision. The current contract revision is 7.
+contract revision. The current contract revision is 8.
 
 ## Agent definitions
 
@@ -109,6 +109,42 @@ never appear in a handoff patch. When a writing attempt does exhaust
 `workspaceWriteBytes`, guest writes fail with `EDQUOT` and the attempt records
 the `workspace-budget` failure code.
 
+## Ceilings
+
+Two ceilings bound a launch, and a launch may only narrow them.
+
+The **agent definition's allowance** is the first: every frontmatter value above
+is a maximum, and a request that asks for a tool, model, workspace mode, limit,
+or memory grant the definition does not declare fails preflight.
+
+The **host ceiling** is the second. A host whose own mode restricts what it may
+do (a read-only review mode, say) must be able to bound what it delegates, or
+delegation becomes a way around the mode. `SubagentRequest.ceiling` states that
+bound in this runtime's vocabulary — workspace modes and tool names, never the
+host's own mode names — and the effective allowance is the agent's allowance
+intersected with it. An absent `ceiling`, or an absent sub-field, is no bound on
+that axis. The compiled launch plan records the ceiling it applied.
+
+Because the model-facing `subagent` tool builds its own requests, a host
+registers the ceiling once instead of injecting a field:
+
+```ts
+import { registerDelegationCeilingProvider } from "@vegardx/pi-subagent/ceiling-provider";
+
+const unregister = registerDelegationCeilingProvider(pi.events, () => ({
+	workspaceModes: ["read-only"],
+	tools: ["read", "grep", "find", "ls"],
+}));
+```
+
+The tool consults the provider at every launch. Exactly one provider may be
+registered; a second registration is refused. A refusal names the bound it hit:
+
+```text
+workspace mode exceeds host ceiling: worktree (host allows read-only)
+tool exceeds host ceiling: write
+```
+
 ## Package
 
 The npm package ships compiled ESM and declarations:
@@ -117,6 +153,7 @@ The npm package ships compiled ESM and declarations:
 import { createSubagentService } from "@vegardx/pi-subagent";
 import piSubagentExtension from "@vegardx/pi-subagent/extension";
 import { acquireSubagentService } from "@vegardx/pi-subagent/service-provider";
+import { registerDelegationCeilingProvider } from "@vegardx/pi-subagent/ceiling-provider";
 ```
 
 The extension registers its lazy service provider on Pi's process-local event
