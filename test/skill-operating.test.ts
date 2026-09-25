@@ -387,10 +387,12 @@ describe("operating skill budgets, isolation, and evidence", () => {
 		expect(SUBAGENT_RUNTIME_CONTRACT.features.workspaceBudgetRefusal).toBe(
 			true,
 		);
+		expect(SUBAGENT_RUNTIME_CONTRACT.features.delegationCeiling).toBe(true);
 		expect(flatSkill).toContain("`background: false`");
 		expect(flatSkill).toContain("`survivesSeatExit: false`");
 		expect(flatSkill).toContain("`vmMemoryCeiling: true`");
 		expect(flatSkill).toContain("`workspaceBudgetRefusal: true`");
+		expect(flatSkill).toContain("`delegationCeiling: true`");
 	});
 
 	it("points at the real service state locations", () => {
@@ -442,6 +444,14 @@ describe("operating skill quoted runtime messages", () => {
 			[
 				"tool exceeds ceiling: <name>",
 				`${slot("kind")} exceeds ceiling: ${slot("name")}`,
+			],
+			[
+				"workspace mode exceeds host ceiling: <mode> (host allows <modes>)",
+				`workspace mode exceeds host ceiling: ${slot("request.workspace.mode")} (host allows ${slot('[...modes].sort().join(", ")')})`,
+			],
+			[
+				"tool exceeds host ceiling: <name>",
+				`tool exceeds host ceiling: ${slot("name")}`,
 			],
 			[
 				"model exceeds ceiling: <key>",

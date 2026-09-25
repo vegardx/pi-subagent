@@ -66,9 +66,15 @@ interface SubagentRequest {
 	preloadSkills?: string[];
 	contextScopes: Array<"global" | "project">;
 	workspace: WorkspaceRequest;
+	ceiling?: DelegationCeiling;
 	memoryBytes?: number;
 	outputSchema?: JsonSchema;
 	limits: RunLimits;
+}
+
+interface DelegationCeiling {
+	workspaceModes?: Array<"read-only" | "worktree">; // at least one
+	tools?: string[];                                 // at most 64
 }
 
 type WorkspaceRequest =
@@ -122,6 +128,17 @@ and the launch re-resolves it and rejects a definition that changed after
 preflight. A root that does not exist contributes nothing. There is no way to
 customize a shipped definition by defining a project or global agent of the same
 name.
+
+`ceiling` is a bound the host puts on one delegation, stated in this runtime's
+own vocabulary: workspace modes and tool names, never a host's own mode names.
+The launch's effective allowance is the agent definition's declared allowance
+intersected with the ceiling, so a ceiling only ever narrows. An absent
+`ceiling`, or an absent sub-field, is no bound on that axis. Preflight refuses by
+name: a requested mode the host does not allow fails with
+`workspace mode exceeds host ceiling: worktree (host allows read-only)`, and a
+requested tool outside the ceiling fails with `tool exceeds host ceiling: write`.
+The ceiling that applied is recorded in the launch plan, sorted, and is part of
+the launch identity digest and the persisted run and attempt records.
 
 `cost` is provider-reported spend in dollars using Pi's configured model pricing
 and message usage. A model configured with zero rates is treated as free; the
@@ -197,6 +214,7 @@ interface AgentLaunchPlan {
 	contextFiles: ContextFileGrant[];
 	forkContext?: ForkContextGrant;
 	workspace: WorkspaceGrant;
+	ceiling?: DelegationCeiling;
 	sandbox: GondolinGrant;
 	network: NetworkGrant;
 	outputSchema?: JsonSchema;
@@ -230,6 +248,10 @@ digest-bound, injected through Pi's context-file mechanism, and exposed through
 synthetic read-only guest `/context` mounts. Repository context symlinks may not
 escape the selected checkout. Transcript inheritance remains separately
 controlled by `contextMode`.
+
+`ceiling` records the host bound the plan was compiled under, present only when
+the request carried one. A launch plan without it was compiled with no host
+bound.
 
 `sandbox.memoryBytes` is the resolved per-run memory grant, so it is part of the
 launch identity digest and of the persisted run and attempt records. Host VM
@@ -425,6 +447,30 @@ The event bus is an in-process composition mechanism among trusted extensions,
 not an authorization boundary. Owner-bound clients still scope service access;
 model input cannot access the provider API directly.
 
+## Delegation ceiling provider
+
+The model-facing `subagent` tool builds its own requests, so a host cannot put a
+`ceiling` in them. A host registers one provider on the same process-local event
+bus through the `@vegardx/pi-subagent/ceiling-provider` export:
+
+```ts
+type DelegationCeilingProvider = () => DelegationCeiling | undefined;
+
+function registerDelegationCeilingProvider(
+	events: EventBus,
+	provider: DelegationCeilingProvider,
+): () => void;
+```
+
+The tool consults the provider at every launch and attaches the answer as the
+request's `ceiling`. Exactly one provider may be registered: a second
+registration is refused with `A pi-subagent delegation ceiling provider is
+already registered.` and leaves the first in place. No provider, or a provider
+that answers with `undefined`, is no bound. Resolution fails closed on a ceiling
+that violates the contract rather than launching unbounded. The host states the
+bound in workspace modes and tool names; pi-subagent never learns the host's own
+mode names.
+
 ## Control receipt
 
 ```ts
@@ -470,11 +516,12 @@ interface SubagentRuntimeContract {
 		ambientExtensionsControl: boolean;
 		hostBrokeredTools: boolean;
 		agentRootsFirst: boolean;
+		delegationCeiling: boolean;
 	};
 }
 ```
 
-The current revision is 7. `handoffExport` states that `exportHandoff`,
+The current revision is 8. `handoffExport` states that `exportHandoff`,
 `HandoffRef`, the `export-handoff` action, durable handoff refs, and the
 `handoff-exported` receipt are implemented. `vmMemoryCeiling` states that agent
 definitions carry an optional `memoryBytes` ceiling, that a request may narrow
@@ -484,7 +531,12 @@ budget refuses guest writes with `EDQUOT` and classifies the attempt failure as
 `workspace-budget`. `agentRootsFirst` states that `SubagentRequest.agentRoots`
 is accepted and that those roots resolve ahead of the service's own discovery;
 a consumer that requires a discovered definition to shadow a shipped one must
-refuse this runtime. Consumers check the exact contract
+refuse this runtime. `delegationCeiling` states that `SubagentRequest.ceiling`
+bounds a launch in workspace modes and tool names, that the compiled launch plan
+records the ceiling it applied, and that a host may register one ceiling provider
+that the `subagent` tool consults at every launch. Revision 8 adds that recorded
+`ceiling` to the persisted launch plan, so revision 7 state is not read.
+Consumers check the exact contract
 revision and required features rather than
 infer support from package versions. Revisions are not backwards-compatible:
 a consumer either supports the current revision or refuses to start. The

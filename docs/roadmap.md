@@ -72,8 +72,11 @@ evidence as bounded digest-verified bytes without reading private branches or
 host paths.
 
 Contract revision 7 adds the per-agent VM memory ceiling (`vmMemoryCeiling`) and
-the typed workspace write-budget refusal (`workspaceBudgetRefusal`). A consumer
-that pins revision 6 must move to 7; there is no compatibility path.
+the typed workspace write-budget refusal (`workspaceBudgetRefusal`). Contract
+revision 8 adds the host delegation ceiling (`delegationCeiling`): a host bounds
+a launch in workspace modes and tool names, and the compiled launch plan records
+the ceiling it applied. A consumer that pins an earlier revision must move to 8;
+there is no compatibility path.
 
 Consumer integration starts only after pi-subagent completes full acceptance,
 dogfood cutover, and stable release qualification:

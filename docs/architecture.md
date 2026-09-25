@@ -142,6 +142,31 @@ API keys and provider clients remain in the seat; only bounded results enter the
 child session. Merely hiding a host extension tool from the prompt is not
 isolation.
 
+## Delegation ceilings
+
+Two ceilings bound one launch and neither can widen the other. The agent
+definition's frontmatter is the first: tools, models, workspace modes, context
+scopes, limits, and the VM memory grant are maxima a request may only narrow
+(`assertSubset` in `src/preflight/compile.ts`).
+
+The host ceiling is the second. A host runs the seat in some mode of its own, and
+a mode that restricts direct action must also bound what the seat delegates;
+otherwise the model reaches the restricted capability by delegating it.
+`SubagentRequest.ceiling` carries that bound as workspace modes and tool names.
+pi-subagent never learns the host's mode names, so the runtime stays reusable by
+any host. Preflight intersects the two ceilings and refuses by name when the
+requested workspace mode or any requested tool falls outside the host bound; the
+ceiling that applied is compiled into the launch plan and so into the launch
+identity and the persisted records.
+
+The model-facing tool builds its own requests, so a host cannot inject that
+field. It registers one provider on the process-local event bus
+(`src/ceiling-provider.ts`), which the tool consults at every launch. Exactly one
+provider may be registered, no provider is no bound, and an unusable answer fails
+the launch rather than widening it. The bus is a composition mechanism among
+trusted extensions, not an authorization boundary: the ceiling bounds the agent
+the host launches, and model input never reaches the provider API.
+
 ## Workspace model
 
 Read-only attempts mount the active checkout through a filtered read-only VFS.

@@ -680,6 +680,7 @@ The extension entry is separate:
 | 0.9 | Extension, UI, and full acceptance candidate |
 | 0.10 | Contract revision 6: durable handoff export (`handoffExport`) |
 | 0.11 | Contract revision 7: per-agent VM memory ceiling (`vmMemoryCeiling`), guest cache redirection, and the typed workspace write-budget refusal (`workspaceBudgetRefusal`) |
+| 0.14 | Contract revision 8: the host delegation ceiling (`delegationCeiling`) in workspace modes and tools, recorded in the launch plan |
 | 1.0 | Production-core stable contract |
 
 Versions are capability milestones, not deadlines.
