@@ -11,6 +11,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { resolveDelegationCeiling } from "./ceiling-provider.js";
 import {
 	DEFAULT_MAX_TASK_COST,
 	DEFAULT_MEMORY_BYTES,
@@ -767,7 +768,7 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 		name: "subagent",
 		label: "Subagent",
 		description:
-			"Run one native Pi subagent in a dedicated Gondolin VM. Models and credentials stay in the host Pi seat; tool effects are confined to a read-only checkout or private Git worktree.",
+			"Run one native Pi subagent in a dedicated Gondolin VM. Models and credentials stay in the host Pi seat; tool effects are confined to a read-only checkout or private Git worktree. The host may bound what a delegation is allowed to do, and a launch outside that bound is refused with a message naming the workspace mode or tool that exceeds it.",
 		parameters,
 		renderCall(args, theme) {
 			return new Text(
@@ -790,6 +791,7 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 		},
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
 			const runtime = await ensureService(ctx);
+			const ceiling = resolveDelegationCeiling(pi.events);
 			const model = parseModel(params.model, ctx);
 			const selectedProvider = ctx.modelRegistry.getProvider(model.provider);
 			if (selectedProvider)
@@ -865,6 +867,7 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 				preloadSkills: [...(params.preloadSkills ?? [])],
 				contextScopes: [...(params.contextScopes ?? [])],
 				workspace: { mode: workspaceMode, cwd: ctx.cwd },
+				...(ceiling ? { ceiling } : {}),
 				memoryBytes,
 				limits: agent.limitCeiling,
 			});
