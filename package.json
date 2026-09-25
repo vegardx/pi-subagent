@@ -27,6 +27,10 @@
 		"./service-provider": {
 			"types": "./dist/service-provider.d.ts",
 			"import": "./dist/service-provider.js"
+		},
+		"./ceiling-provider": {
+			"types": "./dist/ceiling-provider.d.ts",
+			"import": "./dist/ceiling-provider.js"
 		}
 	},
 	"pi": {

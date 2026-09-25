@@ -17,6 +17,8 @@ for (const required of [
 	"LICENSES/Apache-2.0.txt",
 	"README.md",
 	"THIRD_PARTY_NOTICES.md",
+	"dist/ceiling-provider.d.ts",
+	"dist/ceiling-provider.js",
 	"dist/extension.d.ts",
 	"dist/extension.js",
 	"dist/index.d.ts",
