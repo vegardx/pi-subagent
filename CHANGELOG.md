@@ -6,7 +6,7 @@ The project keeps no backwards compatibility: an incompatible public contract or
 persisted format fails explicitly instead of migrating. Persisted state written
 at an earlier contract revision is quarantined, not read.
 
-## Unreleased
+## 0.14.0
 
 ### Added
 
