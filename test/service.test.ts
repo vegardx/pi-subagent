@@ -1906,3 +1906,94 @@ describe("request-supplied agent roots", () => {
 		await data.service.shutdown();
 	});
 });
+
+describe("host delegation ceiling", () => {
+	it("launches a request that fits the ceiling and records it in the plan", async () => {
+		const data = await serviceFor("ceiling-within", async (input) => {
+			const execution = {
+				result: result(input.plan.runId, "completed"),
+				output: "bounded",
+				sessionFile: undefined,
+				handoff: undefined,
+				structuredOutput: undefined,
+				error: undefined,
+			};
+			await input.journal.writeSnapshot(execution);
+			return execution;
+		});
+		const client = data.service.forOwner({ id: "owner-ceiling-within" });
+		const preflight = await client.preflight({
+			...data.request,
+			ceiling: { workspaceModes: ["read-only"], tools: ["read", "grep"] },
+		});
+		expect(preflight.launchPlan.ceiling).toEqual({
+			workspaceModes: ["read-only"],
+			tools: ["grep", "read"],
+		});
+		const receipt = await client.launch(
+			preflight.preflightId,
+			preflight.identitySha256,
+		);
+		const completed = await client.wait(receipt.runId);
+		expect(completed.result.status).toBe("completed");
+		expect((await data.service.inspectRun(receipt.runId)).plan.ceiling).toEqual(
+			{ workspaceModes: ["read-only"], tools: ["grep", "read"] },
+		);
+		await data.service.shutdown();
+	});
+
+	it("records no ceiling and launches unbounded when the host sets none", async () => {
+		const data = await serviceFor("ceiling-absent", async (input) => {
+			const execution = {
+				result: result(input.plan.runId, "completed"),
+				output: "unbounded",
+				sessionFile: undefined,
+				handoff: undefined,
+				structuredOutput: undefined,
+				error: undefined,
+			};
+			await input.journal.writeSnapshot(execution);
+			return execution;
+		});
+		const client = data.service.forOwner({ id: "owner-ceiling-absent" });
+		const preflight = await client.preflight(data.request);
+		expect(preflight.launchPlan.ceiling).toBeUndefined();
+		const receipt = await client.launch(
+			preflight.preflightId,
+			preflight.identitySha256,
+		);
+		expect((await client.wait(receipt.runId)).result.status).toBe("completed");
+		await data.service.shutdown();
+	});
+
+	it("refuses a worktree launch under a read-only ceiling by name", async () => {
+		const data = await worktreeServiceFor("ceiling-workspace", async () => {
+			throw new Error("attempt must not start");
+		});
+		const client = data.service.forOwner({ id: "owner-ceiling-workspace" });
+		await expect(
+			client.preflight({
+				...data.request,
+				ceiling: { workspaceModes: ["read-only"] },
+			}),
+		).rejects.toThrow(
+			"workspace mode exceeds host ceiling: worktree (host allows read-only)",
+		);
+		await expect(client.preflight(data.request)).resolves.toMatchObject({
+			launchPlan: { workspace: { mode: "worktree" } },
+		});
+		await data.service.shutdown();
+	});
+
+	it("refuses a tool outside the ceiling by name", async () => {
+		const data = await serviceFor("ceiling-tool");
+		const client = data.service.forOwner({ id: "owner-ceiling-tool" });
+		await expect(
+			client.preflight({
+				...data.request,
+				ceiling: { tools: ["grep"] },
+			}),
+		).rejects.toThrow("tool exceeds host ceiling: read");
+		await data.service.shutdown();
+	});
+});

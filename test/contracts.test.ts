@@ -41,6 +41,7 @@ describe("runtime contracts", () => {
 			ambientExtensionsControl: true,
 			hostBrokeredTools: true,
 			agentRootsFirst: true,
+			delegationCeiling: true,
 		});
 	});
 

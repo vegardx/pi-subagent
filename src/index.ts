@@ -44,6 +44,8 @@ export {
 	DEFAULT_MEMORY_BYTES,
 	type DelegatedTask,
 	DelegatedTaskSchema,
+	type DelegationCeiling,
+	DelegationCeilingSchema,
 	type ExactModelRequest,
 	ExactModelRequestSchema,
 	MAX_MEMORY_BYTES,
@@ -55,6 +57,8 @@ export {
 	RunLimitsSchema,
 	type SubagentRequest,
 	SubagentRequestSchema,
+	type WorkspaceMode,
+	WorkspaceModeSchema,
 	type WorkspaceRequest,
 	WorkspaceRequestSchema,
 } from "./launch-contracts.js";

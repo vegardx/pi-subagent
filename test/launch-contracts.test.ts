@@ -37,7 +37,7 @@ const request = {
 
 const plan = {
 	schema: "pi-subagent-launch",
-	contractRevision: 7,
+	contractRevision: 8,
 	operationId: "operation-1",
 	ownerId: "owner-1",
 	runId: "run_launch",
@@ -132,6 +132,45 @@ describe("launch contracts", () => {
 			Value.Check(AgentLaunchPlanSchema, {
 				...plan,
 				network: { ...plan.network, blockInternalRanges: false },
+			}),
+		).toBe(false);
+	});
+
+	it("bounds the host delegation ceiling on both axes", () => {
+		expect(
+			Value.Check(SubagentRequestSchema, {
+				...request,
+				ceiling: { workspaceModes: ["read-only"], tools: ["read"] },
+			}),
+		).toBe(true);
+		expect(
+			Value.Check(AgentLaunchPlanSchema, {
+				...plan,
+				ceiling: { tools: [] },
+			}),
+		).toBe(true);
+		expect(
+			Value.Check(SubagentRequestSchema, {
+				...request,
+				ceiling: { workspaceModes: [] },
+			}),
+		).toBe(false);
+		expect(
+			Value.Check(SubagentRequestSchema, {
+				...request,
+				ceiling: { workspaceModes: ["host-only"] },
+			}),
+		).toBe(false);
+		expect(
+			Value.Check(SubagentRequestSchema, {
+				...request,
+				ceiling: { tools: ["read", "read"] },
+			}),
+		).toBe(false);
+		expect(
+			Value.Check(AgentLaunchPlanSchema, {
+				...plan,
+				ceiling: { models: ["github-copilot/gpt-5.6-luna:low"] },
 			}),
 		).toBe(false);
 	});
