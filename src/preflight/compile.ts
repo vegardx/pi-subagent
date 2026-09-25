@@ -4,12 +4,14 @@ import {
 	type AgentLaunchPlan,
 	AgentLaunchPlanSchema,
 	type ContextScope,
+	type DelegationCeiling,
 	type ExactModelRequest,
 	MemoryBytesSchema,
 	type ResourceGrant,
 	type RunLimits,
 	type SubagentRequest,
 	SubagentRequestSchema,
+	type WorkspaceMode,
 } from "../launch-contracts.js";
 import { canonicalJson, canonicalSha256 } from "./canonical.js";
 import type { ForkContextGrant } from "./context.js";
@@ -26,13 +28,13 @@ export type AgentDefinition = {
 	tools: string[];
 	preloadSkills: string[];
 	contextScopes: ContextScope[];
-	workspaceModes: Array<"read-only" | "worktree">;
+	workspaceModes: WorkspaceMode[];
 	limitCeiling: RunLimits;
 	memoryCeilingBytes: number;
 };
 
 export type ResolvedWorkspace = {
-	mode: "read-only" | "worktree";
+	mode: WorkspaceMode;
 	hostPathSha256: string;
 	baselineSha256: string;
 };
@@ -67,6 +69,40 @@ function assertSubset(
 		if (!ceiling.has(name))
 			throw new PreflightError(`${kind} exceeds ceiling: ${name}`);
 	}
+}
+
+/**
+ * A host ceiling bounds the launch further than the agent definition does. It
+ * never widens anything: the effective allowance is the agent's declared
+ * allowance intersected with this ceiling, and an absent sub-field is no bound
+ * on that axis.
+ */
+function assertHostCeiling(request: SubagentRequest): void {
+	const ceiling = request.ceiling;
+	if (!ceiling) return;
+	const modes = ceiling.workspaceModes;
+	if (modes && !modes.includes(request.workspace.mode)) {
+		throw new PreflightError(
+			`workspace mode exceeds host ceiling: ${request.workspace.mode} (host allows ${[...modes].sort().join(", ")})`,
+		);
+	}
+	const tools = ceiling.tools;
+	if (!tools) return;
+	const allowed = new Set(tools);
+	for (const name of request.tools) {
+		if (!allowed.has(name))
+			throw new PreflightError(`tool exceeds host ceiling: ${name}`);
+	}
+}
+
+/** The ceiling as the launch plan records it: sorted, and only what it bounds. */
+function recordedCeiling(ceiling: DelegationCeiling): DelegationCeiling {
+	return {
+		...(ceiling.workspaceModes
+			? { workspaceModes: [...ceiling.workspaceModes].sort() }
+			: {}),
+		...(ceiling.tools ? { tools: [...ceiling.tools].sort() } : {}),
+	};
 }
 
 function assertLimits(requested: RunLimits, ceiling: RunLimits): void {
@@ -166,6 +202,7 @@ export async function compileLaunchPlan(input: {
 	if (input.workspace.mode !== input.request.workspace.mode) {
 		throw new PreflightError("workspace resolution mismatch");
 	}
+	assertHostCeiling(input.request);
 	assertLimits(input.request.limits, input.agent.limitCeiling);
 	if (!Value.Check(MemoryBytesSchema, input.agent.memoryCeilingBytes)) {
 		throw new PreflightError("agent memory ceiling is invalid");
@@ -246,6 +283,9 @@ export async function compileLaunchPlan(input: {
 			hostPathSha256: input.workspace.hostPathSha256,
 			baselineSha256: input.workspace.baselineSha256,
 		},
+		...(input.request.ceiling
+			? { ceiling: recordedCeiling(input.request.ceiling) }
+			: {}),
 		sandbox: {
 			backend: "gondolin" as const,
 			...input.sandbox,

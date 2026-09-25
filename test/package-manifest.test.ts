@@ -41,7 +41,7 @@ async function writeManifest(root: string, directories: string[]) {
 		`${JSON.stringify(
 			{
 				schema: "pi-subagent-package",
-				contractRevision: 7,
+				contractRevision: 8,
 				agentDirectories: directories,
 			},
 			null,

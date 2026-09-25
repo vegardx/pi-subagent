@@ -234,6 +234,48 @@ describe("semantic preflight", () => {
 		).rejects.toThrow("limit exceeds ceiling");
 	});
 
+	it("refuses a launch outside the host ceiling and records the one it applied", async () => {
+		await expect(
+			compile({
+				request: { ...request, ceiling: { workspaceModes: ["read-only"] } },
+			}),
+		).rejects.toThrow(
+			"workspace mode exceeds host ceiling: worktree (host allows read-only)",
+		);
+		await expect(
+			compile({ request: { ...request, ceiling: { tools: ["read"] } } }),
+		).rejects.toThrow("tool exceeds host ceiling: write");
+		await expect(
+			compile({ request: { ...request, ceiling: { workspaceModes: [] } } }),
+		).rejects.toThrow(PreflightError);
+
+		const bounded = await compile({
+			request: {
+				...request,
+				ceiling: {
+					workspaceModes: ["worktree", "read-only"],
+					tools: ["write", "read", "bash"],
+				},
+			},
+		});
+		expect(bounded.ceiling).toEqual({
+			workspaceModes: ["read-only", "worktree"],
+			tools: ["bash", "read", "write"],
+		});
+		expect(verifyLaunchPlanIdentity(bounded)).toBe(true);
+		const reordered = await compile({
+			request: {
+				...request,
+				ceiling: {
+					tools: ["read", "bash", "write"],
+					workspaceModes: ["read-only", "worktree"],
+				},
+			},
+		});
+		expect(reordered.identitySha256).toBe(bounded.identitySha256);
+		expect((await compile()).ceiling).toBeUndefined();
+	});
+
 	it("rejects missing or drifted provenance", async () => {
 		await expect(
 			compile({ resources: resources.filter((item) => item.name !== "read") }),

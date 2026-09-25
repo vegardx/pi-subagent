@@ -5,7 +5,7 @@ description: Use when delegating one bounded task to an isolated Pi subagent thr
 
 # Operating Pi subagents
 
-This skill covers `@vegardx/pi-subagent` 0.13.0, contract revision 7. Every
+This skill covers `@vegardx/pi-subagent` 0.13.0, contract revision 8. Every
 claim is taken from the runtime source (`src/extension.ts`, `src/service.ts`,
 `src/contracts.ts`, `src/launch-contracts.ts`, `src/preflight/*`,
 `src/sandbox/*`, `src/runtime/*`, `src/workspace/worktree.ts`) and is pinned
@@ -162,7 +162,7 @@ removed, and that is not an error.
 - `search` and `fetch`, when present, execute in the host seat through
   bounded adapters, so credentials stay outside the VM.
 
-Revision 7 of the runtime contract declares `vmMemoryCeiling: true` and
+Revision 8 of the runtime contract declares `vmMemoryCeiling: true` and
 `workspaceBudgetRefusal: true`. A typed caller should assert both before it
 relies on a per-run memory ceiling or on the typed `workspace-budget` refusal.
 

@@ -45,6 +45,12 @@ export const ExactModelRequestSchema = Type.Object(
 );
 export type ExactModelRequest = Static<typeof ExactModelRequestSchema>;
 
+export const WorkspaceModeSchema = Type.Union([
+	Type.Literal("read-only"),
+	Type.Literal("worktree"),
+]);
+export type WorkspaceMode = Static<typeof WorkspaceModeSchema>;
+
 export const WorkspaceRequestSchema = Type.Union([
 	Type.Object(
 		{
@@ -62,6 +68,30 @@ export const WorkspaceRequestSchema = Type.Union([
 	),
 ]);
 export type WorkspaceRequest = Static<typeof WorkspaceRequestSchema>;
+
+/**
+ * A bound the host puts on one delegation, stated in this runtime's own
+ * vocabulary: workspace modes and tool names. It never widens an agent
+ * definition; the launch's effective allowance is the agent's declared
+ * allowance intersected with this ceiling. An absent sub-field is no bound on
+ * that axis.
+ */
+export const DelegationCeilingSchema = Type.Object(
+	{
+		workspaceModes: Type.Optional(
+			Type.Array(WorkspaceModeSchema, {
+				minItems: 1,
+				maxItems: 2,
+				uniqueItems: true,
+			}),
+		),
+		tools: Type.Optional(
+			Type.Array(ResourceNameSchema, { maxItems: 64, uniqueItems: true }),
+		),
+	},
+	{ additionalProperties: false },
+);
+export type DelegationCeiling = Static<typeof DelegationCeilingSchema>;
 
 export const DEFAULT_MAX_TASK_COST = 100;
 
@@ -136,6 +166,11 @@ export const SubagentRequestSchema = Type.Object(
 			uniqueItems: true,
 		}),
 		workspace: WorkspaceRequestSchema,
+		/**
+		 * A host-set bound on this launch. Preflight refuses by name when the
+		 * requested workspace mode or any requested tool falls outside it.
+		 */
+		ceiling: Type.Optional(DelegationCeilingSchema),
 		memoryBytes: Type.Optional(MemoryBytesSchema),
 		outputSchema: Type.Optional(Type.Unknown()),
 		limits: RunLimitsSchema,
@@ -214,12 +249,14 @@ export const AgentLaunchPlanSchema = Type.Object(
 		}),
 		workspace: Type.Object(
 			{
-				mode: Type.Union([Type.Literal("read-only"), Type.Literal("worktree")]),
+				mode: WorkspaceModeSchema,
 				hostPathSha256: Sha256Schema,
 				baselineSha256: Sha256Schema,
 			},
 			{ additionalProperties: false },
 		),
+		/** The host ceiling this launch was compiled under, when one applied. */
+		ceiling: Type.Optional(DelegationCeilingSchema),
 		sandbox: Type.Object(
 			{
 				backend: Type.Literal("gondolin"),
