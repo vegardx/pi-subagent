@@ -167,6 +167,32 @@ the launch rather than widening it. The bus is a composition mechanism among
 trusted extensions, not an authorization boundary: the ceiling bounds the agent
 the host launches, and model input never reaches the provider API.
 
+## Inheriting the session's model
+
+A host wants delegated work to run on the model the person is working with, and a
+workflow author wants to pin one exactly. Those are different needs, so the
+request carries which one it means: an exact model, nothing at all (the
+definition's pin), or the literal `inherit`.
+
+pi-subagent cannot see the seat, so it does not guess. The host registers one
+session-model provider on the same process-local event bus
+(`src/session-model-provider.ts`), and resolution happens where the decision is
+recorded: at preflight, in `compileLaunchPlan`, which compiles the exact answer
+into the plan together with a `modelSource` saying the host session supplied it.
+No provider, or a provider with nothing to give, refuses the request instead of
+falling back to a definition pin the caller did not ask for. The model-facing
+tool is the one exception to resolving at preflight: it synthesizes its own
+ephemeral definition, so it must know the model before it can build one, and it
+resolves the answer at the call and pins it.
+
+The definition keeps the fence. `allowedModels` admits exact routes, and the
+entry `inherit` hands the choice to the host: whatever model and thinking level
+the session answers with is admitted, so the bound on an inherited model is the
+host's own session, not the definition. A definition that does not carry
+`inherit` refuses an inherited request and names what it admits. Because the plan
+records the resolved model, a retry or resume reruns that model rather than
+whichever model the session has since moved to.
+
 ## Workspace model
 
 Read-only attempts mount the active checkout through a filtered read-only VFS.

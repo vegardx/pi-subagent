@@ -61,7 +61,7 @@ interface SubagentRequest {
 	agentRoots?: string[]; // absolute; at most 8
 	task: DelegatedTask;
 	contextMode: "fresh" | "fork";
-	model?: ExactModelRequest;
+	model?: ExactModelRequest | "inherit";
 	tools?: string[];
 	preloadSkills?: string[];
 	contextScopes: Array<"global" | "project">;
@@ -129,6 +129,20 @@ preflight. A root that does not exist contributes nothing. There is no way to
 customize a shipped definition by defining a project or global agent of the same
 name.
 
+`model` says which model the launch runs on, in one of three ways. An
+`ExactModelRequest` pins provider, id, and thinking level. The literal `inherit`
+asks for the host session's current model and thinking level, which pi-subagent
+resolves at preflight through the registered session-model provider; with no
+provider, or a provider that answers with nothing, preflight refuses with
+`model inherit: no session model to inherit`. An absent `model` leaves the agent
+definition's own pin in force. A definition's `allowedModels` fences the choice:
+an exact entry admits exactly that `provider/id:thinking`, and the entry
+`inherit` admits whatever the host session answers with, any model at any
+thinking level, so for an inherited model the fence lives at the host. A
+definition without `inherit` refuses an inherited request with
+`model exceeds ceiling: anthropic/opus-5:high (template admits
+github-copilot/gpt-5.6-luna:low, not inherit)`.
+
 `ceiling` is a bound the host puts on one delegation, stated in this runtime's
 own vocabulary: workspace modes and tool names, never a host's own mode names.
 The launch's effective allowance is the agent definition's declared allowance
@@ -173,6 +187,7 @@ model:
   provider: github-copilot
   id: gpt-5.6-luna
   thinking: low
+allowedModels: [github-copilot/gpt-5.6-luna:low, inherit]   # optional; default [the pin]
 tools: [read, grep]
 preloadSkills: []
 contextScopes: [project]
@@ -192,6 +207,10 @@ Frontmatter is strict: unknown keys, a `memoryBytes` that is not a positive
 integer multiple of 64 MiB, and a `memoryBytes` above 4 GiB are rejected at
 discovery. Every declared value is a ceiling, never a floor.
 
+`allowedModels` holds `provider/id:thinking` routes and the entry `inherit`, and
+must contain the `model` pin. It defaults to exactly that pin, so a definition
+admits an inherited model only by saying so.
+
 ## Effective launch plan
 
 ```ts
@@ -206,6 +225,7 @@ interface AgentLaunchPlan {
 	task: DelegatedTask;
 	context: ResolvedContextProjection;
 	model: { provider: string; id: string; thinking: string };
+	modelSource: "request" | "template" | "inherited";
 	cwd: "/workspace";
 	tools: ToolGrant[];
 	preloadSkills: string[];
@@ -248,6 +268,11 @@ digest-bound, injected through Pi's context-file mechanism, and exposed through
 synthetic read-only guest `/context` mounts. Repository context symlinks may not
 escape the selected checkout. Transcript inheritance remains separately
 controlled by `contextMode`.
+
+`model` is always exact: a plan never carries `inherit`. `modelSource` records
+which of the three ways supplied it, so the persisted record says where the model
+came from, and both fields are part of the launch identity digest. A retry or
+resume reruns the plan's recorded model rather than resolving the session again.
 
 `ceiling` records the host bound the plan was compiled under, present only when
 the request carried one. A launch plan without it was compiled with no host
@@ -471,6 +496,34 @@ that violates the contract rather than launching unbounded. The host states the
 bound in workspace modes and tool names; pi-subagent never learns the host's own
 mode names.
 
+## Session model provider
+
+A request may ask to run on the host session's model, which pi-subagent cannot
+see. A host registers one provider on the same process-local event bus through
+the `@vegardx/pi-subagent/session-model-provider` export:
+
+```ts
+type SessionModelProvider = () => ExactModelRequest | undefined;
+
+function registerSessionModelProvider(
+	events: EventBus,
+	provider: SessionModelProvider,
+): () => void;
+
+function resolveSessionModel(events: EventBus): ExactModelRequest | undefined;
+```
+
+Preflight consults the provider whenever a request carries `model: "inherit"`
+and compiles the plan with the exact answer. The model-facing `subagent` tool
+accepts the same literal in its `model` parameter; because the tool synthesizes
+its own definition it resolves the answer at the call and pins it. Exactly one
+provider may be registered: a second registration is refused with `A pi-subagent
+session model provider is already registered.` and leaves the first in place. No
+provider, or a provider that answers with `undefined`, refuses an inherited
+request with `model inherit: no session model to inherit`. Resolution fails
+closed on an answer that violates the contract rather than compiling a model no
+host stands behind.
+
 ## Control receipt
 
 ```ts
@@ -517,11 +570,12 @@ interface SubagentRuntimeContract {
 		hostBrokeredTools: boolean;
 		agentRootsFirst: boolean;
 		delegationCeiling: boolean;
+		sessionModelInherit: boolean;
 	};
 }
 ```
 
-The current revision is 8. `handoffExport` states that `exportHandoff`,
+The current revision is 9. `handoffExport` states that `exportHandoff`,
 `HandoffRef`, the `export-handoff` action, durable handoff refs, and the
 `handoff-exported` receipt are implemented. `vmMemoryCeiling` states that agent
 definitions carry an optional `memoryBytes` ceiling, that a request may narrow
@@ -534,8 +588,12 @@ a consumer that requires a discovered definition to shadow a shipped one must
 refuse this runtime. `delegationCeiling` states that `SubagentRequest.ceiling`
 bounds a launch in workspace modes and tool names, that the compiled launch plan
 records the ceiling it applied, and that a host may register one ceiling provider
-that the `subagent` tool consults at every launch. Revision 8 adds that recorded
-`ceiling` to the persisted launch plan, so revision 7 state is not read.
+that the `subagent` tool consults at every launch. `sessionModelInherit` states
+that a request's `model` may be the literal `inherit`, that a host may register
+one session-model provider which preflight and the `subagent` tool consult, that
+a definition's `allowedModels` may admit `inherit`, and that the compiled plan
+records the resolved exact model and its `modelSource`. Revision 9 adds
+`modelSource` to the persisted launch plan, so revision 8 state is not read.
 Consumers check the exact contract
 revision and required features rather than
 infer support from package versions. Revisions are not backwards-compatible:

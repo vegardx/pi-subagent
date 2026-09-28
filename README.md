@@ -61,7 +61,7 @@ inferred, and what a worktree handoff requires from a human.
 
 The project does not provide backwards compatibility. Public contracts and
 persisted formats may change incompatibly; consumers must use the exact supported
-contract revision. The current contract revision is 8.
+contract revision. The current contract revision is 9.
 
 ## Agent definitions
 
@@ -77,7 +77,7 @@ model:
   provider: github-copilot
   id: gpt-5.6-luna
   thinking: low
-allowedModels: [github-copilot/gpt-5.6-luna:low]
+allowedModels: [github-copilot/gpt-5.6-luna:low, inherit]
 tools: [read, grep]
 preloadSkills: []
 contextScopes: [project]
@@ -109,13 +109,70 @@ never appear in a handoff patch. When a writing attempt does exhaust
 `workspaceWriteBytes`, guest writes fail with `EDQUOT` and the attempt records
 the `workspace-budget` failure code.
 
+## Models
+
+A launch runs on exactly one model, and a request says where it comes from in
+one of three ways.
+
+**Pinned.** The request states an `ExactModelRequest` — provider, id, and
+thinking level. Use this when the work needs a specific model and must not drift
+with whatever the seat happens to be set to.
+
+**The definition's default.** The request says nothing about a model and the
+definition's own `model` pin applies.
+
+**Inherited.** The request states the literal `"inherit"`, and the launch runs on
+the model the person is working with in the host session, at that session's
+thinking level. pi-subagent has no view of the seat, so a host registers one
+provider and pi-subagent asks it at preflight:
+
+```ts
+import { registerSessionModelProvider } from "@vegardx/pi-subagent/session-model-provider";
+
+const unregister = registerSessionModelProvider(pi.events, () => ({
+	provider: ctx.model.provider,
+	id: ctx.model.id,
+	thinking: ctx.thinkingLevel,
+}));
+```
+
+Exactly one provider may be registered; a second registration is refused. With
+no provider, or a provider with no session model to give, an inherited request
+is refused rather than guessed at:
+
+```text
+model inherit: no session model to inherit
+```
+
+The compiled launch plan never carries `"inherit"`. It records the resolved
+exact model and, in `modelSource`, which of the three ways supplied it —
+`request`, `template`, or `inherited` — so the persisted record says where the
+model came from. A retry or resume reruns the plan's recorded model, not
+whatever the session has moved on to.
+
+**Where the fence lives.** A definition's `allowedModels` fences which models
+launches against it may use. An exact entry admits exactly that
+`provider/id:thinking`. The entry `inherit` admits whatever the host session
+answers with — any registered model, any thinking level — so for an inherited
+model the fence is the host's own choice of session model, not the definition.
+A definition that does not carry `inherit` refuses an inherited request and says
+what it does admit:
+
+```text
+model exceeds ceiling: anthropic/opus-5:high (template admits github-copilot/gpt-5.6-luna:low, not inherit)
+```
+
+The model-facing `subagent` tool accepts `"inherit"` in its own `model`
+parameter and resolves it through the same provider at the call.
+
 ## Ceilings
 
 Two ceilings bound a launch, and a launch may only narrow them.
 
 The **agent definition's allowance** is the first: every frontmatter value above
 is a maximum, and a request that asks for a tool, model, workspace mode, limit,
-or memory grant the definition does not declare fails preflight.
+or memory grant the definition does not declare fails preflight. `allowedModels`
+is the one place a definition can hand that choice on, by admitting `inherit`.
 
 The **host ceiling** is the second. A host whose own mode restricts what it may
 do (a read-only review mode, say) must be able to bound what it delegates, or
@@ -154,6 +211,7 @@ import { createSubagentService } from "@vegardx/pi-subagent";
 import piSubagentExtension from "@vegardx/pi-subagent/extension";
 import { acquireSubagentService } from "@vegardx/pi-subagent/service-provider";
 import { registerDelegationCeilingProvider } from "@vegardx/pi-subagent/ceiling-provider";
+import { registerSessionModelProvider } from "@vegardx/pi-subagent/session-model-provider";
 ```
 
 The extension registers its lazy service provider on Pi's process-local event
