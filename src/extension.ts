@@ -4,6 +4,7 @@ import path from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
 import {
 	CONFIG_DIR_NAME,
+	type EventBus,
 	type ExtensionAPI,
 	type ExtensionContext,
 	getAgentDir,
@@ -16,11 +17,13 @@ import {
 	DEFAULT_MAX_TASK_COST,
 	DEFAULT_MEMORY_BYTES,
 	type ExactModelRequest,
+	INHERIT_MODEL,
 	MAX_MEMORY_BYTES,
 	MEMORY_GRANULARITY_BYTES,
 } from "./launch-contracts.js";
 import { type DiscoveredAgent, discoverAgents } from "./preflight/agents.js";
 import { canonicalSha256 } from "./preflight/canonical.js";
+import { MODEL_INHERIT_REFUSAL } from "./preflight/compile.js";
 import { discoverWebHostTools } from "./runtime/host-tools.js";
 import {
 	isRunAction,
@@ -30,6 +33,7 @@ import {
 	type SubagentService,
 } from "./service.js";
 import { registerSubagentServiceProvider } from "./service-provider.js";
+import { resolveSessionModel } from "./session-model-provider.js";
 import { formatBytes } from "./ui/format.js";
 import {
 	attentionWidgetLines,
@@ -94,7 +98,14 @@ const parameters = Type.Object({
 	agent: Type.String({ minLength: 1, maxLength: 128 }),
 	task: Type.String({ minLength: 1, maxLength: 16 * 1024 }),
 	contextMode: Type.Optional(StringEnum(["fresh", "fork"] as const)),
-	model: Type.Optional(Type.String({ minLength: 3, maxLength: 512 })),
+	model: Type.Optional(
+		Type.String({
+			minLength: 3,
+			maxLength: 512,
+			description:
+				'"provider/model", or "inherit" for the model this session is running on. Defaults to the seat\'s current model.',
+		}),
+	),
 	thinking: Type.Optional(StringEnum(THINKING_LEVELS)),
 	tools: Type.Optional(
 		Type.Array(Type.String({ minLength: 1, maxLength: 128 }), {
@@ -144,6 +155,17 @@ function resolveThinking(
 	return candidate as ExactModelRequest["thinking"];
 }
 
+/**
+ * The model the host says this session is running on. The tool builds its own
+ * ephemeral definition, so it resolves an inherited model at the call and pins
+ * the exact answer; no provider, or a provider with nothing to give, refuses.
+ */
+function inheritedSessionModel(events: EventBus): ExactModelRequest {
+	const inherited = resolveSessionModel(events);
+	if (!inherited) throw new Error(MODEL_INHERIT_REFUSAL);
+	return inherited;
+}
+
 function parseModel(
 	value: string | undefined,
 	ctx: ExtensionContext,
@@ -151,6 +173,9 @@ function parseModel(
 	if (!value) {
 		if (!ctx.model) throw new Error("No active model is available.");
 		return { provider: ctx.model.provider, id: ctx.model.id };
+	}
+	if (value === INHERIT_MODEL) {
+		throw new Error("Model must use provider/model syntax.");
 	}
 	const separator = value.indexOf("/");
 	if (separator < 1 || separator === value.length - 1) {
@@ -204,6 +229,7 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 			const created = await serviceModule.createSubagentService({
 				root: path.join(getAgentDir(), "subagents", "service"),
 				agents,
+				events: pi.events,
 				resolveHostTools: () => discoverWebHostTools(pi.events),
 				agentDir: getAgentDir(),
 				isProjectTrusted: (cwd) => cwd === ctx.cwd && ctx.isProjectTrusted(),
@@ -768,7 +794,7 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 		name: "subagent",
 		label: "Subagent",
 		description:
-			"Run one native Pi subagent in a dedicated Gondolin VM. Models and credentials stay in the host Pi seat; tool effects are confined to a read-only checkout or private Git worktree. The host may bound what a delegation is allowed to do, and a launch outside that bound is refused with a message naming the workspace mode or tool that exceeds it.",
+			'Run one native Pi subagent in a dedicated Gondolin VM. Models and credentials stay in the host Pi seat; tool effects are confined to a read-only checkout or private Git worktree. The host may bound what a delegation is allowed to do, and a launch outside that bound is refused with a message naming the workspace mode or tool that exceeds it. Pass model "inherit" to run the delegation on the model this session is using.',
 		parameters,
 		renderCall(args, theme) {
 			return new Text(
@@ -792,11 +818,18 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
 			const runtime = await ensureService(ctx);
 			const ceiling = resolveDelegationCeiling(pi.events);
-			const model = parseModel(params.model, ctx);
+			const inherited =
+				params.model === INHERIT_MODEL
+					? inheritedSessionModel(pi.events)
+					: undefined;
+			const model = inherited ?? parseModel(params.model, ctx);
 			const selectedProvider = ctx.modelRegistry.getProvider(model.provider);
 			if (selectedProvider)
 				modelRuntime?.registerNativeProvider(selectedProvider);
-			const thinking = resolveThinking(params.thinking, ctx);
+			const thinking = resolveThinking(
+				params.thinking ?? inherited?.thinking,
+				ctx,
+			);
 			const tools = params.tools ?? READ_ONLY_TOOLS;
 			const attemptTimeoutMs = params.timeoutMs ?? DEFAULT_ATTEMPT_TIMEOUT_MS;
 			const memoryBytes = params.memoryBytes ?? DEFAULT_MEMORY_BYTES;
