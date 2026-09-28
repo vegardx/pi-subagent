@@ -388,11 +388,20 @@ describe("operating skill budgets, isolation, and evidence", () => {
 			true,
 		);
 		expect(SUBAGENT_RUNTIME_CONTRACT.features.delegationCeiling).toBe(true);
+		expect(SUBAGENT_RUNTIME_CONTRACT.features.sessionModelInherit).toBe(true);
 		expect(flatSkill).toContain("`background: false`");
 		expect(flatSkill).toContain("`survivesSeatExit: false`");
 		expect(flatSkill).toContain("`vmMemoryCeiling: true`");
 		expect(flatSkill).toContain("`workspaceBudgetRefusal: true`");
 		expect(flatSkill).toContain("`delegationCeiling: true`");
+		expect(flatSkill).toContain("`sessionModelInherit: true`");
+	});
+
+	it("quotes the refusal a launch hits with no session model to inherit", () => {
+		expect(skillBody).toContain("`model inherit: no session model to inherit`");
+		expect(sources.get("preflight/compile.ts")).toContain(
+			'"model inherit: no session model to inherit"',
+		);
 	});
 
 	it("points at the real service state locations", () => {
@@ -456,6 +465,10 @@ describe("operating skill quoted runtime messages", () => {
 			[
 				"model exceeds ceiling: <key>",
 				`model exceeds ceiling: ${slot("modelKey(requestedModel)")}`,
+			],
+			[
+				"model exceeds ceiling: <key> (template admits <routes>, not inherit)",
+				`model exceeds ceiling: ${slot("modelKey(requestedModel)")} (template admits ${slot('[...agent.allowedModels].sort().join(", ")')}, not inherit)`,
 			],
 			["limit exceeds ceiling: <key>", `limit exceeds ceiling: ${slot("key")}`],
 			[
