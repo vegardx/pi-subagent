@@ -1,7 +1,7 @@
 import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
 
-export const CONTRACT_REVISION = 8 as const;
+export const CONTRACT_REVISION = 9 as const;
 
 export class IncompatibleContractRevisionError extends Error {
 	constructor(
@@ -266,6 +266,7 @@ export const SubagentRuntimeContractSchema = Type.Object(
 				hostBrokeredTools: Type.Boolean(),
 				agentRootsFirst: Type.Boolean(),
 				delegationCeiling: Type.Boolean(),
+				sessionModelInherit: Type.Boolean(),
 			},
 			{ additionalProperties: false },
 		),
@@ -306,6 +307,7 @@ export const SUBAGENT_RUNTIME_CONTRACT: SubagentRuntimeContract = Object.freeze(
 			hostBrokeredTools: true,
 			agentRootsFirst: true,
 			delegationCeiling: true,
+			sessionModelInherit: true,
 		}),
 	},
 );

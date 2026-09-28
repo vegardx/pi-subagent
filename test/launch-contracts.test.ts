@@ -37,7 +37,7 @@ const request = {
 
 const plan = {
 	schema: "pi-subagent-launch",
-	contractRevision: 8,
+	contractRevision: 9,
 	operationId: "operation-1",
 	ownerId: "owner-1",
 	runId: "run_launch",
@@ -51,6 +51,7 @@ const plan = {
 	task,
 	contextMode: "fresh",
 	model: { provider: "github-copilot", id: "gpt-5.6-luna", thinking: "low" },
+	modelSource: "request",
 	cwd: "/workspace",
 	tools: ["read", "write", "edit", "bash"],
 	preloadSkills: [],
@@ -173,6 +174,29 @@ describe("launch contracts", () => {
 				ceiling: { models: ["github-copilot/gpt-5.6-luna:low"] },
 			}),
 		).toBe(false);
+	});
+
+	it("admits an inherited model in a request but never in a plan", () => {
+		expect(
+			Value.Check(SubagentRequestSchema, { ...request, model: "inherit" }),
+		).toBe(true);
+		expect(
+			Value.Check(SubagentRequestSchema, { ...request, model: "session" }),
+		).toBe(false);
+		expect(
+			Value.Check(AgentLaunchPlanSchema, { ...plan, model: "inherit" }),
+		).toBe(false);
+		expect(
+			Value.Check(AgentLaunchPlanSchema, {
+				...plan,
+				modelSource: "inherited",
+			}),
+		).toBe(true);
+		expect(
+			Value.Check(AgentLaunchPlanSchema, { ...plan, modelSource: "session" }),
+		).toBe(false);
+		const { modelSource: _source, ...withoutSource } = plan;
+		expect(Value.Check(AgentLaunchPlanSchema, withoutSource)).toBe(false);
 	});
 
 	it("rejects incompatible revisions and host cwd projection", () => {

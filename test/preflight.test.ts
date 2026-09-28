@@ -302,6 +302,51 @@ describe("semantic preflight", () => {
 		).rejects.toThrow("unrequested resource: tool:bash");
 	});
 
+	it("records where the model came from and fences an inherited one", async () => {
+		const inherited = {
+			provider: "anthropic",
+			id: "opus-5",
+			thinking: "xhigh" as const,
+		};
+		const { model: _pinned, ...withoutModel } = request;
+		expect((await compile()).modelSource).toBe("request");
+		expect(
+			(await compile({ request: withoutModel as SubagentRequest })).modelSource,
+		).toBe("template");
+
+		const admitting = {
+			...agent,
+			allowedModels: [...agent.allowedModels, "inherit"],
+		};
+		const inheritRequest: SubagentRequest = { ...request, model: "inherit" };
+		const plan = await compile({
+			request: inheritRequest,
+			agent: admitting,
+			inheritSessionModel: () => inherited,
+		});
+		expect(plan.model).toEqual(inherited);
+		expect(plan.modelSource).toBe("inherited");
+
+		await expect(
+			compile({ request: inheritRequest, agent: admitting }),
+		).rejects.toThrow(PreflightError);
+		await expect(
+			compile({
+				request: inheritRequest,
+				agent: admitting,
+				inheritSessionModel: () => undefined,
+			}),
+		).rejects.toThrow("model inherit: no session model to inherit");
+		await expect(
+			compile({
+				request: inheritRequest,
+				inheritSessionModel: () => inherited,
+			}),
+		).rejects.toThrow(
+			"model exceeds ceiling: anthropic/opus-5:xhigh (template admits github-copilot/gpt-5.6-luna:low, not inherit)",
+		);
+	});
+
 	it("rejects model and workspace resolver drift", async () => {
 		await expect(
 			compile({

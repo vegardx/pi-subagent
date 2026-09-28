@@ -5,24 +5,31 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import {
+	createEventBus,
+	type EventBus,
 	type ModelRuntime,
 	SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import { WEB_TOOL_DECLARATIONS } from "@vegardx/pi-web";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { RunResult } from "../src/contracts.js";
-import type { SubagentRequest } from "../src/launch-contracts.js";
+import type {
+	ExactModelRequest,
+	SubagentRequest,
+} from "../src/launch-contracts.js";
 import { AttemptRecordStore } from "../src/persistence/attempt-record.js";
 import { RunJournal } from "../src/persistence/journal.js";
 import { OperationIndex } from "../src/persistence/operation-index.js";
 import { acquireRunLease } from "../src/persistence/run-lease.js";
 import { RunRecordStore } from "../src/persistence/run-record.js";
 import type { DiscoveredAgent } from "../src/preflight/agents.js";
+import { verifyLaunchPlanIdentity } from "../src/preflight/compile.js";
 import { digestFileResource } from "../src/preflight/resources.js";
 import { preflightWorkspace } from "../src/preflight/workspace.js";
 import type { HostToolDeclaration } from "../src/runtime/host-tools.js";
 import { createVmCapacityManager } from "../src/sandbox/capacity.js";
 import { createSubagentService, RetryBackoffError } from "../src/service.js";
+import { registerSessionModelProvider } from "../src/session-model-provider.js";
 import {
 	finalizeWorktreeHandoff,
 	handoffRefName,
@@ -1994,6 +2001,165 @@ describe("host delegation ceiling", () => {
 				ceiling: { tools: ["grep"] },
 			}),
 		).rejects.toThrow("tool exceeds host ceiling: read");
+		await data.service.shutdown();
+	});
+});
+
+/**
+ * A service whose host may answer what model the session is running on, with a
+ * definition whose model fence is stated per test.
+ */
+async function sessionModelServiceFor(
+	name: string,
+	events: EventBus,
+	allowedModels: string[],
+) {
+	const data = await fixture(name);
+	const agent = { ...data.agent, allowedModels };
+	await mkdir(path.join(data.root, "agent"), { recursive: true });
+	const service = await createSubagentService({
+		root: path.join(data.root, "state"),
+		agentDir: path.join(data.root, "agent"),
+		agents: new Map([[agent.name, agent]]),
+		events,
+		modelRuntime: {} as ModelRuntime,
+		capacity: await createVmCapacityManager({
+			root: path.join(data.root, "capacity"),
+			maxSlots: 1,
+		}),
+		sandbox: {
+			packageVersion: "0.12.0",
+			imageSha256: hash,
+			mountPolicySha256: hash,
+			networkPolicySha256: hash,
+			capacityPolicySha256: hash,
+			guestDiskBytes: 2 * 1024 * 1024 * 1024,
+		},
+		resolveModel: async (model) => model,
+	});
+	return { ...data, agent, service };
+}
+
+describe("inherited session model", () => {
+	const sessionModel = {
+		provider: "github-copilot",
+		id: "gpt-5.6-sol",
+		thinking: "high" as const,
+	};
+
+	it("compiles the host session's model and records it as inherited", async () => {
+		const events = createEventBus();
+		registerSessionModelProvider(events, () => sessionModel);
+		const data = await sessionModelServiceFor("inherit-admitted", events, [
+			"inherit",
+		]);
+		const client = data.service.forOwner({ id: "owner-inherit-admitted" });
+		const preflight = await client.preflight({
+			...data.request,
+			model: "inherit",
+		});
+		expect(preflight.launchPlan.model).toEqual(sessionModel);
+		expect(preflight.launchPlan.modelSource).toBe("inherited");
+		expect(verifyLaunchPlanIdentity(preflight.launchPlan)).toBe(true);
+		expect(
+			verifyLaunchPlanIdentity({
+				...preflight.launchPlan,
+				model: { ...sessionModel, thinking: "low" },
+			}),
+		).toBe(false);
+		expect(
+			verifyLaunchPlanIdentity({
+				...preflight.launchPlan,
+				modelSource: "request",
+			}),
+		).toBe(false);
+		await data.service.shutdown();
+	});
+
+	it("admits any model the host answers with once the template admits inherit", async () => {
+		const events = createEventBus();
+		let current: ExactModelRequest = sessionModel;
+		registerSessionModelProvider(events, () => current);
+		const data = await sessionModelServiceFor("inherit-any", events, [
+			"inherit",
+		]);
+		const client = data.service.forOwner({ id: "owner-inherit-any" });
+		await expect(
+			client.preflight({ ...data.request, model: "inherit" }),
+		).resolves.toMatchObject({ launchPlan: { model: sessionModel } });
+		current = { provider: "anthropic", id: "opus-5", thinking: "off" };
+		await expect(
+			client.preflight({
+				...data.request,
+				operationId: "operation-2",
+				model: "inherit",
+			}),
+		).resolves.toMatchObject({ launchPlan: { model: current } });
+		await data.service.shutdown();
+	});
+
+	it("refuses an inherited request when no host offers a session model", async () => {
+		const bare = await sessionModelServiceFor(
+			"inherit-no-provider",
+			createEventBus(),
+			["inherit"],
+		);
+		await expect(
+			bare.service
+				.forOwner({ id: "owner-inherit-no-provider" })
+				.preflight({ ...bare.request, model: "inherit" }),
+		).rejects.toThrow("model inherit: no session model to inherit");
+		await bare.service.shutdown();
+
+		const events = createEventBus();
+		registerSessionModelProvider(events, () => undefined);
+		const empty = await sessionModelServiceFor("inherit-empty", events, [
+			"inherit",
+		]);
+		await expect(
+			empty.service
+				.forOwner({ id: "owner-inherit-empty" })
+				.preflight({ ...empty.request, model: "inherit" }),
+		).rejects.toThrow("model inherit: no session model to inherit");
+		await empty.service.shutdown();
+	});
+
+	it("refuses an inherited request against a template that does not admit inherit", async () => {
+		const events = createEventBus();
+		registerSessionModelProvider(events, () => sessionModel);
+		const data = await sessionModelServiceFor("inherit-fenced", events, [
+			"github-copilot/gpt-5.6-luna:low",
+		]);
+		await expect(
+			data.service
+				.forOwner({ id: "owner-inherit-fenced" })
+				.preflight({ ...data.request, model: "inherit" }),
+		).rejects.toThrow(
+			"model exceeds ceiling: github-copilot/gpt-5.6-sol:high (template admits github-copilot/gpt-5.6-luna:low, not inherit)",
+		);
+		await data.service.shutdown();
+	});
+
+	it("leaves an exact request and a template pin as their own sources", async () => {
+		const events = createEventBus();
+		const provider = vi.fn(() => sessionModel);
+		registerSessionModelProvider(events, provider);
+		const data = await sessionModelServiceFor("inherit-unchanged", events, [
+			"github-copilot/gpt-5.6-luna:low",
+			"inherit",
+		]);
+		const client = data.service.forOwner({ id: "owner-inherit-unchanged" });
+		const exact = await client.preflight(data.request);
+		expect(exact.launchPlan.model).toEqual(data.agent.defaultModel);
+		expect(exact.launchPlan.modelSource).toBe("request");
+		const { model: _requested, ...withoutModel } = data.request;
+		const pinned = await client.preflight({
+			...withoutModel,
+			operationId: "operation-2",
+		});
+		expect(pinned.launchPlan.model).toEqual(data.agent.defaultModel);
+		expect(pinned.launchPlan.modelSource).toBe("template");
+		expect(provider).not.toHaveBeenCalled();
 		await data.service.shutdown();
 	});
 });

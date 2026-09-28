@@ -42,6 +42,7 @@ describe("runtime contracts", () => {
 			hostBrokeredTools: true,
 			agentRootsFirst: true,
 			delegationCeiling: true,
+			sessionModelInherit: true,
 		});
 	});
 

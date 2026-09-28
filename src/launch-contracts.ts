@@ -45,6 +45,36 @@ export const ExactModelRequestSchema = Type.Object(
 );
 export type ExactModelRequest = Static<typeof ExactModelRequestSchema>;
 
+/**
+ * The one entry that means "the host session's model" wherever a model is
+ * named: in a request, and in an agent definition's `allowedModels`.
+ */
+export const INHERIT_MODEL = "inherit" as const;
+
+/**
+ * The model a request asks for. An `ExactModelRequest` names one exactly;
+ * `inherit` asks for the host session's current model and thinking level,
+ * which pi-subagent resolves through the host-registered session-model
+ * provider. A compiled launch plan never carries `inherit`: it records the
+ * resolved exact model and, in `modelSource`, where that model came from.
+ */
+export const ModelRequestSchema = Type.Union([
+	ExactModelRequestSchema,
+	Type.Literal(INHERIT_MODEL),
+]);
+export type ModelRequest = Static<typeof ModelRequestSchema>;
+
+/**
+ * Where the launch plan's exact model came from: the request stated it, the
+ * agent definition's pin supplied it, or the host session was inherited.
+ */
+export const ModelSourceSchema = Type.Union([
+	Type.Literal("request"),
+	Type.Literal("template"),
+	Type.Literal("inherited"),
+]);
+export type ModelSource = Static<typeof ModelSourceSchema>;
+
 export const WorkspaceModeSchema = Type.Union([
 	Type.Literal("read-only"),
 	Type.Literal("worktree"),
@@ -155,7 +185,13 @@ export const SubagentRequestSchema = Type.Object(
 		),
 		task: DelegatedTaskSchema,
 		contextMode: Type.Union([Type.Literal("fresh"), Type.Literal("fork")]),
-		model: Type.Optional(ExactModelRequestSchema),
+		/**
+		 * An exact model, or `inherit` for the host session's current model and
+		 * thinking level. Absent leaves the agent definition's pin in force. An
+		 * inherited request needs a registered session-model provider and a
+		 * definition whose `allowedModels` admits `inherit`.
+		 */
+		model: Type.Optional(ModelRequestSchema),
 		tools: Type.Array(ResourceNameSchema, { maxItems: 64, uniqueItems: true }),
 		preloadSkills: Type.Array(ResourceNameSchema, {
 			maxItems: 64,
@@ -233,6 +269,8 @@ export const AgentLaunchPlanSchema = Type.Object(
 			),
 		),
 		model: ExactModelRequestSchema,
+		/** Where `model` came from: the request, the definition's pin, or the host session. */
+		modelSource: ModelSourceSchema,
 		cwd: Type.Literal("/workspace"),
 		tools: Type.Array(ResourceNameSchema, { maxItems: 64, uniqueItems: true }),
 		preloadSkills: Type.Array(ResourceNameSchema, {
