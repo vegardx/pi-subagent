@@ -7,6 +7,7 @@ import {
 	ContextScopeSchema,
 	DEFAULT_MEMORY_BYTES,
 	ExactModelRequestSchema,
+	INHERIT_MODEL,
 	MemoryBytesSchema,
 	RunLimitsSchema,
 } from "../launch-contracts.js";
@@ -35,6 +36,14 @@ const ModelRouteSchema = Type.String({
 	pattern: "^.+/.+:(off|minimal|low|medium|high|xhigh)$",
 	maxLength: 512,
 });
+/**
+ * One entry of a definition's model fence: an exact provider/id:thinking route,
+ * or `inherit`, which admits whatever model the host session answers with.
+ */
+const AllowedModelSchema = Type.Union([
+	ModelRouteSchema,
+	Type.Literal(INHERIT_MODEL),
+]);
 
 /** Closed frontmatter contract for a discovered agent definition. */
 export const AgentFrontmatterSchema = Type.Object(
@@ -45,7 +54,7 @@ export const AgentFrontmatterSchema = Type.Object(
 		}),
 		model: ExactModelRequestSchema,
 		allowedModels: Type.Optional(
-			Type.Array(ModelRouteSchema, { maxItems: 64, uniqueItems: true }),
+			Type.Array(AllowedModelSchema, { maxItems: 64, uniqueItems: true }),
 		),
 		tools: Type.Array(ResourceNameSchema, {
 			maxItems: 64,

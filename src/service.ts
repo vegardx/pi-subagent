@@ -3,6 +3,7 @@ import { access, mkdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+	type EventBus,
 	getAgentDir,
 	type ModelRuntime,
 	SessionManager,
@@ -90,6 +91,7 @@ import { remainingTotalTokens } from "./runtime/budget.js";
 import { type HostToolDeclaration, hostToolMap } from "./runtime/host-tools.js";
 import { createFinalAnswerController } from "./runtime/structured-output.js";
 import type { VmCapacityManager } from "./sandbox/capacity.js";
+import { resolveSessionModel } from "./session-model-provider.js";
 import {
 	createAttemptWorktree,
 	exportWorktreeHandoff,
@@ -751,6 +753,12 @@ export async function createSubagentService(options: {
 	agentDir?: string;
 	isProjectTrusted?: (cwd: string) => boolean;
 	resolveModel?: (model: ExactModelRequest) => Promise<ExactModelRequest>;
+	/**
+	 * Pi's process-local event bus, where a host registers the session-model
+	 * provider that a `model: "inherit"` request resolves through at preflight.
+	 * Without it no request can inherit a session model.
+	 */
+	events?: EventBus;
 	executeAttempt?: AttemptExecutor;
 	processController?: ProcessController;
 	hostTools?: readonly HostToolDeclaration[];
@@ -912,6 +920,13 @@ export async function createSubagentService(options: {
 		options.resolveModel ??
 		(async (model: ExactModelRequest) =>
 			createExactModelResolver((await execution()).modelRuntime)(model));
+	/**
+	 * The host session's model for a request that asks to inherit it, read at
+	 * preflight so the plan records the model the person is working with then.
+	 * Without an event bus there is no provider to ask.
+	 */
+	const inheritSessionModel = (): ExactModelRequest | undefined =>
+		options.events ? resolveSessionModel(options.events) : undefined;
 
 	for (const record of await runRecords.list()) {
 		const recoveredSkills: SkillProjection = {
@@ -1852,6 +1867,7 @@ export async function createSubagentService(options: {
 						sandbox: executionDependencies.sandbox,
 						...(forkContext ? { forkContext: forkContext.grant } : {}),
 						resolveModel,
+						inheritSessionModel,
 					});
 					const preflightId = randomUUID();
 					const prepared: PreparedPreflight = {

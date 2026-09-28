@@ -31,6 +31,10 @@
 		"./ceiling-provider": {
 			"types": "./dist/ceiling-provider.d.ts",
 			"import": "./dist/ceiling-provider.js"
+		},
+		"./session-model-provider": {
+			"types": "./dist/session-model-provider.d.ts",
+			"import": "./dist/session-model-provider.js"
 		}
 	},
 	"pi": {

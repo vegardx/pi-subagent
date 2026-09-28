@@ -6,7 +6,9 @@ import {
 	type ContextScope,
 	type DelegationCeiling,
 	type ExactModelRequest,
+	INHERIT_MODEL,
 	MemoryBytesSchema,
+	type ModelSource,
 	type ResourceGrant,
 	type RunLimits,
 	type SubagentRequest,
@@ -55,8 +57,61 @@ export class PreflightError extends Error {
 	}
 }
 
+/**
+ * The refusal when a request asks to inherit the host session's model and
+ * nothing can answer: no provider is registered, or the registered provider has
+ * no session model to give.
+ */
+export const MODEL_INHERIT_REFUSAL =
+	"model inherit: no session model to inherit";
+
 function modelKey(model: ExactModelRequest): string {
 	return `${model.provider}/${model.id}:${model.thinking}`;
+}
+
+/**
+ * The model the launch will run on, and where it came from. A request states
+ * one exactly, asks to inherit the host session's, or says nothing and leaves
+ * the agent definition's pin in force.
+ */
+function resolveRequestedModel(
+	request: SubagentRequest,
+	agent: AgentDefinition,
+	inheritSessionModel?: () => ExactModelRequest | undefined,
+): { requestedModel: ExactModelRequest; modelSource: ModelSource } {
+	if (request.model === INHERIT_MODEL) {
+		const inherited = inheritSessionModel?.();
+		if (!inherited) throw new PreflightError(MODEL_INHERIT_REFUSAL);
+		return { requestedModel: inherited, modelSource: "inherited" };
+	}
+	if (request.model) {
+		return { requestedModel: request.model, modelSource: "request" };
+	}
+	return { requestedModel: agent.defaultModel, modelSource: "template" };
+}
+
+/**
+ * The agent definition fences which models a launch may use. An exact
+ * `allowedModels` entry admits exactly that provider/id:thinking. The entry
+ * `inherit` admits whatever the host session answers, any model and any
+ * thinking level, so for an inherited model the fence lives at the host.
+ */
+function assertModelAdmitted(
+	agent: AgentDefinition,
+	requestedModel: ExactModelRequest,
+	modelSource: ModelSource,
+): void {
+	if (modelSource === "inherited") {
+		if (agent.allowedModels.includes(INHERIT_MODEL)) return;
+		throw new PreflightError(
+			`model exceeds ceiling: ${modelKey(requestedModel)} (template admits ${[...agent.allowedModels].sort().join(", ")}, not inherit)`,
+		);
+	}
+	if (!agent.allowedModels.includes(modelKey(requestedModel))) {
+		throw new PreflightError(
+			`model exceeds ceiling: ${modelKey(requestedModel)}`,
+		);
+	}
 }
 
 function assertSubset(
@@ -174,6 +229,11 @@ export async function compileLaunchPlan(input: {
 	sandbox: ResolvedSandbox;
 	forkContext?: ForkContextGrant;
 	resolveModel(model: ExactModelRequest): Promise<ExactModelRequest>;
+	/**
+	 * The host session's model, consulted only when the request asks to inherit
+	 * it. Absent, or answering nothing, refuses such a request.
+	 */
+	inheritSessionModel?: () => ExactModelRequest | undefined;
 }): Promise<AgentLaunchPlan> {
 	if (!Value.Check(SubagentRequestSchema, input.request)) {
 		const details = [...Value.Errors(SubagentRequestSchema, input.request)]
@@ -235,12 +295,12 @@ export async function compileLaunchPlan(input: {
 		input.resources,
 	);
 
-	const requestedModel = input.request.model ?? input.agent.defaultModel;
-	if (!input.agent.allowedModels.includes(modelKey(requestedModel))) {
-		throw new PreflightError(
-			`model exceeds ceiling: ${modelKey(requestedModel)}`,
-		);
-	}
+	const { requestedModel, modelSource } = resolveRequestedModel(
+		input.request,
+		input.agent,
+		input.inheritSessionModel,
+	);
+	assertModelAdmitted(input.agent, requestedModel, modelSource);
 	const model = await input.resolveModel(requestedModel);
 	if (
 		model.provider !== requestedModel.provider ||
@@ -267,6 +327,7 @@ export async function compileLaunchPlan(input: {
 		contextMode: input.request.contextMode,
 		...(input.forkContext ? { forkContext: input.forkContext } : {}),
 		model,
+		modelSource,
 		cwd: "/workspace" as const,
 		tools: [...input.request.tools].sort(),
 		preloadSkills,

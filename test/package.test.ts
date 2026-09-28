@@ -42,6 +42,10 @@ describe("package contract", () => {
 			types: "./dist/ceiling-provider.d.ts",
 			import: "./dist/ceiling-provider.js",
 		});
+		expect(packageJson.exports?.["./session-model-provider"]).toEqual({
+			types: "./dist/session-model-provider.d.ts",
+			import: "./dist/session-model-provider.js",
+		});
 		expect(packageJson.pi?.extensions).toEqual(["./dist/extension.js"]);
 	});
 
@@ -68,10 +72,16 @@ describe("package contract", () => {
 		const publicApi = await import("../src/index.js");
 		const serviceProvider = await import("../src/service-provider.js");
 		const ceilingProvider = await import("../src/ceiling-provider.js");
+		const sessionModelProvider = await import(
+			"../src/session-model-provider.js"
+		);
 		expect(extension.default).toBeTypeOf("function");
 		expect(publicApi.createVmCapacityManager).toBeTypeOf("function");
 		expect(serviceProvider.acquireSubagentService).toBeTypeOf("function");
 		expect(ceilingProvider.registerDelegationCeilingProvider).toBeTypeOf(
+			"function",
+		);
+		expect(sessionModelProvider.registerSessionModelProvider).toBeTypeOf(
 			"function",
 		);
 	}, 30_000);

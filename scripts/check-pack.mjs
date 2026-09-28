@@ -25,6 +25,8 @@ for (const required of [
 	"dist/index.js",
 	"dist/service-provider.d.ts",
 	"dist/service-provider.js",
+	"dist/session-model-provider.d.ts",
+	"dist/session-model-provider.js",
 	"package.json",
 	"skills/subagents/SKILL.md",
 ]) {
