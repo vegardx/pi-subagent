@@ -23,6 +23,8 @@ at an earlier contract revision is quarantined, not read.
 - A brokered web tool result with `isError: true` reaches the child as an
   error. Pi honours the flag since 0.99 and the result was rebuilt without it;
   `terminate` is still dropped.
+- A steer or follow-up that a session input handler consumes before it reaches
+  the agent yields a `failed` receipt instead of `accepted-by-session`.
 
 ## 0.15.0
 

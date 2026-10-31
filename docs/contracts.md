@@ -534,7 +534,9 @@ interface ControlReceipt {
 }
 ```
 
-`accepted-by-session` does not claim that the model followed the input.
+`accepted-by-session` means the child session queued the input; it does not
+claim that the model followed it. Input a session input handler consumes before
+it reaches the agent is `failed`.
 Duplicate operation IDs replay the prior receipt. There is no durable control
 queue while the seat is absent.
 
