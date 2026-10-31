@@ -15,6 +15,12 @@ at an earlier contract revision is quarantined, not read.
 - `@earendil-works/pi-server` is no longer a peer: Pi removed it in 1.2.0 and
   nothing here imported it.
 
+### Fixed
+
+- Fork-context preflight works on Pi 1.4: `convertToLlm` moved from
+  `pi-agent-core` to `pi-coding-agent`, and the old import left every
+  `contextMode: "fork"` request failing.
+
 ## 0.15.0
 
 ### Added

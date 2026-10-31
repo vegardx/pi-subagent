@@ -1,6 +1,5 @@
-import { convertToLlm } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
-import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { convertToLlm, SessionManager } from "@earendil-works/pi-coding-agent";
 import { canonicalSha256 } from "./canonical.js";
 import { digestFileResource } from "./resources.js";
 
