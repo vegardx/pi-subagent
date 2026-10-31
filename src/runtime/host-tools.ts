@@ -267,8 +267,7 @@ export async function executeBoundedHostTool(
 		if (
 			typeof result !== "object" ||
 			result === null ||
-			!Array.isArray(result.content) ||
-			result.addedToolNames !== undefined
+			!Array.isArray(result.content)
 		) {
 			throw new Error(`invalid host tool result: ${declaration.name}`);
 		}
