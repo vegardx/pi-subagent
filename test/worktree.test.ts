@@ -31,6 +31,7 @@ import {
 	removeCleanWorktree,
 	removeHandoffRef,
 	WorktreeError,
+	type WorktreeRecord,
 } from "../src/workspace/worktree.js";
 
 const execFileAsync = promisify(execFile);
@@ -551,6 +552,151 @@ describe("handoff export", () => {
 		expect(
 			await git(data.repositoryRoot, "rev-parse", data.handoff.branch),
 		).toBe(data.handoff.handoffCommit);
+		await data.lease.release();
+	});
+});
+
+describe("worktree started at a hand-off", () => {
+	async function startedFixture(name: string) {
+		const repositoryRoot = await repository(name);
+		const baselineHead = await git(repositoryRoot, "rev-parse", "HEAD");
+		const managerRoot = fixture(`manager-${name}`);
+		const runId = "run_started";
+		const lease = await acquireRunLease({
+			root: path.join(managerRoot, "leases"),
+			runId,
+		});
+		const first = await createAttemptWorktree({
+			root: managerRoot,
+			runId,
+			attemptId: "attempt_first",
+			workspace: await preflightWorkspace({
+				mode: "worktree",
+				cwd: repositoryRoot,
+			}),
+			lease,
+		});
+		await writeFile(path.join(first.worktreePath, "file.txt"), "first\n");
+		await writeFile(path.join(first.worktreePath, "first.txt"), "only\n");
+		const handoff = await finalizeWorktreeHandoff(first, "test: first", lease);
+		if (!handoff?.handoffCommit) throw new Error("fixture has no hand-off");
+		const workspace = await preflightWorkspace({
+			mode: "worktree",
+			cwd: repositoryRoot,
+			startAt: handoff.handoffCommit,
+		});
+		const record = await createAttemptWorktree({
+			root: managerRoot,
+			runId,
+			attemptId: "attempt_second",
+			workspace,
+			lease,
+		});
+		return {
+			repositoryRoot,
+			baselineHead,
+			startCommit: handoff.handoffCommit,
+			record,
+			lease,
+		};
+	}
+
+	it("squashes the started hand-off and new work into one commit on the baseline", async () => {
+		const data = await startedFixture("start-squash");
+		expect(data.record.baselineHead).toBe(data.baselineHead);
+		expect(data.record.startCommit).toBe(data.startCommit);
+		expect(
+			await readFile(path.join(data.record.worktreePath, "file.txt"), "utf8"),
+		).toBe("first\n");
+		expect(await observeWorktree(data.record)).toMatchObject({
+			state: "clean",
+		});
+		await writeFile(
+			path.join(data.record.worktreePath, "file.txt"),
+			"second\n",
+		);
+		await writeFile(path.join(data.record.worktreePath, "second.txt"), "new\n");
+		await git(data.record.worktreePath, "add", "-A");
+		const finalTree = await git(data.record.worktreePath, "write-tree");
+		const handoff = await finalizeWorktreeHandoff(
+			data.record,
+			"test: second",
+			data.lease,
+		);
+		const commit = handoff?.handoffCommit ?? "";
+		expect(commit).toMatch(/^[a-f0-9]{40,64}$/);
+		expect(
+			await git(data.repositoryRoot, "rev-parse", `${commit}^{tree}`),
+		).toBe(finalTree);
+		expect(
+			(await git(data.repositoryRoot, "rev-list", "--parents", "-n1", commit))
+				.split(" ")
+				.slice(1),
+		).toEqual([data.baselineHead]);
+		const files = (
+			await git(data.repositoryRoot, "ls-tree", "-r", "--name-only", commit)
+		).split("\n");
+		expect(files.sort()).toEqual(["file.txt", "first.txt", "second.txt"]);
+		expect(await git(data.repositoryRoot, "show", `${commit}:file.txt`)).toBe(
+			"second",
+		);
+		expect(await git(data.repositoryRoot, "rev-parse", "HEAD")).toBe(
+			data.baselineHead,
+		);
+		expect(await missing(data.record.worktreePath)).toBe(true);
+		const exported = await exportWorktreeHandoff(handoff as WorktreeRecord, {
+			lease: data.lease,
+		});
+		expect(exported.ref.baselineHead).toBe(data.baselineHead);
+		expect(exported.ref.handoffCommit).toBe(commit);
+		const text = exported.content.toString("utf8");
+		expect(text).toContain("first.txt");
+		expect(text).toContain("second.txt");
+		expect(await observeWorktree(handoff as WorktreeRecord)).toMatchObject({
+			state: "branch-retained",
+		});
+		const released = await releaseWorktreeBranch(
+			handoff as WorktreeRecord,
+			data.lease,
+		);
+		expect(await observeWorktree(released)).toMatchObject({ state: "absent" });
+		await data.lease.release();
+	});
+
+	it("yields no hand-off when the final tree equals the start commit's", async () => {
+		const data = await startedFixture("start-unchanged");
+		expect(
+			await finalizeWorktreeHandoff(data.record, "test: none", data.lease),
+		).toBeUndefined();
+		expect(await missing(data.record.worktreePath)).toBe(true);
+		expect(await observeWorktree(data.record)).toMatchObject({
+			state: "branch-retained",
+		});
+		const released = await releaseWorktreeBranch(data.record, data.lease);
+		expect(released.releasedAt).toBeDefined();
+		expect(released.handoffCommit).toBeUndefined();
+		expect(await inspectHandoffRef(handoffRefTarget(released))).toBe("absent");
+		await data.lease.release();
+	});
+
+	it("refuses a hand-off that reverts the work it started at", async () => {
+		const data = await startedFixture("start-reverted");
+		await writeFile(
+			path.join(data.record.worktreePath, "file.txt"),
+			"baseline\n",
+		);
+		await rm(path.join(data.record.worktreePath, "first.txt"));
+		await expect(
+			captureWorktreeHandoff(data.record, "test: revert", data.lease),
+		).rejects.toThrow(
+			"worktree reverted the hand-off it started at; its final tree equals the baseline",
+		);
+		expect(await inspectHandoffRef(handoffRefTarget(data.record))).toBe(
+			"absent",
+		);
+		expect(await observeWorktree(data.record)).toMatchObject({
+			state: "dirty",
+		});
 		await data.lease.release();
 	});
 });
