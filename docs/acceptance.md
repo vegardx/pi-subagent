@@ -162,6 +162,9 @@ Using bounded disposable fixtures:
   `HOME`/`TMPDIR`; arbitrary host environment variables are absent;
 - a bash tool timeout closes and fences the entire attempt VM, proves QEMU
   absence, prevents late writes, and prevents subsequent VM reuse;
+- a file tool call that hangs ends at the per-call deadline with an error result
+  naming the bound, and a search rooted at the guest's `/` is refused by name;
+- bash runs under the smaller of its `timeout` and the per-call deadline;
 - arbitrary child extension code is absent.
 
 ## Network
