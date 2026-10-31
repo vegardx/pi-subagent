@@ -98,7 +98,7 @@ async function fixture(name: string) {
 		contextScopes: [],
 		workspaceModes: ["read-only" as const],
 		limitCeiling: limits,
-		memoryCeilingBytes: 512 * 1024 * 1024,
+		memoryCeilingBytes: 1024 * 1024 * 1024,
 		prompt: "worker prompt",
 		scope: "global" as const,
 	};

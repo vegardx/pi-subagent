@@ -52,6 +52,7 @@ export {
 	MAX_MEMORY_BYTES,
 	MEMORY_GRANULARITY_BYTES,
 	MemoryBytesSchema,
+	MIN_MEMORY_BYTES,
 	type ModelRequest,
 	ModelRequestSchema,
 	type ModelSource,

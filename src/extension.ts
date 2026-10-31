@@ -20,6 +20,7 @@ import {
 	INHERIT_MODEL,
 	MAX_MEMORY_BYTES,
 	MEMORY_GRANULARITY_BYTES,
+	MIN_MEMORY_BYTES,
 } from "./launch-contracts.js";
 import { type DiscoveredAgent, discoverAgents } from "./preflight/agents.js";
 import { canonicalSha256 } from "./preflight/canonical.js";
@@ -130,11 +131,11 @@ const parameters = Type.Object({
 	),
 	memoryBytes: Type.Optional(
 		Type.Integer({
-			minimum: MEMORY_GRANULARITY_BYTES,
+			minimum: MIN_MEMORY_BYTES,
 			maximum: MAX_MEMORY_BYTES,
 			multipleOf: MEMORY_GRANULARITY_BYTES,
 			description:
-				"Guest VM memory ceiling in bytes; a multiple of 64 MiB up to 4 GiB. Defaults to 512 MiB.",
+				"Guest VM memory in bytes: 1 GiB to 4 GiB in 64 MiB steps. Defaults to 1 GiB, right for nearly all tasks; raise it only for memory-heavy work.",
 		}),
 	),
 });

@@ -37,7 +37,7 @@ const request = {
 
 const plan = {
 	schema: "pi-subagent-launch",
-	contractRevision: 10,
+	contractRevision: 11,
 	operationId: "operation-1",
 	ownerId: "owner-1",
 	runId: "run_launch",
@@ -82,7 +82,7 @@ const plan = {
 		mountPolicySha256: hash,
 		networkPolicySha256: hash,
 		capacityPolicySha256: hash,
-		memoryBytes: 512 * 1024 * 1024,
+		memoryBytes: 1024 * 1024 * 1024,
 		guestDiskBytes: 2 * 1024 * 1024 * 1024,
 		workspaceWriteBytes: limits.workspaceWriteBytes,
 	},

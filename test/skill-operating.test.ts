@@ -28,6 +28,7 @@ import {
 	DEFAULT_MEMORY_BYTES,
 	MAX_MEMORY_BYTES,
 	MEMORY_GRANULARITY_BYTES,
+	MIN_MEMORY_BYTES,
 } from "../src/launch-contracts.js";
 import { AgentFrontmatterSchema } from "../src/preflight/agents.js";
 import { BUDGET_STEERING_STAGES } from "../src/runtime/budget.js";
@@ -212,15 +213,19 @@ describe("operating skill tool surface", () => {
 			`Default \`${DEFAULT_ATTEMPT_TIMEOUT_MS}\``,
 		);
 		expect(MEMORY_GRANULARITY_BYTES).toBe(64 * 1024 * 1024);
-		expect(DEFAULT_MEMORY_BYTES).toBe(512 * 1024 * 1024);
+		expect(MIN_MEMORY_BYTES).toBe(1024 * 1024 * 1024);
+		expect(DEFAULT_MEMORY_BYTES).toBe(MIN_MEMORY_BYTES);
 		expect(MAX_MEMORY_BYTES).toBe(4 * 1024 * 1024 * 1024);
 		const memory = rows.get("memoryBytes") ?? "";
-		expect(memory).toContain(
-			`${MEMORY_GRANULARITY_BYTES}..${MAX_MEMORY_BYTES}`,
-		);
+		expect(memory).toContain(`${MIN_MEMORY_BYTES}..${MAX_MEMORY_BYTES}`);
 		expect(memory).toContain(`Default \`${DEFAULT_MEMORY_BYTES}\``);
 		expect(memory).toContain(`max \`${MAX_MEMORY_BYTES}\``);
 		expect(flatSkill).toContain("64 MiB steps");
+		expect(flatSkill).toContain(
+			"The 1 GiB default is right for nearly all work",
+		);
+		expect(flatSkill).toContain("raise it only for memory-heavy work");
+		expect(flatSkill).toContain("cannot go below 1 GiB");
 		expect(MAX_CUMULATIVE_RUNTIME_MS).toBe(60 * 60 * 1000);
 		expect(flatSkill).toContain(
 			"the smaller of one hour and `timeoutMs` times three",
@@ -374,7 +379,7 @@ describe("operating skill budgets, isolation, and evidence", () => {
 		expect(sources.get("launch-contracts.ts")).toContain(
 			'cwd: Type.Literal("/workspace")',
 		);
-		expect(flatSkill).toContain("512 MiB of memory, 1 CPU");
+		expect(flatSkill).toContain("1 GiB of memory, 1 CPU");
 		expect(flatSkill).toContain("At most four VMs run concurrently");
 		expect(flatSkill).toContain("`public-egress` with internal ranges blocked");
 		expect(flatSkill).toContain("guest working directory `/workspace`");

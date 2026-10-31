@@ -5,7 +5,7 @@ description: Use when delegating one bounded task to an isolated Pi subagent thr
 
 # Operating Pi subagents
 
-This skill covers `@vegardx/pi-subagent` 0.18.0, contract revision 10. Every
+This skill covers `@vegardx/pi-subagent` 0.18.0, contract revision 11. Every
 claim is taken from the runtime source (`src/extension.ts`, `src/service.ts`,
 `src/contracts.ts`, `src/launch-contracts.ts`, `src/preflight/*`,
 `src/sandbox/*`, `src/runtime/*`, `src/workspace/worktree.ts`) and is pinned
@@ -57,7 +57,7 @@ One tool, `subagent`. Ten parameters, all but two optional.
 | `preloadSkills` | string[], at most 16, unique | Default empty. |
 | `contextScopes` | `global` and/or `project`, at most 2 | Default empty. |
 | `timeoutMs` | integer 1000..3600000 | Default `600000` (10 min). |
-| `memoryBytes` | integer 67108864..4294967296, 64 MiB steps | Guest VM memory. Default `536870912` (512 MiB), max `4294967296` (4 GiB). |
+| `memoryBytes` | integer 1073741824..4294967296, 64 MiB steps | Guest VM memory. Default `1073741824` (1 GiB), max `4294967296` (4 GiB). |
 
 Things that surprise people:
 
@@ -82,10 +82,12 @@ Things that surprise people:
   the run's cumulative runtime becomes the smaller of one hour and
   `timeoutMs` times three, because one retry and one resume are
   pre-authorized.
-- **`memoryBytes` raises the guest VM's memory ceiling**, in 64 MiB steps
-  from 64 MiB to 4 GiB; anything off that grid is rejected by the schema. It
-  buys headroom for a build or a test suite, not speed - the guest CPU count is
-  fixed at 1. A defined agent's own `memoryBytes` is a ceiling, so a larger
+- **Leave `memoryBytes` unset for nearly every task.** The 1 GiB default is
+  right for nearly all work; raise it only for memory-heavy work such as a large
+  build or test suite. It goes from 1 GiB to 4 GiB in 64 MiB steps and cannot
+  go below 1 GiB: a smaller guest never boots, so the schema rejects anything
+  below 1 GiB or off that grid. It buys headroom, not speed - the guest CPU
+  count is fixed at 1. A defined agent's own `memoryBytes` is a ceiling, so a larger
   request fails preflight with "memory request exceeds agent ceiling".
 - **`contextMode: fork` copies the parent session's conversation**, bounded to
   100 entries and 256 KiB ("fork context exceeds message limit", "fork
@@ -145,7 +147,7 @@ removed, and that is not an error.
 
 ## Isolation is real, but bounded
 
-- One micro-VM per attempt with, by default, 512 MiB of memory, 1 CPU, an
+- One micro-VM per attempt with, by default, 1 GiB of memory, 1 CPU, an
   in-memory rootfs, and guest working directory `/workspace`. Memory is the
   only one of those you can raise (`memoryBytes`, up to 4 GiB); the guest CPU
   count is fixed at 1. At most four VMs run concurrently by default; beyond
@@ -183,7 +185,7 @@ removed, and that is not an error.
   resume consumes one `limits.resumes`. The `subagent` tool and the `resume`
   action do not offer it.
 
-Revision 10 of the runtime contract declares `vmMemoryCeiling: true`,
+Revision 11 of the runtime contract declares `vmMemoryCeiling: true`,
 `workspaceBudgetRefusal: true`, `delegationCeiling: true`,
 `sessionModelInherit: true`, `workspaceStartAt: true`, and
 `resumeAtHandoff: true`. A typed caller should assert each before it relies on
@@ -209,8 +211,9 @@ lists `inherit` admits whatever model the host session answers with, so the
 fence then lives at the host; one that does not refuses an inherited request
 with `model exceeds ceiling: <key> (template admits <routes>, not inherit)`. `memoryBytes` is optional too:
 it is the guest VM memory ceiling for launches against that definition, in the
-same 64 MiB steps up to 4 GiB, and it defaults to 512 MiB when the frontmatter
-omits it.
+same 64 MiB steps from 1 GiB to 4 GiB, and it defaults to 1 GiB when the
+frontmatter omits it. A definition below 1 GiB is refused as invalid
+frontmatter.
 
 Scope precedence is builtin, then package, then global, then project, so a
 project definition overrides a global one of the same name.

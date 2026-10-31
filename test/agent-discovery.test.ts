@@ -116,7 +116,7 @@ describe("agent discovery", () => {
 			{ scope: "global", directory, trusted: true },
 		]);
 		expect(agents.get("default-memory")?.memoryCeilingBytes).toBe(
-			512 * 1024 * 1024,
+			1024 * 1024 * 1024,
 		);
 		expect(agents.get("raised-memory")?.memoryCeilingBytes).toBe(
 			2 * 1024 * 1024 * 1024,
@@ -124,7 +124,9 @@ describe("agent discovery", () => {
 
 		for (const invalid of [
 			0,
+			64 * 1024 * 1024,
 			100 * 1024 * 1024,
+			960 * 1024 * 1024,
 			-64 * 1024 * 1024,
 			5 * 1024 * 1024 * 1024,
 		]) {
@@ -142,6 +144,24 @@ describe("agent discovery", () => {
 				]),
 			).rejects.toThrow("invalid agent frontmatter");
 		}
+	});
+
+	it("refuses a definition whose memory ceiling is below the 1 GiB floor", async () => {
+		const directory = await sourceDirectory("memory-floor");
+		await writeFile(
+			path.join(directory, "worker.md"),
+			definition("worker", "prompt").replace(
+				"---\nprompt",
+				`memoryBytes: ${512 * 1024 * 1024}\n---\nprompt`,
+			),
+		);
+		const refusal = discoverAgents([
+			{ scope: "global", directory, trusted: true },
+		]);
+		await expect(refusal).rejects.toBeInstanceOf(AgentDiscoveryError);
+		await expect(refusal).rejects.toThrow(
+			`(/memoryBytes: must be >= ${1024 * 1024 * 1024})`,
+		);
 	});
 
 	it("rejects duplicate names in one scope across source directories", async () => {
