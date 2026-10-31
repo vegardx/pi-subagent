@@ -98,6 +98,7 @@ import { remainingTotalTokens } from "./runtime/budget.js";
 import { type HostToolDeclaration, hostToolMap } from "./runtime/host-tools.js";
 import { createFinalAnswerController } from "./runtime/structured-output.js";
 import type { VmCapacityManager } from "./sandbox/capacity.js";
+import type { WarmCheckpointOptions } from "./sandbox/gondolin.js";
 import { resolveSessionModel } from "./session-model-provider.js";
 import {
 	createAttemptWorktree,
@@ -831,6 +832,8 @@ export type SubagentExecutionDependencies = {
 	modelRuntime: ModelRuntime;
 	capacity: VmCapacityManager;
 	sandbox: ResolvedSandbox;
+	/** Per-project warm checkpoints; without it every attempt boots cold. */
+	warmCheckpoints?: WarmCheckpointOptions;
 };
 
 export async function createSubagentService(options: {
@@ -1334,6 +1337,9 @@ export async function createSubagentService(options: {
 				...(snapshot ? { snapshot } : {}),
 				modelRuntime: executionDependencies.modelRuntime,
 				capacity: executionDependencies.capacity,
+				...(executionDependencies.warmCheckpoints
+					? { warmCheckpoints: executionDependencies.warmCheckpoints }
+					: {}),
 				lease,
 				journal,
 				artifactStore: artifacts,

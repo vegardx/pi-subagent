@@ -31,6 +31,7 @@ import {
 	createVmCapacityManager,
 	VmCapacityExhaustedError,
 } from "../../src/sandbox/capacity.js";
+import { WarmCheckpointStore } from "../../src/sandbox/checkpoints.js";
 import {
 	createGondolinAttemptSandbox,
 	GONDOLIN_VERSION,
@@ -534,6 +535,135 @@ async function qualifyConcurrentIsolation() {
 		await Promise.all([closeVm(vmA), closeVm(vmB)]);
 	}
 	return `Two ${MEMORY}/1-vCPU VMs booted concurrently and wrote only their own mounts.`;
+}
+
+let guestAssetBuildId = "";
+
+async function warmFixture(name: string): Promise<string> {
+	const workspace = path.join(root, name);
+	await mkdir(workspace, { recursive: true, mode: 0o700 });
+	await execFileAsync("git", ["init", "-q"], { cwd: workspace });
+	await writeFile(path.join(workspace, ".gitignore"), "node_modules/\n");
+	await writeFile(
+		path.join(workspace, "package.json"),
+		`${JSON.stringify({ name: "warm-fixture", version: "1.0.0", private: true, dependencies: { typebox: "1.3.14" } })}\n`,
+	);
+	await execFileAsync(
+		"npm",
+		[
+			"install",
+			"--package-lock-only",
+			"--ignore-scripts",
+			"--no-audit",
+			"--no-fund",
+		],
+		{ cwd: workspace },
+	);
+	return workspace;
+}
+
+async function timedGuest(
+	sandbox: Awaited<ReturnType<typeof createGondolinAttemptSandbox>>,
+	command: string,
+): Promise<{ ok: boolean; ms: number; stdout: string }> {
+	const startedAt = performance.now();
+	const result = await sandbox.vm.exec(["/bin/sh", "-lc", command], {
+		env: sanitizeGuestEnvironment(undefined),
+	});
+	return {
+		ok: result.ok,
+		ms: Math.round(performance.now() - startedAt),
+		stdout: result.stdout.trim(),
+	};
+}
+
+async function qualifyWarmCheckpoint(): Promise<string> {
+	const workspace = await warmFixture("warm");
+	const store = new WarmCheckpointStore({
+		root: path.join(root, "checkpoints"),
+	});
+	const capacity = await createVmCapacityManager({
+		root: path.join(root, "warm-capacity"),
+		maxSlots: 1,
+	});
+	const boot = (warm: boolean) =>
+		createGondolinAttemptSandbox({
+			owner: "qualification-warm",
+			workspace,
+			readOnly: false,
+			memoryBytes: DEFAULT_MEMORY_BYTES,
+			workspaceWriteBytes: 64 * 1024 * 1024,
+			capacity,
+			createDependencyMountpoints: true,
+			...(warm ? { warmCheckpoints: { store, guestAssetBuildId } } : {}),
+		});
+	const install =
+		"cd /workspace && npm ci --no-audit --no-fund >/dev/null 2>&1";
+
+	const cold = await boot(false);
+	let coldMs: number;
+	try {
+		assert(
+			cold.record.dependencies.bound.includes("node_modules"),
+			"node_modules was not bound",
+		);
+		const layout = await timedGuest(
+			cold,
+			"mount | grep ' /workspace/node_modules '",
+		);
+		assert(
+			layout.ok &&
+				layout.stdout.startsWith("/dev/vda") &&
+				layout.stdout.includes("ext4"),
+			`node_modules is not on the root disk: ${layout.stdout}`,
+		);
+		const coldInstall = await timedGuest(cold, install);
+		assert(coldInstall.ok, "cold npm ci failed");
+		coldMs = coldInstall.ms;
+	} finally {
+		await cold.close();
+	}
+	assert(
+		(await readdir(path.join(workspace, "node_modules"))).length === 0,
+		"bound node_modules contents reached the host",
+	);
+
+	const startedAt = performance.now();
+	const first = await boot(true);
+	const firstBootMs = Math.round(performance.now() - startedAt);
+	try {
+		assert(
+			first.record.boot.mode === "warm" &&
+				first.record.boot.warmup === "created",
+			`first warm boot was ${JSON.stringify(first.record.boot)}`,
+		);
+	} finally {
+		await first.close();
+	}
+	const resumedAt = performance.now();
+	const second = await boot(true);
+	const secondBootMs = Math.round(performance.now() - resumedAt);
+	let warmMs: number;
+	try {
+		assert(
+			second.record.boot.warmup === "reused",
+			`second warm boot was ${JSON.stringify(second.record.boot)}`,
+		);
+		const populated = await timedGuest(second, "ls /workspace/node_modules");
+		assert(populated.stdout.includes("typebox"), "warm node_modules is empty");
+		const warmInstall = await timedGuest(
+			second,
+			"cd /workspace && npm ci --offline --no-audit --no-fund >/dev/null 2>&1",
+		);
+		assert(warmInstall.ok, "warm offline npm ci failed");
+		warmMs = warmInstall.ms;
+	} finally {
+		await second.close();
+	}
+	const sidecar = await store.readSidecar(
+		second.record.boot.checkpointKey ?? "",
+	);
+	return `Cold npm ci on bound node_modules ${coldMs} ms; warm-up boot ${firstBootMs} ms (warm-up ${first.record.boot.warmupMs} ms, checkpoint ${sidecar?.sizeBytes} bytes); reused boot ${secondBootMs} ms found typebox installed; offline npm ci ${warmMs} ms; host node_modules stayed empty.`;
 }
 
 async function qualifyProductionAdapter(): Promise<string> {
@@ -1041,6 +1171,7 @@ async function qemuVersion(): Promise<string> {
 
 async function main() {
 	const image = await ensureImageSelector(GUEST_IMAGE_SELECTOR);
+	guestAssetBuildId = image.buildId ?? "";
 	await setupFixtures();
 	await check("read-only workspace", qualifyReadOnly);
 	await check("guest storage on the root disk", qualifyGuestStorage);
@@ -1049,6 +1180,7 @@ async function main() {
 	await check("concurrent VM isolation", qualifyConcurrentIsolation);
 	await check("global VM capacity lease", qualifyGlobalCapacity);
 	await check("production Gondolin adapter", qualifyProductionAdapter);
+	await check("warm checkpoint boot", qualifyWarmCheckpoint);
 	await check("production native attempt runner", qualifyAttemptRunner);
 	await check("foreground SubagentService", qualifyForegroundService);
 	await check("concurrent native AgentSessions", qualifyNativeSessions);

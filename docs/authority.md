@@ -150,6 +150,45 @@ message: it grants nothing, and the resumed attempt runs under the plan it was
 compiled with. The guest never applies a hand-off and is not expected to have
 `git`.
 
+## Warm checkpoints
+
+An attempt whose workspace has a `package-lock.json` and a bound root
+`node_modules` boots from a per-project warm checkpoint: a Gondolin disk-only
+checkpoint (qcow2) of a root disk on which `npm ci` already ran, so the npm
+cache under `/var/cache/pi-subagent/npm` and the installed dependency
+directories are present at boot. The checkpoint is made by a model-free
+warm-up: the host boots a VM with the attempt's own image, root-disk, memory,
+and network policies, mounts the workspace read-only and nothing else, binds
+the dependency directories, runs `npm ci --no-audit --no-fund` under a 10
+minute bound, and checkpoints the root disk. No Pi session runs and no tool is
+exposed.
+
+`npm ci` runs the project's own lifecycle scripts inside that VM with public
+egress. That is the same trust every attempt already extends to the project:
+any attempt may run those scripts itself. The warm-up cannot write the
+workspace, and what it installs reaches later attempts of the same key only as
+the starting state of their own disposable overlay; nothing reaches the host
+checkout or a handoff.
+
+Checkpoints live in `<agentDir>/subagents/checkpoints/<key>.qcow2` with a
+sidecar holding the key inputs, creation time, and size. The key is the
+SHA-256 of the lockfile digest, the root `package.json` `workspaces` field,
+the bound dependency directories, the guest image build id, the Gondolin
+version, the root-disk policy digest, the guest cache path, and the
+checkpoint schema version, so any change that could alter the checkpoint's
+contents or its bootability misses. One warm-up per key runs at a time (a
+lock file owned by a live process); an attempt that finds a warm-up in
+progress waits for it up to 10 minutes, then boots cold. A failed warm-up is
+recorded by code only (`boot-failed`, `bind-failed`, `install-failed`,
+`timeout`, `checkpoint-failed`, `resume-failed`) and keeps the key cold for an
+hour. A checkpoint built from another image boots cold. The store is bounded
+at 20 GiB, evicting least recently used checkpoints; a checkpoint leased by a
+running VM, whose overlay reads it as its backing file, and a key being warmed
+are never evicted. Each attempt's resumed overlay is its own and is deleted
+at VM close. The sandbox record states `boot.mode` (`warm` or `cold`), the
+warm-up outcome, the checkpoint key, and any failure code, never a path.
+pnpm, yarn, and bun lockfiles are not warmed in this release.
+
 ## Network policy
 
 Guest commands may access public internet destinations. The effective

@@ -76,3 +76,34 @@ cache, not guest RAM; the root disk of the pinned image is 267.8 MiB with
 173 MiB used. The `cow` mode used now is a per-VM qcow2 overlay in the host's
 temporary directory, deleted at close; with `size: 4G` the guest sees a
 3.8 GiB root filesystem.
+
+## Dependency binds and warm checkpoints
+
+The `warm checkpoint boot` check drives the production sandbox on a fixture
+with one dependency (`typebox@1.3.14`): cold `npm ci` on the bound
+`node_modules` 904 ms; the first warm attempt's boot including the warm-up
+2577 ms (warm-up 1758 ms, checkpoint 13.6 MB); the second attempt resumed in
+603 ms with `typebox` already installed, and `npm ci --offline` succeeded in
+705 ms. Inside the guest the bound `node_modules` is `ext4` on `/dev/vda`, and
+the host directory stayed empty.
+
+Measured on a copy of `pi-workflow-scratch` (`typebox`, `typescript`; 35 MB of
+`node_modules`), production sandbox, 1024M, one vCPU, wall time of the guest
+command:
+
+| Case | Boot | `npm ci` |
+| --- | --- | --- |
+| Cold, `node_modules` on the workspace VFS | 909 ms | 4407 ms |
+| Cold, `node_modules` bound to the root disk | 709–711 ms | 1304 ms (twice) |
+| First warm attempt (includes a 2382 ms warm-up) | 3189 ms | not needed |
+| Later warm attempt | 900–1004 ms | not needed; `--offline` 1004 ms (twice) |
+
+The VFS case also charged 35 MB of writes to the workspace budget. The
+checkpoint for this project is 54 MB. Each VFS operation is an RPC over
+virtio-serial, which is why the bind is the larger single win; the warm
+checkpoint removes the install from the attempt entirely.
+
+Resume was probed with and without the `rootfs` option and with `tmpfs: {}`
+re-passed: both resumed a 3.8 GiB root with no scratch tmpfs and the
+workspace VFS mounted; binds are runtime state and are re-applied after
+resume. `vm.checkpoint()` left no QEMU process and no temporary overlay.
