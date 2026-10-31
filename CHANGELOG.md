@@ -6,6 +6,15 @@ The project keeps no backwards compatibility: an incompatible public contract or
 persisted format fails explicitly instead of migrating. Persisted state written
 at an earlier contract revision is quarantined, not read.
 
+## Unreleased
+
+### Changed
+
+- Pi peers (`pi-coding-agent`, `pi-ai`, `pi-tui`, `pi-agent-core`) move from
+  `>=0.85.0 <0.86` to `>=1.4.0 <2`; a host on Pi 0.x must stay on 0.15.0.
+- `@earendil-works/pi-server` is no longer a peer: Pi removed it in 1.2.0 and
+  nothing here imported it.
+
 ## 0.15.0
 
 ### Added

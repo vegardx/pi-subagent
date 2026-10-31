@@ -29,7 +29,7 @@ describe("package contract", () => {
 		);
 		expect(
 			packageJson.peerDependencies?.["@earendil-works/pi-coding-agent"],
-		).toBe(">=0.85.0 <0.86");
+		).toBe(">=1.4.0 <2");
 		expect(packageJson.exports?.["./extension"]).toEqual({
 			types: "./dist/extension.d.ts",
 			import: "./dist/extension.js",
