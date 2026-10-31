@@ -104,6 +104,7 @@ export const WorktreeRecordSchema = Type.Object(
 		recordPath: Type.String({ minLength: 1, maxLength: 4096 }),
 		branch: Type.String({ minLength: 1, maxLength: 1024 }),
 		baselineHead: Type.String({ pattern: "^[a-f0-9]{40,64}$" }),
+		startCommit: Type.Optional(Type.String({ pattern: "^[a-f0-9]{40,64}$" })),
 		createdAt: Type.String({ format: "date-time" }),
 		handoffCommit: Type.Optional(Type.String({ pattern: "^[a-f0-9]{40,64}$" })),
 		handoffRef: Type.Optional(
@@ -124,6 +125,8 @@ export type WorktreeRecord = {
 	recordPath: string;
 	branch: string;
 	baselineHead: string;
+	/** The hand-off commit the worktree was checked out at, when not HEAD. */
+	startCommit?: string;
 	createdAt: string;
 	handoffCommit?: string;
 	handoffRef?: string;
@@ -280,6 +283,16 @@ async function writeRecord(filePath: string, record: WorktreeRecord) {
 	await syncDirectory(path.dirname(filePath));
 }
 
+/** The commit the worktree branch holds before any hand-off is captured. */
+function startCommit(record: WorktreeRecord): string {
+	return record.startCommit ?? record.baselineHead;
+}
+
+/** The commit the worktree branch holds now: the hand-off once captured. */
+function expectedHead(record: WorktreeRecord): string {
+	return record.handoffCommit ?? startCommit(record);
+}
+
 function identitySegment(value: string, length: number): string {
 	return createHash("sha256").update(value).digest("hex").slice(0, length);
 }
@@ -319,6 +332,9 @@ export async function createAttemptWorktree(options: {
 		recordPath,
 		branch,
 		baselineHead: options.workspace.head,
+		...(options.workspace.startAt
+			? { startCommit: options.workspace.startAt }
+			: {}),
 		createdAt: new Date().toISOString(),
 	};
 	const reservation = await open(recordPath, "wx", 0o600).catch((error) => {
@@ -336,7 +352,7 @@ export async function createAttemptWorktree(options: {
 			"-b",
 			branch,
 			worktreePath,
-			options.workspace.head,
+			startCommit(record),
 		]);
 		await options.lease.assertCurrent();
 		await writeRecord(recordPath, record);
@@ -383,7 +399,7 @@ export async function captureWorktreeHandoff(
 	if (
 		worktreeRoot !== record.worktreePath ||
 		branch !== record.branch ||
-		head !== record.baselineHead
+		head !== startCommit(record)
 	) {
 		throw new WorktreeError("worktree baseline identity mismatch");
 	}
@@ -400,12 +416,43 @@ export async function captureWorktreeHandoff(
 		.then(() => false)
 		.catch(() => true);
 	if (!staged) throw new WorktreeNoChangesError();
-	await git(record.worktreePath, ["commit", "-m", message]);
-	const handoffCommit = (
-		await git(record.worktreePath, ["rev-parse", "--verify", "HEAD"])
+	// The hand-off is squashed onto the baseline whatever commit the worktree
+	// started at, so it stays exactly one commit on the repository HEAD.
+	const tree = (await git(record.worktreePath, ["write-tree"]))
+		.toString("utf8")
+		.trim();
+	const baselineTree = (
+		await git(record.worktreePath, [
+			"rev-parse",
+			"--verify",
+			`${record.baselineHead}^{tree}`,
+		])
 	)
 		.toString("utf8")
 		.trim();
+	if (tree === baselineTree) {
+		throw new WorktreeError(
+			"worktree reverted the hand-off it started at; its final tree equals the baseline",
+		);
+	}
+	const handoffCommit = (
+		await git(record.worktreePath, [
+			"commit-tree",
+			tree,
+			"-p",
+			record.baselineHead,
+			"-m",
+			message,
+		])
+	)
+		.toString("utf8")
+		.trim();
+	await git(record.worktreePath, [
+		"update-ref",
+		`refs/heads/${record.branch}`,
+		handoffCommit,
+		startCommit(record),
+	]);
 	await lease.assertCurrent();
 	try {
 		await git(record.repositoryRoot, [
@@ -658,7 +705,7 @@ export async function removeCleanWorktree(
 	if (
 		worktreeRoot !== record.worktreePath ||
 		branch !== record.branch ||
-		head !== (record.handoffCommit ?? record.baselineHead)
+		head !== expectedHead(record)
 	) {
 		throw new WorktreeError("worktree cleanup identity mismatch");
 	}
@@ -693,7 +740,7 @@ export async function releaseWorktreeBranch(
 		)
 			.toString("utf8")
 			.trim();
-		if (branchCommit !== (record.handoffCommit ?? record.baselineHead)) {
+		if (branchCommit !== expectedHead(record)) {
 			throw new WorktreeError("handoff branch identity mismatch");
 		}
 		await lease.assertCurrent();
@@ -721,7 +768,7 @@ export async function observeWorktree(
 			return { state: "unknown", reason: "worktree path observation failed" };
 		}
 	}
-	const expectedHead = record.handoffCommit ?? record.baselineHead;
+	const expected = expectedHead(record);
 	if (!worktreeExists) {
 		try {
 			const listed = (
@@ -743,7 +790,7 @@ export async function observeWorktree(
 			)
 				.toString("utf8")
 				.trim();
-			return branchHead === expectedHead
+			return branchHead === expected
 				? { state: "branch-retained" }
 				: { state: "unknown", reason: "retained branch identity mismatch" };
 		} catch {
@@ -771,7 +818,7 @@ export async function observeWorktree(
 			canonicalWorktree !== record.worktreePath ||
 			worktreeRoot !== record.worktreePath ||
 			branch !== record.branch ||
-			head !== expectedHead
+			head !== expected
 		) {
 			return { state: "unknown", reason: "worktree identity mismatch" };
 		}
