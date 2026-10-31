@@ -87,7 +87,10 @@ revision 10: a resume continues a finished worktree run's session at its latest
 hand-off with a caller message, and the hand-off it exports replaces the
 earlier one. Contract revision 11 raises the guest memory floor and default to
 1 GiB, because a smaller Gondolin guest never boots; a consumer that pins
-revision 10 must move to 11.
+revision 10 must move to 11. Contract revision 12 makes attempts wait for a VM
+slot (`capacityWait`), types a slot that never frees as the `capacity` failure,
+and reports the host's `capacity.maxSlots` (default 16); a consumer that pins
+revision 11 must move to 12.
 
 Consumer integration starts only after pi-subagent completes full acceptance,
 dogfood cutover, and stable release qualification:

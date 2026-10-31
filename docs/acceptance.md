@@ -138,6 +138,9 @@ Using bounded disposable fixtures:
 - a guest that does not become ready within the 60 s start bound fails as
   `sandbox-launch` with a message built from the launch's own timeout and
   memory, and VM boot is not charged to `attemptTimeoutMs`;
+- an attempt on a full host waits for a VM slot without charging the wait to
+  `attemptTimeoutMs`, stops waiting when cancelled, and past `capacityWaitMs`
+  fails as `capacity`/`backoff` with complete zero usage;
 - output and artifact streams truncate or fail at documented bounds;
 - a fork loop or CPU loop remains confined and is stopped by cancellation or
   timeout;

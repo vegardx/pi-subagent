@@ -72,6 +72,7 @@ not a sufficient grant.
 | Workspace | Read-only |
 | VM memory | 1 GiB; agent ceiling 1 GiB to 4 GiB in 64 MiB steps; a request may only narrow it, never below 1 GiB |
 | VM CPUs | 1; not configurable per agent |
+| Concurrent VMs | `maxSlots` per host across every seat, default 16, at most 32; operator setting only |
 | Package-manager caches | `/tmp/cache` through `XDG_CACHE_HOME`; never inside `/workspace` |
 | Network | Public internet; internal ranges blocked |
 | Repository-local files | Visible, including `.env` and similar files |
