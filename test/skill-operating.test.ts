@@ -378,7 +378,7 @@ describe("operating skill budgets, isolation, and evidence", () => {
 		expect(gondolin).toContain("guestMemorySize(options.memoryBytes)");
 		expect(gondolin).toContain("const DEFAULT_CPUS = 1;");
 		expect(gondolin).toContain("options.cpus ?? DEFAULT_CPUS");
-		expect(GUEST_CACHE_HOME).toBe("/tmp/cache");
+		expect(GUEST_CACHE_HOME).toBe("/var/cache/pi-subagent");
 		expect(sources.get("sandbox/tools.ts")).toContain(
 			"XDG_CACHE_HOME: GUEST_CACHE_HOME",
 		);

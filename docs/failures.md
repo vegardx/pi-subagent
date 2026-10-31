@@ -135,7 +135,8 @@ records `workspace-budget` with workspace origin and retry `never`. A budget
 refusal is a declared bound, not a disk failure and not a transient error: the
 remedy is a new run with a larger `workspaceWriteBytes`, a smaller change, or
 moving bulk output out of the workspace. Package-manager caches already live
-under `XDG_CACHE_HOME` (`/tmp/cache`), outside the budget.
+under `XDG_CACHE_HOME` (`/var/cache/pi-subagent`, on the root disk), outside
+the budget.
 
 A filesystem escape or denied host/internal-network destination is a boundary
 result, not a transient infrastructure failure. The runtime must not retry it

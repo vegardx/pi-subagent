@@ -35,6 +35,7 @@ import {
 	createGondolinAttemptSandbox,
 	GONDOLIN_VERSION,
 	GUEST_IMAGE_SELECTOR,
+	GUEST_ROOTFS_POLICY,
 	guestMemorySize,
 } from "../../src/sandbox/gondolin.js";
 import { createSubagentService } from "../../src/service.js";
@@ -144,7 +145,11 @@ async function createVm(workspace: string, readOnly = false): Promise<VM> {
 		sandbox: { vmm: "qemu", imagePath: GUEST_IMAGE_SELECTOR },
 		memory: MEMORY,
 		cpus: CPUS,
-		rootfs: { mode: "memory" },
+		rootfs: {
+			mode: GUEST_ROOTFS_POLICY.mode,
+			size: GUEST_ROOTFS_POLICY.sizeBytes,
+		},
+		tmpfs: {},
 		startTimeoutMs: 60_000,
 		allowWebSockets: false,
 		maxHttpBodyBytes: 8 * 1024 * 1024,
@@ -234,6 +239,42 @@ async function setupFixtures() {
 		path.join(serviceSkill, "SKILL.md"),
 		"---\nname: qualification-skill\ndescription: Use for the service qualification.\n---\n\nWhen calling final_answer, include preloadProof with the exact value SKILL_PRELOADED.\n",
 	);
+}
+
+async function qualifyGuestStorage() {
+	const workspace = path.join(root, "reader");
+	const vm = await createVm(workspace, true);
+	try {
+		const layout = await vm.exec(
+			`df -k / /tmp ${GUEST_CACHE_HOME.split("/").slice(0, 3).join("/")} | tail -n +2; grep -c ' tmpfs ' /proc/mounts || true; awk '/MemAvailable/ {print $2}' /proc/meminfo`,
+		);
+		assert(layout.ok, "guest storage probe failed");
+		const lines = layout.stdout.trim().split("\n");
+		const disks = lines.slice(0, 3).map((line) => line.split(/\s+/));
+		assert(
+			disks.every((disk) => disk[0] === "/dev/vda"),
+			`scratch paths are not on the root disk: ${layout.stdout}`,
+		);
+		const rootKiB = Number(disks[0]?.[1]);
+		assert(
+			rootKiB > 3 * 1024 * 1024 &&
+				rootKiB <= GUEST_ROOTFS_POLICY.sizeBytes / 1024,
+			`root disk is not sized to the policy: ${rootKiB} KiB`,
+		);
+		const before = Number(lines.at(-1));
+		const fill = await vm.exec(
+			`mkdir -p ${GUEST_CACHE_HOME} && dd if=/dev/zero of=${GUEST_CACHE_HOME}/fill bs=1M count=256 2>/dev/null && sync && echo 3 > /proc/sys/vm/drop_caches && awk '/MemAvailable/ {print $2}' /proc/meminfo`,
+		);
+		assert(fill.ok, "cache fill failed");
+		const after = Number(fill.stdout.trim());
+		assert(
+			before - after < 64 * 1024,
+			`a 256 MiB cache write held guest memory: ${before} -> ${after} KiB`,
+		);
+		return `/, /tmp, and /var are on /dev/vda (${Math.round(rootKiB / 1024)} MiB); a 256 MiB write to ${GUEST_CACHE_HOME} left MemAvailable at ${after} of ${before} KiB.`;
+	} finally {
+		await closeVm(vm);
+	}
 }
 
 async function qualifyReadOnly() {
@@ -395,7 +436,11 @@ async function qualifyWriteBudget() {
 		sandbox: { vmm: "qemu", imagePath: GUEST_IMAGE_SELECTOR },
 		memory: MEMORY,
 		cpus: CPUS,
-		rootfs: { mode: "memory" },
+		rootfs: {
+			mode: GUEST_ROOTFS_POLICY.mode,
+			size: GUEST_ROOTFS_POLICY.sizeBytes,
+		},
+		tmpfs: {},
 		allowWebSockets: false,
 		httpHooks,
 		dns: { mode: "synthetic" },
@@ -684,6 +729,7 @@ async function qualifyForegroundService(): Promise<string> {
 			mountPolicySha256: canonicalSha256("qualification-mount"),
 			networkPolicySha256: canonicalSha256("qualification-network"),
 			capacityPolicySha256: canonicalSha256("qualification-capacity"),
+			rootfsPolicySha256: canonicalSha256("qualification-rootfs"),
 			guestDiskBytes: 2 * 1024 * 1024 * 1024,
 		},
 	});
@@ -764,6 +810,7 @@ async function qualifyForegroundService(): Promise<string> {
 			mountPolicySha256: canonicalSha256("qualification-mount"),
 			networkPolicySha256: canonicalSha256("qualification-network"),
 			capacityPolicySha256: canonicalSha256("qualification-capacity"),
+			rootfsPolicySha256: canonicalSha256("qualification-rootfs"),
 			guestDiskBytes: 2 * 1024 * 1024 * 1024,
 		},
 	});
@@ -868,6 +915,7 @@ async function qualifyAttemptRunner(): Promise<string> {
 			mountPolicySha256: canonicalSha256("qualification-mount"),
 			networkPolicySha256: canonicalSha256("qualification-network"),
 			capacityPolicySha256: canonicalSha256("qualification-capacity"),
+			rootfsPolicySha256: canonicalSha256("qualification-rootfs"),
 			guestDiskBytes: 2 * 1024 * 1024 * 1024,
 		},
 		resolveModel: createExactModelResolver(modelRuntime),
@@ -995,6 +1043,7 @@ async function main() {
 	const image = await ensureImageSelector(GUEST_IMAGE_SELECTOR);
 	await setupFixtures();
 	await check("read-only workspace", qualifyReadOnly);
+	await check("guest storage on the root disk", qualifyGuestStorage);
 	await check("tool routing and host boundary", qualifyToolsAndBoundary);
 	await check("workspace write budget", qualifyWriteBudget);
 	await check("concurrent VM isolation", qualifyConcurrentIsolation);

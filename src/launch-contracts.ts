@@ -138,8 +138,10 @@ export type DelegationCeiling = Static<typeof DelegationCeilingSchema>;
 export const DEFAULT_MAX_TASK_COST = 100;
 
 /**
- * The smallest guest that boots: Gondolin's in-memory rootfs does not fit in
- * 64 MiB, so such a guest never reaches readiness.
+ * A workload floor, not the boot floor. The pinned image boots at 96 MiB and
+ * not at 64 MiB (docs/qualification); 1 GiB leaves the guest kernel, its
+ * services, and Node-based toolchains such as npm and tsc room to run. Scratch
+ * paths are on the root disk, so this memory is for processes only.
  */
 export const MIN_MEMORY_BYTES = 1024 * 1024 * 1024;
 export const DEFAULT_MEMORY_BYTES = MIN_MEMORY_BYTES;
@@ -321,6 +323,7 @@ export const AgentLaunchPlanSchema = Type.Object(
 				mountPolicySha256: Sha256Schema,
 				networkPolicySha256: Sha256Schema,
 				capacityPolicySha256: Sha256Schema,
+				rootfsPolicySha256: Sha256Schema,
 				memoryBytes: MemoryBytesSchema,
 				guestDiskBytes: Type.Integer({ minimum: 1 }),
 				workspaceWriteBytes: Type.Integer({ minimum: 0 }),

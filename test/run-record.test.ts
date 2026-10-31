@@ -61,6 +61,7 @@ function plan(): AgentLaunchPlan {
 			mountPolicySha256: hash,
 			networkPolicySha256: hash,
 			capacityPolicySha256: hash,
+			rootfsPolicySha256: hash,
 			memoryBytes: 1024 * 1024 * 1024,
 			guestDiskBytes: 1024,
 			workspaceWriteBytes: 0,

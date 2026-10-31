@@ -9,9 +9,14 @@ import {
 	createGondolinAttemptSandbox,
 	GONDOLIN_START_TIMEOUT_CODE,
 	GondolinSandboxError,
+	GUEST_IMAGE_SELECTOR,
+	GUEST_ROOTFS_BYTES,
 } from "../src/sandbox/gondolin.js";
 
-const startFailure = vi.hoisted(() => ({ error: new Error("unset") }));
+const startFailure = vi.hoisted(() => ({
+	error: new Error("unset"),
+	options: undefined as unknown,
+}));
 
 vi.mock("@earendil-works/gondolin", async (importOriginal) => {
 	const original =
@@ -19,12 +24,15 @@ vi.mock("@earendil-works/gondolin", async (importOriginal) => {
 	return {
 		...original,
 		VM: {
-			create: async () => ({
-				id: "vm-start-failure",
-				start: () => Promise.reject(startFailure.error),
-				close: async () => {},
-				getHostPid: () => null,
-			}),
+			create: async (options: unknown) => {
+				startFailure.options = options;
+				return {
+					id: "vm-start-failure",
+					start: () => Promise.reject(startFailure.error),
+					close: async () => {},
+					getHostPid: () => null,
+				};
+			},
 		},
 	};
 });
@@ -89,6 +97,18 @@ describe("Gondolin start failures", () => {
 			"sandbox startup failed: guest did not become ready within 60 s at 1024M",
 		);
 		expect(failure.message).not.toContain("60000ms");
+	});
+
+	it("boots the pinned image on a bounded copy-on-write disk without scratch tmpfs", async () => {
+		startFailure.error = new Error("stop after create");
+		await startSandbox({ memoryBytes: 1024 * 1024 * 1024 });
+		expect(startFailure.options).toMatchObject({
+			sandbox: { vmm: "qemu", imagePath: GUEST_IMAGE_SELECTOR },
+			rootfs: { mode: "cow", size: GUEST_ROOTFS_BYTES },
+			tmpfs: {},
+		});
+		expect(GUEST_ROOTFS_BYTES).toBe(4 * 1024 * 1024 * 1024);
+		expect(GUEST_IMAGE_SELECTOR).toBe("alpine-base:0.4.0");
 	});
 
 	it("uses the launch's own start timeout in the message", async () => {

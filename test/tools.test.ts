@@ -58,11 +58,11 @@ describe("Gondolin tool paths", () => {
 		).toEqual({
 			HOME: "/workspace",
 			TMPDIR: "/tmp",
-			XDG_CACHE_HOME: "/tmp/cache",
-			npm_config_cache: "/tmp/cache/npm",
-			YARN_CACHE_FOLDER: "/tmp/cache/yarn",
-			PNPM_STORE_DIR: "/tmp/cache/pnpm",
-			PIP_CACHE_DIR: "/tmp/cache/pip",
+			XDG_CACHE_HOME: "/var/cache/pi-subagent",
+			npm_config_cache: "/var/cache/pi-subagent/npm",
+			YARN_CACHE_FOLDER: "/var/cache/pi-subagent/yarn",
+			PNPM_STORE_DIR: "/var/cache/pi-subagent/pnpm",
+			PIP_CACHE_DIR: "/var/cache/pi-subagent/pip",
 			LANG: "en_US.UTF-8",
 			LC_ALL: "C",
 			TERM: "xterm-256color",
@@ -85,8 +85,10 @@ describe("Gondolin tool paths", () => {
 			expect(cachePath?.startsWith(`${GUEST_WORKSPACE}/`)).toBe(false);
 			expect(cachePath).not.toBe(GUEST_WORKSPACE);
 			// The budgeted VFS provider only covers the /workspace mount, so a
-			// cache under /tmp cannot consume workspaceWriteBytes.
-			expect(cachePath?.startsWith("/tmp/")).toBe(true);
+			// cache on the root disk under /var/cache cannot consume
+			// workspaceWriteBytes.
+			expect(cachePath?.startsWith("/var/cache/")).toBe(true);
+			expect(cachePath?.startsWith(`${GUEST_WORKSPACE}/`)).toBe(false);
 		}
 		expect(environment.HOME).toBe(GUEST_WORKSPACE);
 	});

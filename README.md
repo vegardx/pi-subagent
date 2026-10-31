@@ -97,7 +97,8 @@ Agent prompt.
 ```
 
 `memoryBytes` is optional and bounds the attempt VM's memory. It defaults to
-1 GiB, the smallest guest that boots, and must be a multiple of 64 MiB from
+1 GiB, a workload floor (the image itself boots in far less), and must be a
+multiple of 64 MiB from
 1 GiB to 4 GiB; a request above the agent ceiling fails preflight. Raise it for
 memory-hungry guest toolchains such as a full-repository `tsc --noEmit`. Guest
 vCPU count is fixed at one. Host memory exposure is the VM capacity slot count
@@ -119,8 +120,10 @@ minutes for one, uncharged to its timeout, and then fails with the `capacity`
 failure code.
 
 Guest package-manager caches are redirected outside the workspace
-(`XDG_CACHE_HOME=/tmp/cache`), so they never consume `workspaceWriteBytes` and
-never appear in a handoff patch. When a writing attempt does exhaust
+(`XDG_CACHE_HOME=/var/cache/pi-subagent`) onto the attempt's 4 GiB copy-on-write
+root disk, which also holds `/tmp` and is discarded at VM close, so they spend
+neither guest memory nor `workspaceWriteBytes` and never appear in a handoff
+patch. When a writing attempt does exhaust
 `workspaceWriteBytes`, guest writes fail with `EDQUOT` and the attempt records
 the `workspace-budget` failure code.
 

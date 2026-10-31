@@ -181,9 +181,12 @@ explicit cost limit must fit both its agent ceiling and the service policy.
 authorities.
 
 `memoryBytes` is the guest VM memory grant. It is a multiple of 64 MiB from
-1 GiB (`MIN_MEMORY_BYTES`) to 4 GiB (`MAX_MEMORY_BYTES`). The floor is the
-smallest guest that boots: Gondolin's in-memory rootfs does not fit in less,
-and such a guest never reaches readiness. An agent definition declares the
+1 GiB (`MIN_MEMORY_BYTES`) to 4 GiB (`MAX_MEMORY_BYTES`). The floor is a
+workload floor, not the boot floor: the pinned guest image boots at 96 MiB and
+fails to reach readiness at 64 MiB (`docs/qualification`), and 1 GiB leaves the
+guest kernel, its services, and Node-based toolchains such as npm and `tsc`
+room to run. Guest scratch paths live on the root disk, not in memory, so the
+grant is for processes only. An agent definition declares the
 ceiling; a request may only narrow it, never below the floor. When the request
 omits it, the plan uses the agent ceiling; when the agent definition omits it,
 the ceiling is 1 GiB (`DEFAULT_MEMORY_BYTES`). A request above the
@@ -273,6 +276,7 @@ interface GondolinGrant {
 	guestDiskBytes: number;
 	workspaceWriteBytes: number;
 	capacityPolicySha256: string;
+	rootfsPolicySha256: string;
 }
 
 interface NetworkGrant {
@@ -297,6 +301,19 @@ resume reruns the plan's recorded model rather than resolving the session again.
 `ceiling` records the host bound the plan was compiled under, present only when
 the request carried one. A launch plan without it was compiled with no host
 bound.
+
+`sandbox.guestDiskBytes` is the virtual size of the attempt's root disk, 4 GiB
+(`GUEST_ROOTFS_BYTES`). The root disk is a Gondolin copy-on-write qcow2 overlay
+over the pinned image, created per VM in the host's temporary directory, grown
+on demand, and deleted when the VM closes; nothing persists between attempts.
+Gondolin's default scratch tmpfs set is disabled, so `/tmp`, `/var/tmp`,
+`/var/cache`, `/var/log`, and `/root` are on that disk rather than in guest
+memory. `rootfsPolicySha256` digests that layout (`GUEST_ROOTFS_POLICY`: mode
+`cow`, size, tmpfs `root-disk`) and binds it into the launch identity next to
+the mount, network, and capacity policies; the sandbox record carries the same
+policy. Host disk exposure is bounded by `maxSlots` x 4 GiB plus qcow2
+metadata, 64 GiB at the default sixteen slots, reached only when every
+attempt fills its disk.
 
 `sandbox.memoryBytes` is the resolved per-run memory grant, so it is part of the
 launch identity digest and of the persisted run and attempt records. Host VM
@@ -687,8 +704,11 @@ attempt whose host has no free slot waits for one, up to `capacityWaitMs`
 charging the wait to `attemptTimeoutMs`, and that an attempt that never gets a
 slot fails with the failure code `capacity`, origin `service`, retry `backoff`,
 and complete zero usage. Revision 12 also makes `usageComplete` true for any
-attempt that ended before its model session existed. As with every revision,
-revision 11 state is not read.
+attempt that ended before its model session existed. It adds
+`sandbox.rootfsPolicySha256` to the launch grant: attempts boot the pinned
+guest image on a 4 GiB copy-on-write root disk with no scratch tmpfs, and
+`guestDiskBytes` is that disk's size. As with every revision, revision 11 state
+is not read.
 Consumers check the exact contract
 revision and required features rather than
 infer support from package versions. Revisions are not backwards-compatible:

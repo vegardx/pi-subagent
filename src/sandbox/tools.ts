@@ -28,10 +28,12 @@ import { type WriteBudget, workspaceBudgetNotice } from "./write-budget.js";
 
 export const GUEST_WORKSPACE = "/workspace";
 /**
- * Guest cache root. It lives on the VM's own rootfs, so package-manager caches
- * never consume the workspace write budget and never reach the handoff patch.
+ * Guest cache root. It lives on the attempt's copy-on-write root disk, not in
+ * guest memory and not on the workspace mount, so package-manager caches never
+ * consume the workspace write budget and never reach the handoff patch. A warm
+ * checkpoint holds the same path.
  */
-export const GUEST_CACHE_HOME = "/tmp/cache";
+export const GUEST_CACHE_HOME = "/var/cache/pi-subagent";
 const DEFAULT_GREP_LIMIT = 100;
 /**
  * Wall bound on one guest file tool call. A call that reaches it returns an

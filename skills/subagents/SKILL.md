@@ -86,8 +86,8 @@ Things that surprise people:
 - **Leave `memoryBytes` unset for nearly every task.** The 1 GiB default is
   right for nearly all work; raise it only for memory-heavy work such as a large
   build or test suite. It goes from 1 GiB to 4 GiB in 64 MiB steps and cannot
-  go below 1 GiB: a smaller guest never boots, so the schema rejects anything
-  below 1 GiB or off that grid. It buys headroom, not speed - the guest CPU
+  go below 1 GiB, a floor that leaves Node toolchains room to run, so the
+  schema rejects anything below 1 GiB or off that grid. It buys headroom, not speed - the guest CPU
   count is fixed at 1. A defined agent's own `memoryBytes` is a ceiling, so a larger
   request fails preflight with "memory request exceeds agent ceiling".
 - **`contextMode: fork` copies the parent session's conversation**, bounded to
@@ -149,7 +149,9 @@ removed, and that is not an error.
 ## Isolation is real, but bounded
 
 - One micro-VM per attempt with, by default, 1 GiB of memory, 1 CPU, an
-  in-memory rootfs, and guest working directory `/workspace`. Memory is the
+  4 GiB copy-on-write root disk that is discarded when the VM closes, and guest
+  working directory `/workspace`. `/tmp` and `/var/cache` are on that disk, not
+  in guest memory. Memory is the
   only one of those you can raise (`memoryBytes`, up to 4 GiB); the guest CPU
   count is fixed at 1. At most sixteen VMs run concurrently on the host by
   default, across every seat; the operator sets `maxSlots` (1 to 32) in
@@ -158,11 +160,12 @@ removed, and that is not an error.
   10 minutes, and that wait is not charged to its timeout; past the bound it
   fails as `capacity`.
 - Package caches are pushed out of the workspace: `$XDG_CACHE_HOME` is
-  `/tmp/cache` in the guest, with `npm_config_cache`, `YARN_CACHE_FOLDER`,
-  `PNPM_STORE_DIR`, and `PIP_CACHE_DIR` beneath it. Downloads there live on the
-  in-memory rootfs, so they spend guest memory rather than the
-  `workspaceWriteBytes` budget, and they never reach the handoff patch. Tell a
-  subagent that installs dependencies to leave the cache defaults alone.
+  `/var/cache/pi-subagent` in the guest, with `npm_config_cache`,
+  `YARN_CACHE_FOLDER`, `PNPM_STORE_DIR`, and `PIP_CACHE_DIR` beneath it.
+  Downloads there live on the root disk, so they spend neither guest memory
+  nor the `workspaceWriteBytes` budget, and they never reach the handoff
+  patch. Tell a subagent that installs dependencies to leave the cache
+  defaults alone.
 - Only the workspace, projected skill trees under `/skills/...`, and
   projected context files are mounted. Skill and context mounts are read-only.
 - Network is **on**: `public-egress` with internal ranges blocked and
