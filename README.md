@@ -109,9 +109,9 @@ never appear in a handoff patch. When a writing attempt does exhaust
 `workspaceWriteBytes`, guest writes fail with `EDQUOT` and the attempt records
 the `workspace-budget` failure code.
 
-Every guest tool call is bounded at 300 s: a file tool returns an error naming
-the bound, a search rooted at `/` is refused, and `bash` runs under the smaller
-of the bound and its own `timeout` (expiry closes the VM).
+Every guest file tool call is bounded at 300 s and returns an error naming the
+bound when it expires, and a search rooted at `/` is refused. `bash` is bounded
+only by its own `timeout` (expiry closes the VM) and the attempt deadline.
 
 A service request may set `workspace.startAt` to a handoff commit whose parent
 is HEAD and that a `refs/pi-subagent/handoffs/...` ref points at. The host
