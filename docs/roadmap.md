@@ -85,7 +85,9 @@ final tree onto HEAD. A consumer that pins an earlier revision must move to 10;
 there is no compatibility path. Release 0.18 adds `resumeAtHandoff` within
 revision 10: a resume continues a finished worktree run's session at its latest
 hand-off with a caller message, and the hand-off it exports replaces the
-earlier one.
+earlier one. Contract revision 11 raises the guest memory floor and default to
+1 GiB, because a smaller Gondolin guest never boots; a consumer that pins
+revision 10 must move to 11.
 
 Consumer integration starts only after pi-subagent completes full acceptance,
 dogfood cutover, and stable release qualification:

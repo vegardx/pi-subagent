@@ -180,10 +180,13 @@ explicit cost limit must fit both its agent ceiling and the service policy.
 `totalTokens` is optional; when absent, cost and runtime remain the task budget
 authorities.
 
-`memoryBytes` is the guest VM memory grant. It is a positive integer multiple of
-64 MiB, at most 4 GiB. An agent definition declares the ceiling; a request may
-only narrow it. When the request omits it, the plan uses the agent ceiling; when
-the agent definition omits it, the ceiling is 512 MiB. A request above the
+`memoryBytes` is the guest VM memory grant. It is a multiple of 64 MiB from
+1 GiB (`MIN_MEMORY_BYTES`) to 4 GiB (`MAX_MEMORY_BYTES`). The floor is the
+smallest guest that boots: Gondolin's in-memory rootfs does not fit in less,
+and such a guest never reaches readiness. An agent definition declares the
+ceiling; a request may only narrow it, never below the floor. When the request
+omits it, the plan uses the agent ceiling; when the agent definition omits it,
+the ceiling is 1 GiB (`DEFAULT_MEMORY_BYTES`). A request above the
 ceiling fails preflight with `memory request exceeds agent ceiling`. Guest CPU
 count is fixed at one and is not a per-agent knob.
 
@@ -209,7 +212,7 @@ tools: [read, grep]
 preloadSkills: []
 contextScopes: [project]
 workspaceModes: [read-only]
-memoryBytes: 2147483648   # optional; default 512 MiB, maximum 4 GiB
+memoryBytes: 2147483648   # optional; default and minimum 1 GiB, maximum 4 GiB
 limits:
   cumulativeRuntimeMs: 600000
   attemptTimeoutMs: 300000
@@ -220,9 +223,9 @@ limits:
   resumes: 1
 ```
 
-Frontmatter is strict: unknown keys, a `memoryBytes` that is not a positive
-integer multiple of 64 MiB, and a `memoryBytes` above 4 GiB are rejected at
-discovery. Every declared value is a ceiling, never a floor.
+Frontmatter is strict: unknown keys, a `memoryBytes` that is not a multiple
+of 64 MiB, and a `memoryBytes` below 1 GiB or above 4 GiB are rejected at
+discovery with `invalid agent frontmatter`, naming the schema violation. Every declared value is a ceiling, never a floor.
 
 `allowedModels` holds `provider/id:thinking` routes and the entry `inherit`, and
 must contain the `model` pin. It defaults to exactly that pin, so a definition
@@ -635,7 +638,7 @@ interface SubagentRuntimeContract {
 }
 ```
 
-The current revision is 10. `handoffExport` states that `exportHandoff`,
+The current revision is 11. `handoffExport` states that `exportHandoff`,
 `HandoffRef`, the `export-handoff` action, durable handoff refs, and the
 `handoff-exported` receipt are implemented. `vmMemoryCeiling` states that agent
 definitions carry an optional `memoryBytes` ceiling, that a request may narrow
@@ -662,7 +665,10 @@ worktree record, and the snapshot record, so revision 9 state is not read.
 session in a worktree at the run's latest hand-off, delivers the message as the
 next user turn, and exports a hand-off squashed onto the original baseline that
 replaces the earlier one. It changes no persisted shape, so it does not advance
-the revision; a consumer requires it by name.
+the revision; a consumer requires it by name. Revision 11 raises the
+`memoryBytes` floor and default from 64 MiB and 512 MiB to 1 GiB; it adds no
+feature. A persisted revision 10 launch plan or definition may carry memory
+below the floor, so revision 10 state is not read.
 Consumers check the exact contract
 revision and required features rather than
 infer support from package versions. Revisions are not backwards-compatible:

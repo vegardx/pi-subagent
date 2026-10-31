@@ -61,7 +61,7 @@ inferred, and what a worktree handoff requires from a human.
 
 The project does not provide backwards compatibility. Public contracts and
 persisted formats may change incompatibly; consumers must use the exact supported
-contract revision. The current contract revision is 10.
+contract revision. The current contract revision is 11.
 
 ## Agent definitions
 
@@ -97,8 +97,8 @@ Agent prompt.
 ```
 
 `memoryBytes` is optional and bounds the attempt VM's memory. It defaults to
-512 MiB, must be a positive integer multiple of 64 MiB, and may not exceed
-4 GiB; a request above the agent ceiling fails preflight. Raise it for
+1 GiB, the smallest guest that boots, and must be a multiple of 64 MiB from
+1 GiB to 4 GiB; a request above the agent ceiling fails preflight. Raise it for
 memory-hungry guest toolchains such as a full-repository `tsc --noEmit`. Guest
 vCPU count is fixed at one. Host memory exposure is the VM capacity slot count
 (4) times the per-run grant.
@@ -266,7 +266,8 @@ feature set are not backwards compatible. Revision 10 adds `workspaceStartAt`,
 so a consumer can require by name that work starts at a handoff. Release 0.18
 adds `resumeAtHandoff` within revision 10: `resume(runId, { continueFromHandoff:
 true, message })` continues a finished worktree run's session at its latest
-handoff.
+handoff. Revision 11 raises the guest memory floor and default to 1 GiB, so a
+plan or definition below it is refused and revision 10 state is not read.
 
 ## License
 

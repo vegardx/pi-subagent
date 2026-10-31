@@ -6,6 +6,32 @@ The project keeps no backwards compatibility: an incompatible public contract or
 persisted format fails explicitly instead of migrating. Persisted state written
 at an earlier contract revision is quarantined, not read.
 
+## 0.19.0
+
+Contract revision 11. Revision 10 state is quarantined, not read: a revision 10
+launch plan or agent definition may carry guest memory below the new floor.
+
+### Changed
+
+- Guest VM memory (`memoryBytes`) spans 1 GiB to 4 GiB in 64 MiB steps and
+  defaults to 1 GiB, for the `subagent` tool, service requests, and agent
+  definitions. A 64 MiB Gondolin guest never reached readiness because its
+  in-memory rootfs does not fit. A request below the floor fails preflight with
+  the schema's reason; a definition below it is refused as invalid frontmatter,
+  naming the violation. `MIN_MEMORY_BYTES` is exported;
+  `MEMORY_GRANULARITY_BYTES` is only the step.
+- The attempt deadline (`attemptTimeoutMs`) no longer runs while the VM boots;
+  boot is bounded by the 60 s guest-readiness timeout. A boot that outlasts
+  `attemptTimeoutMs` fails as `sandbox-launch`, not `timeout`. `runtimeMs`
+  stays wall-clock, so boot is still charged to `cumulativeRuntimeMs`.
+
+### Fixed
+
+- A guest that does not become ready fails with `sandbox startup failed: guest
+  did not become ready within <timeout> s at <memory>`, built from the launch's
+  own bounds. Other start failures still read `sandbox startup failed`; the
+  underlying exception's text is never persisted.
+
 ## 0.18.0
 
 Contract revision 10, unchanged: no persisted record changes shape.
