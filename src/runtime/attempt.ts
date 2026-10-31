@@ -42,6 +42,8 @@ import {
 import { GUEST_WORKSPACE } from "../sandbox/tools.js";
 import {
 	finalizeWorktreeHandoff,
+	removeReadOnlySnapshot,
+	type SnapshotRecord,
 	type WorktreeRecord,
 } from "../workspace/worktree.js";
 import {
@@ -202,6 +204,8 @@ export async function runNativeAttempt(options: {
 	workspacePath: string;
 	workspaceAliases?: string[];
 	worktree?: WorktreeRecord;
+	/** The read-only checkout of `startAt`; removed once the VM is closed. */
+	snapshot?: SnapshotRecord;
 	modelRuntime: ModelRuntime;
 	capacity: VmCapacityManager;
 	lease: RunLease;
@@ -300,7 +304,19 @@ export async function runNativeAttempt(options: {
 	let sessionFile: string | undefined;
 	let sandboxCleanup: RunResult["sandboxCleanup"] = "not-needed";
 	let workspaceCleanup: RunResult["workspaceCleanup"] =
-		options.plan.workspace.mode === "read-only" ? "not-needed" : "retained";
+		options.plan.workspace.mode === "read-only" && !options.snapshot
+			? "not-needed"
+			: "retained";
+	const releaseSnapshot = async (
+		snapshot: SnapshotRecord,
+	): Promise<"proved" | "blocked"> => {
+		try {
+			await removeReadOnlySnapshot(snapshot, options.lease);
+			return "proved";
+		} catch {
+			return "blocked";
+		}
+	};
 	let collectedUsage: Usage = {
 		input: 0,
 		output: 0,
@@ -681,6 +697,12 @@ export async function runNativeAttempt(options: {
 		session = undefined;
 		await sandbox.close();
 		sandboxCleanup = "proved";
+		if (options.snapshot) {
+			workspaceCleanup = await releaseSnapshot(options.snapshot);
+			if (workspaceCleanup === "blocked") {
+				throw new Error("read-only snapshot removal was not proved");
+			}
+		}
 
 		if (options.plan.workspace.mode === "worktree") {
 			if (!options.worktree)
@@ -748,8 +770,15 @@ export async function runNativeAttempt(options: {
 				sandboxCleanup = "blocked";
 			}
 		}
+		if (
+			options.snapshot &&
+			workspaceCleanup === "retained" &&
+			sandboxCleanup !== "blocked"
+		) {
+			workspaceCleanup = await releaseSnapshot(options.snapshot);
+		}
 		const status: RunResult["status"] =
-			sandboxCleanup === "blocked"
+			sandboxCleanup === "blocked" || workspaceCleanup === "blocked"
 				? "cleanup-blocked"
 				: options.signal?.aborted
 					? options.signal.reason === "seat-shutdown"

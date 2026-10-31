@@ -31,8 +31,11 @@ import { createVmCapacityManager } from "../src/sandbox/capacity.js";
 import { createSubagentService, RetryBackoffError } from "../src/service.js";
 import { registerSessionModelProvider } from "../src/session-model-provider.js";
 import {
+	createReadOnlySnapshot,
 	finalizeWorktreeHandoff,
 	handoffRefName,
+	listRunSnapshots,
+	removeReadOnlySnapshot,
 } from "../src/workspace/worktree.js";
 
 const execFileAsync = promisify(execFile);
@@ -1384,6 +1387,114 @@ describe("foreground subagent service", () => {
 		expect((await client.listRuns()).runs[0]?.availableActions).toEqual([
 			"reconcile",
 		]);
+	});
+
+	it("mounts a read-only attempt at its hand-off and reconciles a stale snapshot", async () => {
+		let observed: { content: string; snapshot: boolean } | undefined;
+		const data = await serviceFor("read-only-start-at", async (input) => {
+			observed = {
+				content: await readFile(
+					path.join(input.workspacePath, "file.txt"),
+					"utf8",
+				),
+				snapshot: input.snapshot !== undefined,
+			};
+			if (input.snapshot) {
+				await removeReadOnlySnapshot(input.snapshot, input.lease);
+			}
+			const execution = {
+				result: {
+					...result(input.plan.runId, "completed"),
+					workspaceCleanup: "proved" as const,
+				},
+				output: "verified",
+				sessionFile: undefined,
+				handoff: undefined,
+				structuredOutput: undefined,
+				error: undefined,
+			};
+			await input.journal.append("attempt-completed", {});
+			await input.journal.writeSnapshot(execution);
+			return execution;
+		});
+		const repositoryGit = (...args: string[]) =>
+			execFileAsync("git", args, { cwd: data.repository }).then((output) =>
+				output.stdout.trim(),
+			);
+		await writeFile(path.join(data.repository, "file.txt"), "handoff\n");
+		await repositoryGit("commit", "--quiet", "-am", "handoff");
+		const startAt = await repositoryGit("rev-parse", "HEAD");
+		await repositoryGit("reset", "--quiet", "--hard", "HEAD~1");
+		await repositoryGit(
+			"update-ref",
+			"refs/pi-subagent/handoffs/run_prior/attempt_prior",
+			startAt,
+		);
+		const request: SubagentRequest = {
+			...data.request,
+			workspace: { mode: "read-only", cwd: data.repository, startAt },
+		};
+		const ownerId = "owner-start-at";
+		const client = data.service.forOwner({ id: ownerId });
+		const preflight = await client.preflight({
+			...request,
+			operationId: "operation-start-at",
+		});
+		expect(preflight.launchPlan.workspace.startAt).toBe(startAt);
+		const receipt = await client.launch(
+			preflight.preflightId,
+			preflight.identitySha256,
+		);
+		expect((await client.wait(receipt.runId)).result.status).toBe("completed");
+		expect(observed).toEqual({ content: "handoff\n", snapshot: true });
+		const workspaceRoot = path.join(data.root, "state", "workspace");
+		expect(await listRunSnapshots(workspaceRoot, receipt.runId)).toEqual([]);
+		expect(await repositoryGit("worktree", "list")).not.toContain("snapshots");
+
+		const stale = await client.preflight({
+			...request,
+			operationId: "operation-start-at-stale",
+		});
+		const stateRoot = path.join(data.root, "state");
+		const workspace = await preflightWorkspace(request.workspace);
+		await (
+			await RunRecordStore.open(path.join(stateRoot, "run-records"))
+		).create(ownerId, stale.launchPlan, workspace);
+		const lease = await acquireRunLease({
+			root: path.join(stateRoot, "leases"),
+			runId: stale.launchPlan.runId,
+		});
+		const journal = await RunJournal.open(
+			path.join(stateRoot, "runs"),
+			stale.launchPlan.runId,
+			lease,
+		);
+		await journal.append("attempt-starting", {});
+		const leftover = await createReadOnlySnapshot({
+			root: workspaceRoot,
+			runId: stale.launchPlan.runId,
+			attemptId: stale.launchPlan.attemptId,
+			workspace,
+			lease,
+		});
+		await lease.release();
+		const restarted = await reopenService(data);
+		const restartedClient = restarted.forOwner({ id: ownerId });
+		const blocked = await restartedClient.status(stale.launchPlan.runId);
+		expect(blocked.status).toBe("cleanup-blocked");
+		expect(blocked.result?.result.workspaceCleanup).toBe("unknown");
+		const reconciled = await restartedClient.reconcile(stale.launchPlan.runId);
+		expect(reconciled.sandboxProcess).toBe("not-started");
+		expect(reconciled.workspace).toBe("absent");
+		expect(reconciled.run.status).toBe("failed");
+		expect(
+			await listRunSnapshots(workspaceRoot, stale.launchPlan.runId),
+		).toEqual([]);
+		await expect(
+			readFile(path.join(leftover.snapshotPath, "file.txt")),
+		).rejects.toMatchObject({ code: "ENOENT" });
+		expect(await repositoryGit("worktree", "list")).not.toContain("snapshots");
+		await restarted.shutdown();
 	});
 
 	it("reconciles a stale pre-terminal run conservatively", async () => {

@@ -3,10 +3,12 @@ import { createHash, randomUUID } from "node:crypto";
 import {
 	mkdir,
 	open,
+	readdir,
 	readFile,
 	realpath,
 	rename,
 	stat,
+	unlink,
 } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -842,4 +844,238 @@ export async function readWorktreeRecord(
 		throw new WorktreeError("invalid worktree record");
 	}
 	return value as WorktreeRecord;
+}
+
+export const SnapshotRecordSchema = Type.Object(
+	{
+		schema: Type.Literal("pi-subagent-snapshot"),
+		contractRevision: Type.Literal(CONTRACT_REVISION),
+		runId: RunIdSchema,
+		attemptId: AttemptIdSchema,
+		repositoryRoot: Type.String({ minLength: 1, maxLength: 4096 }),
+		snapshotPath: Type.String({ minLength: 1, maxLength: 4096 }),
+		recordPath: Type.String({ minLength: 1, maxLength: 4096 }),
+		commit: Type.String({ pattern: "^[a-f0-9]{40,64}$" }),
+		createdAt: Type.String({ format: "date-time" }),
+	},
+	{ additionalProperties: false },
+);
+
+/**
+ * A detached, read-only checkout of the hand-off commit a read-only attempt
+ * starts at. It has no branch and never yields a hand-off; it lives exactly
+ * as long as the attempt that mounts it.
+ */
+export type SnapshotRecord = {
+	schema: "pi-subagent-snapshot";
+	contractRevision: typeof CONTRACT_REVISION;
+	runId: RunId;
+	attemptId: AttemptId;
+	repositoryRoot: string;
+	snapshotPath: string;
+	recordPath: string;
+	commit: string;
+	createdAt: string;
+};
+
+function snapshotRoots(root: string): { trees: string; records: string } {
+	return {
+		trees: path.join(root, "snapshots", "trees"),
+		records: path.join(root, "snapshots", "records"),
+	};
+}
+
+export async function createReadOnlySnapshot(options: {
+	root: string;
+	runId: RunId;
+	attemptId: AttemptId;
+	workspace: WorkspacePreflight;
+	lease: RunLease;
+}): Promise<SnapshotRecord> {
+	if (options.lease.record.runId !== options.runId) {
+		throw new WorktreeError("snapshot run lease identity mismatch");
+	}
+	await options.lease.assertCurrent();
+	const commit = options.workspace.startAt;
+	if (options.workspace.mode !== "read-only" || commit === undefined) {
+		throw new WorktreeError(
+			"read-only snapshot requires a read-only preflight with startAt",
+		);
+	}
+	await mkdir(options.root, { recursive: true, mode: 0o700 });
+	const roots = snapshotRoots(await realpath(options.root));
+	await mkdir(roots.trees, { recursive: true, mode: 0o700 });
+	await mkdir(roots.records, { recursive: true, mode: 0o700 });
+	const recordPath = path.join(roots.records, `${options.attemptId}.json`);
+	const record: SnapshotRecord = {
+		schema: "pi-subagent-snapshot",
+		contractRevision: CONTRACT_REVISION,
+		runId: options.runId,
+		attemptId: options.attemptId,
+		repositoryRoot: options.workspace.repositoryRoot,
+		snapshotPath: path.join(roots.trees, options.attemptId),
+		recordPath,
+		commit,
+		createdAt: new Date().toISOString(),
+	};
+	if (!Value.Check(SnapshotRecordSchema, record)) {
+		throw new WorktreeError("invalid snapshot record");
+	}
+	// The record is durable before the checkout exists, so a crash between the
+	// two leaves evidence that reconciliation can act on.
+	const handle = await open(recordPath, "wx", 0o600).catch((error) => {
+		if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+			throw new WorktreeError("snapshot attempt is already reserved");
+		}
+		throw error;
+	});
+	try {
+		await handle.writeFile(`${JSON.stringify(record, null, 2)}\n`, "utf8");
+		await handle.sync();
+	} finally {
+		await handle.close();
+	}
+	await syncDirectory(roots.records);
+	try {
+		await options.lease.assertCurrent();
+		await git(record.repositoryRoot, [
+			"worktree",
+			"add",
+			"--detach",
+			record.snapshotPath,
+			record.commit,
+		]);
+	} catch (error) {
+		throw new WorktreeError("snapshot creation requires reconciliation", {
+			cause: error,
+		});
+	}
+	return record;
+}
+
+async function registeredWorktree(
+	repositoryRoot: string,
+	worktreePath: string,
+): Promise<boolean> {
+	const listing = (
+		await git(repositoryRoot, ["worktree", "list", "--porcelain", "-z"])
+	).toString("utf8");
+	return listing.split("\0").includes(`worktree ${worktreePath}`);
+}
+
+/**
+ * Removes a snapshot only once it is proved to be the recorded detached,
+ * unmodified checkout. Idempotent: a snapshot already gone only loses its
+ * stale Git registration and its record.
+ */
+export async function removeReadOnlySnapshot(
+	record: SnapshotRecord,
+	lease: RunLease,
+): Promise<void> {
+	if (lease.record.runId !== record.runId) {
+		throw new WorktreeError("snapshot run lease identity mismatch");
+	}
+	await lease.assertCurrent();
+	let present = true;
+	try {
+		if (!(await stat(record.snapshotPath)).isDirectory()) {
+			throw new WorktreeError("snapshot path is not a directory");
+		}
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+		present = false;
+	}
+	if (present) {
+		if ((await realpath(record.snapshotPath)) !== record.snapshotPath) {
+			throw new WorktreeError("snapshot path identity mismatch");
+		}
+		const root = (
+			await git(record.snapshotPath, ["rev-parse", "--show-toplevel"])
+		)
+			.toString("utf8")
+			.trim();
+		const branch = (
+			await git(record.snapshotPath, ["branch", "--show-current"])
+		)
+			.toString("utf8")
+			.trim();
+		const head = (
+			await git(record.snapshotPath, ["rev-parse", "--verify", "HEAD"])
+		)
+			.toString("utf8")
+			.trim();
+		if (
+			root !== record.snapshotPath ||
+			branch !== "" ||
+			head !== record.commit
+		) {
+			throw new WorktreeError("snapshot identity mismatch");
+		}
+		const status = await git(record.snapshotPath, [
+			"status",
+			"--porcelain=v1",
+			"-z",
+		]);
+		if (status.byteLength > 0) {
+			throw new WorktreeError("modified snapshot is retained");
+		}
+		await lease.assertCurrent();
+		await git(record.repositoryRoot, [
+			"worktree",
+			"remove",
+			record.snapshotPath,
+		]);
+	} else if (
+		await registeredWorktree(record.repositoryRoot, record.snapshotPath)
+	) {
+		await lease.assertCurrent();
+		await git(record.repositoryRoot, [
+			"worktree",
+			"remove",
+			"--force",
+			record.snapshotPath,
+		]);
+	}
+	await unlink(record.recordPath).catch((error: NodeJS.ErrnoException) => {
+		if (error.code !== "ENOENT") throw error;
+	});
+	await syncDirectory(path.dirname(record.recordPath));
+}
+
+export async function readSnapshotRecord(
+	filePath: string,
+): Promise<SnapshotRecord> {
+	const value = JSON.parse(await readFile(filePath, "utf8")) as unknown;
+	assertContractRevision(value, "snapshot record");
+	if (!Value.Check(SnapshotRecordSchema, value)) {
+		throw new WorktreeError("invalid snapshot record");
+	}
+	const record = value as SnapshotRecord;
+	if (record.recordPath !== filePath) {
+		throw new WorktreeError("snapshot record path identity mismatch");
+	}
+	return record;
+}
+
+/** Snapshot records a run still holds, for reconciliation after a crash. */
+export async function listRunSnapshots(
+	root: string,
+	runId: RunId,
+): Promise<SnapshotRecord[]> {
+	let entries: string[];
+	let records: string;
+	try {
+		records = snapshotRoots(await realpath(root)).records;
+		entries = await readdir(records);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+		throw error;
+	}
+	const owned: SnapshotRecord[] = [];
+	for (const entry of entries.sort()) {
+		if (!entry.endsWith(".json")) continue;
+		const record = await readSnapshotRecord(path.join(records, entry));
+		if (record.runId === runId) owned.push(record);
+	}
+	return owned;
 }

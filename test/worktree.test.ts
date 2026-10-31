@@ -19,17 +19,20 @@ import { preflightWorkspace } from "../src/preflight/workspace.js";
 import {
 	captureWorktreeHandoff,
 	createAttemptWorktree,
+	createReadOnlySnapshot,
 	exportWorktreeHandoff,
 	finalizeWorktreeHandoff,
 	handoffRefName,
 	handoffRefTarget,
 	inspectHandoffRef,
+	listRunSnapshots,
 	MAX_HANDOFF_EXPORT_BYTES,
 	observeWorktree,
 	readWorktreeRecord,
 	releaseWorktreeBranch,
 	removeCleanWorktree,
 	removeHandoffRef,
+	removeReadOnlySnapshot,
 	WorktreeError,
 	type WorktreeRecord,
 } from "../src/workspace/worktree.js";
@@ -697,6 +700,129 @@ describe("worktree started at a hand-off", () => {
 		expect(await observeWorktree(data.record)).toMatchObject({
 			state: "dirty",
 		});
+		await data.lease.release();
+	});
+});
+
+describe("read-only snapshot at a hand-off", () => {
+	async function handoffRepository(name: string) {
+		const repositoryRoot = await repository(name);
+		const managerRoot = fixture(`manager-${name}`);
+		const runId = "run_snapshot";
+		const lease = await acquireRunLease({
+			root: path.join(managerRoot, "leases"),
+			runId,
+		});
+		const writer = await createAttemptWorktree({
+			root: managerRoot,
+			runId,
+			attemptId: "attempt_writer",
+			workspace: await preflightWorkspace({
+				mode: "worktree",
+				cwd: repositoryRoot,
+			}),
+			lease,
+		});
+		await writeFile(path.join(writer.worktreePath, "file.txt"), "handoff\n");
+		const handoff = await finalizeWorktreeHandoff(writer, "test: hand", lease);
+		if (!handoff?.handoffCommit) throw new Error("fixture has no hand-off");
+		const workspace = await preflightWorkspace({
+			mode: "read-only",
+			cwd: repositoryRoot,
+			startAt: handoff.handoffCommit,
+		});
+		return {
+			repositoryRoot,
+			managerRoot,
+			runId,
+			lease,
+			workspace,
+			commit: handoff.handoffCommit,
+		};
+	}
+
+	it("checks out the hand-off detached and leaves nothing behind", async () => {
+		const data = await handoffRepository("snapshot");
+		const snapshot = await createReadOnlySnapshot({
+			root: data.managerRoot,
+			runId: data.runId,
+			attemptId: "attempt_reader",
+			workspace: data.workspace,
+			lease: data.lease,
+		});
+		expect(
+			await readFile(path.join(snapshot.snapshotPath, "file.txt"), "utf8"),
+		).toBe("handoff\n");
+		expect(await git(snapshot.snapshotPath, "rev-parse", "HEAD")).toBe(
+			data.commit,
+		);
+		expect(await git(snapshot.snapshotPath, "branch", "--show-current")).toBe(
+			"",
+		);
+		expect(
+			await readFile(path.join(data.repositoryRoot, "file.txt"), "utf8"),
+		).toBe("baseline\n");
+		expect(await listRunSnapshots(data.managerRoot, data.runId)).toEqual([
+			snapshot,
+		]);
+		await removeReadOnlySnapshot(snapshot, data.lease);
+		expect(await missing(snapshot.snapshotPath)).toBe(true);
+		expect(await missing(snapshot.recordPath)).toBe(true);
+		expect(await git(data.repositoryRoot, "worktree", "list")).not.toContain(
+			snapshot.snapshotPath,
+		);
+		expect(await listRunSnapshots(data.managerRoot, data.runId)).toEqual([]);
+		await removeReadOnlySnapshot(snapshot, data.lease);
+		await data.lease.release();
+	});
+
+	it("drops the registration of a snapshot whose directory is gone", async () => {
+		const data = await handoffRepository("snapshot-gone");
+		const snapshot = await createReadOnlySnapshot({
+			root: data.managerRoot,
+			runId: data.runId,
+			attemptId: "attempt_gone",
+			workspace: data.workspace,
+			lease: data.lease,
+		});
+		await rm(snapshot.snapshotPath, { recursive: true, force: true });
+		await removeReadOnlySnapshot(snapshot, data.lease);
+		expect(await git(data.repositoryRoot, "worktree", "list")).not.toContain(
+			snapshot.snapshotPath,
+		);
+		expect(await missing(snapshot.recordPath)).toBe(true);
+		await data.lease.release();
+	});
+
+	it("retains a modified snapshot and refuses a non-snapshot preflight", async () => {
+		const data = await handoffRepository("snapshot-modified");
+		await expect(
+			createReadOnlySnapshot({
+				root: data.managerRoot,
+				runId: data.runId,
+				attemptId: "attempt_plain",
+				workspace: await preflightWorkspace({
+					mode: "read-only",
+					cwd: data.repositoryRoot,
+				}),
+				lease: data.lease,
+			}),
+		).rejects.toThrow(
+			"read-only snapshot requires a read-only preflight with startAt",
+		);
+		const snapshot = await createReadOnlySnapshot({
+			root: data.managerRoot,
+			runId: data.runId,
+			attemptId: "attempt_modified",
+			workspace: data.workspace,
+			lease: data.lease,
+		});
+		await writeFile(path.join(snapshot.snapshotPath, "file.txt"), "edited\n");
+		await expect(removeReadOnlySnapshot(snapshot, data.lease)).rejects.toThrow(
+			"modified snapshot is retained",
+		);
+		expect(await missing(snapshot.snapshotPath)).toBe(false);
+		expect(await missing(snapshot.recordPath)).toBe(false);
 		await data.lease.release();
 	});
 });

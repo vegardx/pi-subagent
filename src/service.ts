@@ -95,13 +95,17 @@ import type { VmCapacityManager } from "./sandbox/capacity.js";
 import { resolveSessionModel } from "./session-model-provider.js";
 import {
 	createAttemptWorktree,
+	createReadOnlySnapshot,
 	exportWorktreeHandoff,
 	type HandoffExport,
 	handoffRefName,
+	listRunSnapshots,
 	observeWorktree,
 	readWorktreeRecord,
 	releaseWorktreeBranch,
 	removeCleanWorktree,
+	removeReadOnlySnapshot,
+	type SnapshotRecord,
 	type WorktreeRecord,
 } from "./workspace/worktree.js";
 
@@ -379,6 +383,16 @@ export const IMPLEMENTED_TOOLS = new Set([
 	"find",
 	"ls",
 ]);
+
+/**
+ * A read-only attempt without `startAt` mounts the live checkout and owns no
+ * host workspace; every other attempt owns a checkout it must prove removed.
+ */
+function sharesLiveCheckout(plan: AgentLaunchPlan): boolean {
+	return (
+		plan.workspace.mode === "read-only" && plan.workspace.startAt === undefined
+	);
+}
 
 function deterministicIds(ownerId: string, request: SubagentRequest) {
 	const identity = canonicalSha256({ ownerId, request });
@@ -1026,10 +1040,9 @@ export async function createSubagentService(options: {
 						guidance: "Reconcile cleanup to finish abandonment.",
 					},
 					sandboxCleanup: priorResult?.sandboxCleanup ?? "unknown",
-					workspaceCleanup:
-						recoveredPlan.workspace.mode === "read-only"
-							? "not-needed"
-							: "unknown",
+					workspaceCleanup: sharesLiveCheckout(recoveredPlan)
+						? "not-needed"
+						: "unknown",
 					truncated: priorResult?.truncated ?? false,
 				};
 				await journal.append("startup-reconciled", {
@@ -1057,10 +1070,9 @@ export async function createSubagentService(options: {
 						guidance: "Reconcile external state before continuing.",
 					},
 					sandboxCleanup: "unknown",
-					workspaceCleanup:
-						recoveredPlan.workspace.mode === "read-only"
-							? "not-needed"
-							: "unknown",
+					workspaceCleanup: sharesLiveCheckout(recoveredPlan)
+						? "not-needed"
+						: "unknown",
 					truncated: false,
 				};
 				await journal.append("startup-reconciled", {
@@ -1153,6 +1165,8 @@ export async function createSubagentService(options: {
 			root: path.join(options.root, "leases"),
 			runId: input.plan.runId,
 		});
+		let snapshot: SnapshotRecord | undefined;
+		let launched = false;
 		try {
 			const journal = await RunJournal.open(
 				path.join(options.root, "runs"),
@@ -1191,11 +1205,24 @@ export async function createSubagentService(options: {
 					lease,
 				});
 			}
-			if (worktree) {
+			if (
+				input.plan.workspace.mode === "read-only" &&
+				input.workspace.startAt !== undefined
+			) {
+				snapshot = await createReadOnlySnapshot({
+					root: path.join(options.root, "workspace"),
+					runId: input.plan.runId,
+					attemptId: input.plan.attemptId,
+					workspace: input.workspace,
+					lease,
+				});
+			}
+			const checkoutPath = worktree?.worktreePath ?? snapshot?.snapshotPath;
+			if (checkoutPath) {
 				workspacePath =
 					input.workspace.relativeCwd === "."
-						? worktree.worktreePath
-						: path.join(worktree.worktreePath, input.workspace.relativeCwd);
+						? checkoutPath
+						: path.join(checkoutPath, input.workspace.relativeCwd);
 			}
 			await attemptRecords.create({
 				ownerId: input.ownerId,
@@ -1218,6 +1245,7 @@ export async function createSubagentService(options: {
 				workspacePath,
 				workspaceAliases: [input.workspace.cwd],
 				...(worktree ? { worktree } : {}),
+				...(snapshot ? { snapshot } : {}),
 				modelRuntime: executionDependencies.modelRuntime,
 				capacity: executionDependencies.capacity,
 				lease,
@@ -1241,6 +1269,7 @@ export async function createSubagentService(options: {
 				},
 				signal: abort.signal,
 			});
+			launched = true;
 			active = {
 				ownerId: input.ownerId,
 				plan: input.plan,
@@ -1298,8 +1327,30 @@ export async function createSubagentService(options: {
 				status: "active",
 			};
 		} catch (error) {
+			// Before launch nothing mounts the snapshot; once launched, the
+			// attempt owns its removal.
+			if (snapshot && !launched) {
+				await removeReadOnlySnapshot(snapshot, lease).catch(() => {});
+			}
 			await lease.release();
 			throw error;
+		}
+	};
+
+	const removeRunSnapshots = async (
+		runId: RunId,
+		lease: RunLease,
+	): Promise<"absent" | "unknown"> => {
+		try {
+			for (const record of await listRunSnapshots(
+				path.join(options.root, "workspace"),
+				runId,
+			)) {
+				await removeReadOnlySnapshot(record, lease);
+			}
+			return "absent";
+		} catch {
+			return "unknown";
 		}
 	};
 
@@ -2297,10 +2348,7 @@ export async function createSubagentService(options: {
 								...(run.result ? { result: run.result } : {}),
 							},
 							sandboxProcess: "absent",
-							workspace:
-								run.plan.workspace.mode === "read-only"
-									? "not-needed"
-									: "absent",
+							workspace: sharesLiveCheckout(run.plan) ? "not-needed" : "absent",
 						};
 					}
 					const held = await holdRunLease(run);
@@ -2352,8 +2400,14 @@ export async function createSubagentService(options: {
 							}
 						}
 						let workspace: ReconcileResult["workspace"];
-						if (run.plan.workspace.mode === "read-only") {
+						if (sharesLiveCheckout(run.plan)) {
 							workspace = "not-needed";
+						} else if (run.plan.workspace.mode === "read-only") {
+							// A snapshot is removable only once no VM can mount it.
+							workspace =
+								sandboxProcess === "absent" || sandboxProcess === "not-started"
+									? await removeRunSnapshots(runId, lease)
+									: "unknown";
 						} else {
 							const attempts = await attemptRecords.list(runId);
 							const worktreeAttemptIds = [
@@ -2614,10 +2668,9 @@ export async function createSubagentService(options: {
 									guidance: "Reconcile cleanup to finish abandonment.",
 								},
 								sandboxCleanup: previous.sandboxCleanup,
-								workspaceCleanup:
-									run.plan.workspace.mode === "read-only"
-										? "not-needed"
-										: "unknown",
+								workspaceCleanup: sharesLiveCheckout(run.plan)
+									? "not-needed"
+									: "unknown",
 								truncated: previous.truncated,
 							};
 							const pendingExecution: AttemptExecutionResult = {
@@ -2674,10 +2727,9 @@ export async function createSubagentService(options: {
 							const transitioned = transitionRunStatus("interrupted", {
 								type: "abandon",
 								sandboxCleanup: previous.sandboxCleanup,
-								workspaceCleanup:
-									run.plan.workspace.mode === "read-only"
-										? "not-needed"
-										: "proved",
+								workspaceCleanup: sharesLiveCheckout(run.plan)
+									? "not-needed"
+									: "proved",
 							});
 							if (transitioned !== "abandoned") {
 								throw new Error("cleanup proof did not permit abandonment");
@@ -2696,10 +2748,9 @@ export async function createSubagentService(options: {
 									guidance: "Inspect retained journal evidence if needed.",
 								},
 								sandboxCleanup: previous.sandboxCleanup,
-								workspaceCleanup:
-									run.plan.workspace.mode === "read-only"
-										? "not-needed"
-										: "proved",
+								workspaceCleanup: sharesLiveCheckout(run.plan)
+									? "not-needed"
+									: "proved",
 								truncated: previous.truncated,
 							};
 							if (!isRunResult(result)) {
@@ -2771,10 +2822,9 @@ export async function createSubagentService(options: {
 									? previous
 									: {
 											...previous,
-											workspaceCleanup:
-												run.plan.workspace.mode === "read-only"
-													? "not-needed"
-													: "proved",
+											workspaceCleanup: sharesLiveCheckout(run.plan)
+												? "not-needed"
+												: "proved",
 										};
 								if (
 									!abandonmentPending &&
