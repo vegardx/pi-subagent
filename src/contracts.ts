@@ -268,6 +268,7 @@ export const SubagentRuntimeContractSchema = Type.Object(
 				delegationCeiling: Type.Boolean(),
 				sessionModelInherit: Type.Boolean(),
 				workspaceStartAt: Type.Boolean(),
+				resumeAtHandoff: Type.Boolean(),
 			},
 			{ additionalProperties: false },
 		),
@@ -310,6 +311,7 @@ export const SUBAGENT_RUNTIME_CONTRACT: SubagentRuntimeContract = Object.freeze(
 			delegationCeiling: true,
 			sessionModelInherit: true,
 			workspaceStartAt: true,
+			resumeAtHandoff: true,
 		}),
 	},
 );

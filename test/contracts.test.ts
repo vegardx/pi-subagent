@@ -44,6 +44,7 @@ describe("runtime contracts", () => {
 			delegationCeiling: true,
 			sessionModelInherit: true,
 			workspaceStartAt: true,
+			resumeAtHandoff: true,
 		});
 	});
 
