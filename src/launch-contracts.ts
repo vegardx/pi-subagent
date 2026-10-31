@@ -137,12 +137,17 @@ export type DelegationCeiling = Static<typeof DelegationCeilingSchema>;
 
 export const DEFAULT_MAX_TASK_COST = 100;
 
-export const MEMORY_GRANULARITY_BYTES = 64 * 1024 * 1024;
-export const DEFAULT_MEMORY_BYTES = 512 * 1024 * 1024;
+/**
+ * The smallest guest that boots: Gondolin's in-memory rootfs does not fit in
+ * 64 MiB, so such a guest never reaches readiness.
+ */
+export const MIN_MEMORY_BYTES = 1024 * 1024 * 1024;
+export const DEFAULT_MEMORY_BYTES = MIN_MEMORY_BYTES;
 export const MAX_MEMORY_BYTES = 4 * 1024 * 1024 * 1024;
+export const MEMORY_GRANULARITY_BYTES = 64 * 1024 * 1024;
 
 export const MemoryBytesSchema = Type.Integer({
-	minimum: MEMORY_GRANULARITY_BYTES,
+	minimum: MIN_MEMORY_BYTES,
 	maximum: MAX_MEMORY_BYTES,
 	multipleOf: MEMORY_GRANULARITY_BYTES,
 });

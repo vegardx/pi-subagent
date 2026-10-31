@@ -1,7 +1,7 @@
 import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
 
-export const CONTRACT_REVISION = 10 as const;
+export const CONTRACT_REVISION = 11 as const;
 
 export class IncompatibleContractRevisionError extends Error {
 	constructor(

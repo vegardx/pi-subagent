@@ -9,6 +9,12 @@ import { describe, expect, it } from "vitest";
 import piSubagentExtension, {
 	discoverExtensionAgents,
 } from "../src/extension.js";
+import {
+	MAX_MEMORY_BYTES,
+	MEMORY_GRANULARITY_BYTES,
+	MemoryBytesSchema,
+	MIN_MEMORY_BYTES,
+} from "../src/launch-contracts.js";
 
 function agentDefinition(name: string, prompt: string): string {
 	return `---
@@ -118,5 +124,30 @@ describe("Pi extension adapter", () => {
 		]);
 		await handlers.get("session_shutdown")?.({}, { ui: { setWidget() {} } });
 		expect(activeProviderRegistrations).toBe(0);
+	});
+
+	it("advertises the guest memory bounds the launch contract enforces", () => {
+		let tool: ToolDefinition | undefined;
+		const api = {
+			events: { on: () => () => {}, emit() {} },
+			registerTool(definition: ToolDefinition) {
+				tool = definition;
+			},
+			on() {},
+			registerCommand() {},
+			registerShortcut() {},
+		} as unknown as ExtensionAPI;
+		piSubagentExtension(api);
+		const parameters = tool?.parameters as unknown as {
+			properties: Record<string, Record<string, unknown>>;
+		};
+		const memory = parameters.properties.memoryBytes;
+		const contract = MemoryBytesSchema as unknown as Record<string, unknown>;
+		for (const key of ["minimum", "maximum", "multipleOf"]) {
+			expect(memory?.[key]).toBe(contract[key]);
+		}
+		expect(memory?.minimum).toBe(MIN_MEMORY_BYTES);
+		expect(memory?.maximum).toBe(MAX_MEMORY_BYTES);
+		expect(memory?.multipleOf).toBe(MEMORY_GRANULARITY_BYTES);
 	});
 });

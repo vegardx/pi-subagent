@@ -54,7 +54,7 @@ const agent: AgentDefinition = {
 	contextScopes: [],
 	workspaceModes: ["worktree"],
 	limitCeiling: { ...limits },
-	memoryCeilingBytes: 512 * 1024 * 1024,
+	memoryCeilingBytes: 1024 * 1024 * 1024,
 };
 const resources = [
 	{
@@ -139,18 +139,18 @@ describe("semantic preflight", () => {
 		expect(narrowed.identitySha256).not.toBe(defaulted.identitySha256);
 
 		const inherited = await compile();
-		expect(inherited.sandbox.memoryBytes).toBe(512 * 1024 * 1024);
+		expect(inherited.sandbox.memoryBytes).toBe(1024 * 1024 * 1024);
 	});
 
 	it("refuses a memory request above the agent ceiling", async () => {
 		await expect(
 			compile({
-				request: { ...request, memoryBytes: 1024 * 1024 * 1024 },
+				request: { ...request, memoryBytes: 2 * 1024 * 1024 * 1024 },
 			}),
 		).rejects.toThrow("memory request exceeds agent ceiling");
 		await expect(
 			compile({
-				request: { ...request, memoryBytes: 1024 * 1024 * 1024 },
+				request: { ...request, memoryBytes: 2 * 1024 * 1024 * 1024 },
 			}),
 		).rejects.toBeInstanceOf(PreflightError);
 		await expect(
@@ -161,6 +161,21 @@ describe("semantic preflight", () => {
 		await expect(
 			compile({ agent: { ...agent, memoryCeilingBytes: 100 } }),
 		).rejects.toThrow("agent memory ceiling is invalid");
+	});
+
+	it("refuses guest memory below the 1 GiB floor", async () => {
+		const belowFloor = 1024 * 1024 * 1024 - 64 * 1024 * 1024;
+		await expect(
+			compile({ request: { ...request, memoryBytes: belowFloor } }),
+		).rejects.toThrow(
+			`request violates schema: /memoryBytes: must be >= ${1024 * 1024 * 1024}`,
+		);
+		await expect(
+			compile({ agent: { ...agent, memoryCeilingBytes: belowFloor } }),
+		).rejects.toThrow("agent memory ceiling is invalid");
+		await expect(
+			compile({ agent: { ...agent, memoryCeilingBytes: belowFloor } }),
+		).rejects.toBeInstanceOf(PreflightError);
 	});
 
 	it("unions agent-required and requested context scopes", async () => {

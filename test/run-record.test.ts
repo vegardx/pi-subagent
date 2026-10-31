@@ -18,7 +18,7 @@ function root(name: string): string {
 function plan(): AgentLaunchPlan {
 	const draft = {
 		schema: "pi-subagent-launch" as const,
-		contractRevision: 10 as const,
+		contractRevision: 11 as const,
 		operationId: "operation",
 		ownerId: "owner",
 		runId: "run_record",
@@ -61,7 +61,7 @@ function plan(): AgentLaunchPlan {
 			mountPolicySha256: hash,
 			networkPolicySha256: hash,
 			capacityPolicySha256: hash,
-			memoryBytes: 512 * 1024 * 1024,
+			memoryBytes: 1024 * 1024 * 1024,
 			guestDiskBytes: 1024,
 			workspaceWriteBytes: 0,
 		},

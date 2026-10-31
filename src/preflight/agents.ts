@@ -124,7 +124,12 @@ async function loadAgent(
 	const content = await readFile(filePath, "utf8");
 	const { metadata, prompt } = splitFrontmatter(content);
 	if (!Value.Check(AgentFrontmatterSchema, metadata)) {
-		throw new AgentDiscoveryError(`invalid agent frontmatter: ${filePath}`);
+		const details = [...Value.Errors(AgentFrontmatterSchema, metadata)]
+			.map((error) => `${error.instancePath || "/"}: ${error.message}`)
+			.join("; ");
+		throw new AgentDiscoveryError(
+			`invalid agent frontmatter: ${filePath}${details ? ` (${details})` : ""}`,
+		);
 	}
 	const frontmatter = metadata as {
 		name: string;
