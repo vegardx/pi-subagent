@@ -201,9 +201,17 @@ Unprovable state becomes explicit `unknown` or `cleanup-blocked`, never success.
 
 ## Workspaces and handoff
 
-A read-only checkout has no workspace mutation to retain. A writing attempt's
-worktree and reservation record remain host-owned across seat restart. Handoff
-stages every change, creates an immutable commit, records it under
+A read-only checkout has no workspace mutation to retain. A read-only attempt
+that starts at a hand-off (`workspace.startAt`) mounts a detached host checkout
+of that commit; its snapshot record is written before the checkout is created,
+the attempt removes both once its VM is closed, and a removal it cannot prove
+leaves the run cleanup-blocked until reconciliation, which removes recorded
+snapshots once no VM can mount them. A writing attempt's
+worktree and reservation record remain host-owned across seat restart. A worktree
+that starts at a hand-off is checked out at that commit and records it as
+`startCommit`; identity checks expect HEAD at the start commit until capture.
+Handoff stages every change, squashes the worktree's final tree into one
+immutable commit whose sole parent is the baseline HEAD, records it under
 `refs/pi-subagent/handoffs/<run-id>/<attempt-id>`, and persists both the commit
 and the ref name in the worktree record before cleanup. Cleanup refuses dirty
 worktrees or any path, branch, or HEAD mismatch.

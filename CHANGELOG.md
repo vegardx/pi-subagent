@@ -6,6 +6,33 @@ The project keeps no backwards compatibility: an incompatible public contract or
 persisted format fails explicitly instead of migrating. Persisted state written
 at an earlier contract revision is quarantined, not read.
 
+## 0.17.0
+
+Contract revision 10. Revision 9 state is quarantined, not read.
+
+### Added
+
+- `workspace.startAt` names the hand-off commit a workspace starts at. Preflight
+  refuses, by name, a commit the repository does not hold, one no
+  `refs/pi-subagent/handoffs/<run-id>/<attempt-id>` ref points at, and one whose
+  sole parent is not HEAD. The launch plan and run record carry it, so retry and
+  resume start at the same commit. Feature flag: `workspaceStartAt`.
+- A worktree with `startAt` is checked out at that commit. A read-only attempt
+  with `startAt` mounts a detached host checkout of it, removed once the VM is
+  closed; reconciliation removes one a crash left behind.
+- Every guest tool call is bounded at 300 s (`TOOL_CALL_DEADLINE_MS`). File
+  tools that reach it return an error result naming the bound; `find`, `ls`, and
+  `grep` rooted at `/` are refused by name.
+
+### Changed
+
+- Hand-off capture squashes: one commit whose tree is the worktree's final tree
+  and whose parent is the baseline HEAD, whatever commit the worktree started
+  at. Without `startAt` the commit is the same as before.
+- `bash` runs under the smaller of its `timeout` and the 300 s bound; a command
+  without a `timeout` is no longer bounded only by the attempt deadline. Expiry
+  still closes the VM.
+
 ## 0.16.0
 
 ### Changed

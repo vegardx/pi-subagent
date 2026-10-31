@@ -78,8 +78,11 @@ a launch in workspace modes and tool names, and the compiled launch plan records
 the ceiling it applied. Contract revision 9 adds session-model inheritance
 (`sessionModelInherit`): a request may ask to run on the host session's model,
 a host registers one session-model provider, and the compiled launch plan records
-the resolved exact model and where it came from. A consumer that pins an earlier
-revision must move to 9; there is no compatibility path.
+the resolved exact model and where it came from. Contract revision 10 adds
+`workspaceStartAt`: a request's workspace may start at a hand-off commit of the
+current HEAD, the host checks it out in either mode, and the export squashes the
+final tree onto HEAD. A consumer that pins an earlier revision must move to 10;
+there is no compatibility path.
 
 Consumer integration starts only after pi-subagent completes full acceptance,
 dogfood cutover, and stable release qualification:

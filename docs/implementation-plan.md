@@ -682,6 +682,7 @@ The extension entry is separate:
 | 0.11 | Contract revision 7: per-agent VM memory ceiling (`vmMemoryCeiling`), guest cache redirection, and the typed workspace write-budget refusal (`workspaceBudgetRefusal`) |
 | 0.14 | Contract revision 8: the host delegation ceiling (`delegationCeiling`) in workspace modes and tools, recorded in the launch plan |
 | 0.15 | Contract revision 9: session-model inheritance (`sessionModelInherit`), resolved through a host-registered provider and recorded in the launch plan |
+| 0.17 | Contract revision 10: workspaces that start at a hand-off commit (`workspaceStartAt`), squashed hand-off export, and a per-call deadline on guest tools |
 | 1.0 | Production-core stable contract |
 
 Versions are capability milestones, not deadlines.

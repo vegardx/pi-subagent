@@ -114,6 +114,11 @@ containment must prevent traversal and symlink escape beyond the selected root.
 
 The host owns Git branch/worktree operations and authoritative handoff capture.
 The VM does not receive unrestricted access to the repository's common Git dir.
+A workspace that must start from earlier work names that hand-off commit as
+`startAt`; the host checks the attempt's worktree out at it (or, read-only,
+mounts a detached host checkout of it) and squashes the final tree into one
+commit on the baseline HEAD. The guest never applies a hand-off and is not
+expected to have `git`.
 
 ## Network policy
 
