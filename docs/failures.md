@@ -57,18 +57,29 @@ run graph until ordinary retention selects it.
 `cumulativeRuntimeMs` is a run-wide budget alongside provider-reported dollar
 cost, optional `totalTokens`, retry count, and resume count. A configured total
 model-token guard consumes `Usage.totalTokens`, including cache traffic.
-`attemptTimeoutMs` is the per-attempt wall deadline and may not exceed the
-remaining cumulative runtime. Every terminal attempt records measured
-wall-clock milliseconds, including startup and cleanup. Retry or resume subtracts
-that duration, clamps the next attempt deadline to the remaining runtime, and
-fails before execution when fewer than 1,000 milliseconds remain. Resume records
+`attemptTimeoutMs` is the per-attempt deadline and may not exceed the
+remaining cumulative runtime. It does not run while the attempt's VM boots:
+boot has its own bound, Gondolin's 60 s guest-readiness timeout, so a guest
+that never becomes ready fails as `sandbox-launch` ("sandbox startup failed:
+guest did not become ready within 60 s at 1024M", built from the launch's own
+timeout and memory), never as `timeout`. Every other start failure reads
+"sandbox startup failed"; the underlying exception's text is not persisted.
+Every terminal attempt records measured wall-clock milliseconds, including
+boot, startup, and cleanup, so one attempt's `runtimeMs` may exceed its
+`attemptTimeoutMs` by at most the boot bound plus cleanup. Retry or resume
+subtracts that wall-clock duration, so boot is charged to `cumulativeRuntimeMs`;
+it clamps the next attempt deadline to the remaining runtime and fails before
+execution when fewer than 1,000 milliseconds remain. A run's wall-clock total
+can therefore overrun `cumulativeRuntimeMs` by at most one boot bound plus
+cleanup, after which no further attempt is admitted. Resume records
 the retained session's message count and accumulated usage before prompting, then
 accounts and returns only assistant output, usage, and cost added by the new
 attempt; prior session usage is not charged twice.
 
 Each attempt queues convergence steering once at 70% and urgent finalization
 steering once at 90% when either cumulative uncached token usage, cumulative run
-runtime, or that attempt's wall-clock runtime reaches the threshold. The stage is
+runtime, or that attempt's runtime against `attemptTimeoutMs` (excluding boot)
+reaches the threshold. The stage is
 persisted before steering is queued. A fresh retry or resume attempt receives its
 own reminders against the remaining budgets. Steering and its advisory receipt
 are best-effort and never turn otherwise successful task work into a failure;

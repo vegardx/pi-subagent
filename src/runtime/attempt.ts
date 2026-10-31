@@ -54,6 +54,7 @@ import {
 	totalTokens,
 	usageBudgetPressures,
 } from "./budget.js";
+import { createAttemptDeadline } from "./deadline.js";
 import { classifyAttemptFailure } from "./failure.js";
 import {
 	executeBoundedHostTool,
@@ -357,13 +358,11 @@ export async function runNativeAttempt(options: {
 	let structuredOutput: unknown | undefined;
 	let truncated = false;
 	let stopBudgetSteering: () => Promise<void> = async () => {};
-	const timeoutSignal = AbortSignal.timeout(
-		options.plan.limits.attemptTimeoutMs,
-	);
+	const deadline = createAttemptDeadline(options.plan.limits.attemptTimeoutMs);
 	const fatalToolController = new AbortController();
 	let fatalToolAbort = false;
 	const runSignal = AbortSignal.any([
-		timeoutSignal,
+		deadline.signal,
 		fatalToolController.signal,
 		...(options.signal ? [options.signal] : []),
 	]);
@@ -380,6 +379,9 @@ export async function runNativeAttempt(options: {
 			options.plan.model,
 			runSignal,
 		);
+		// VM boot has its own bound, the sandbox start timeout, and is not
+		// charged to attemptTimeoutMs. runtimeMs stays wall-clock and includes it.
+		deadline.pause();
 		sandbox = await createGondolinAttemptSandbox({
 			owner: `${options.plan.runId}/${options.plan.attemptId}`,
 			workspace: options.workspacePath,
@@ -404,6 +406,7 @@ export async function runNativeAttempt(options: {
 				fatalToolController.abort("fatal-tool-abort");
 			},
 		});
+		deadline.resume();
 		if (sandbox.record.packageVersion !== options.plan.sandbox.packageVersion) {
 			throw new Error("Gondolin package version drift");
 		}
@@ -576,16 +579,17 @@ export async function runNativeAttempt(options: {
 			limit: number,
 			alreadyUsed: number,
 		) => {
+			// Cumulative runtime is wall-clock; the attempt timeout excludes boot.
+			const elapsed =
+				trigger === "cumulative-runtime"
+					? elapsedRuntimeMs
+					: () => deadline.chargedMs();
 			const delay = Math.max(
 				0,
-				Math.floor(limit * stage) - alreadyUsed - elapsedRuntimeMs(),
+				Math.floor(limit * stage) - alreadyUsed - elapsed(),
 			);
 			const timer = setTimeout(() => {
-				const used =
-					trigger === "cumulative-runtime"
-						? priorRuntimeMs + elapsedRuntimeMs()
-						: elapsedRuntimeMs();
-				queueBudgetSteering(stage, trigger, used, limit);
+				queueBudgetSteering(stage, trigger, alreadyUsed + elapsed(), limit);
 			}, delay);
 			timer.unref?.();
 			budgetTimers.push(timer);
@@ -808,7 +812,7 @@ export async function runNativeAttempt(options: {
 					: "failed";
 		const failure = classifyAttemptFailure({
 			error,
-			timedOut: timeoutSignal.aborted && !options.signal?.aborted,
+			timedOut: deadline.signal.aborted && !options.signal?.aborted,
 			fatalToolAbort,
 			...(options.signal?.aborted
 				? { externalAbortReason: options.signal.reason }
@@ -852,6 +856,7 @@ export async function runNativeAttempt(options: {
 			error: message,
 		};
 	} finally {
+		deadline.dispose();
 		await stopBudgetSteering().catch(() => {});
 		options.registerControl?.(undefined);
 		runSignal.removeEventListener("abort", abort);
