@@ -5,7 +5,7 @@ import type {
 	ExtensionAPI,
 	ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import piSubagentExtension, {
 	discoverExtensionAgents,
 } from "../src/extension.js";
@@ -40,6 +40,90 @@ limits:
 ${prompt}
 `;
 }
+
+const AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
+const priorAgentDir = process.env[AGENT_DIR_ENV];
+let agentDirRoot = "";
+
+// The extension reads host settings from the agent directory while it loads,
+// so every test runs against its own directory, never the operator's.
+beforeEach(async () => {
+	agentDirRoot = path.resolve(".pi", "test-extension-agent", randomUUID());
+	await mkdir(path.join(agentDirRoot, "subagents"), { recursive: true });
+	process.env[AGENT_DIR_ENV] = agentDirRoot;
+});
+
+afterEach(() => {
+	if (priorAgentDir === undefined) delete process.env[AGENT_DIR_ENV];
+	else process.env[AGENT_DIR_ENV] = priorAgentDir;
+});
+
+function recordingApi(): {
+	api: ExtensionAPI;
+	emit(channel: string, value: unknown): void;
+} {
+	const handlers = new Map<string, (value: unknown) => void>();
+	const api = {
+		events: {
+			on(channel: string, handler: (value: unknown) => void) {
+				handlers.set(channel, handler);
+				return () => handlers.delete(channel);
+			},
+			emit(channel: string, value: unknown) {
+				handlers.get(channel)?.(value);
+			},
+		},
+		registerTool() {},
+		on() {},
+		registerCommand() {},
+		registerShortcut() {},
+	} as unknown as ExtensionAPI;
+	return {
+		api,
+		emit(channel, value) {
+			handlers.get(channel)?.(value);
+		},
+	};
+}
+
+describe("Pi extension host settings", () => {
+	function publishedContract(): unknown {
+		const recording = recordingApi();
+		piSubagentExtension(recording.api);
+		let contract: unknown;
+		recording.emit("@vegardx/pi-subagent/service-provider/request/v1", {
+			schema: "pi-subagent-service-request-v1",
+			respond(provider: { contract: unknown }) {
+				contract = provider.contract;
+			},
+		});
+		return contract;
+	}
+
+	it("publishes the default sixteen slots without a settings file", () => {
+		expect(publishedContract()).toMatchObject({
+			contractRevision: 12,
+			features: { capacityWait: true },
+			capacity: { maxSlots: 16 },
+		});
+	});
+
+	it("publishes the configured maxSlots", async () => {
+		await writeFile(
+			path.join(agentDirRoot, "subagents", "settings.json"),
+			JSON.stringify({ maxSlots: 5 }),
+		);
+		expect(publishedContract()).toMatchObject({ capacity: { maxSlots: 5 } });
+	});
+
+	it("refuses to load with an invalid settings file", async () => {
+		const settingsPath = path.join(agentDirRoot, "subagents", "settings.json");
+		await writeFile(settingsPath, JSON.stringify({ maxSlots: 64 }));
+		expect(() => piSubagentExtension(recordingApi().api)).toThrow(
+			`Invalid pi-subagent settings at ${settingsPath}`,
+		);
+	});
+});
 
 describe("Pi extension adapter", () => {
 	it("discovers global and trusted-project named agents for shared clients", async () => {

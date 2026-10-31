@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
 	assertContractRevision,
 	CONTRACT_REVISION,
+	createSubagentRuntimeContract,
 	IncompatibleContractRevisionError,
 	isRunResult,
 	RunResultSchema,
@@ -45,7 +46,30 @@ describe("runtime contracts", () => {
 			sessionModelInherit: true,
 			workspaceStartAt: true,
 			resumeAtHandoff: true,
+			capacityWait: true,
 		});
+		expect(SUBAGENT_RUNTIME_CONTRACT.capacity).toEqual({ maxSlots: 16 });
+	});
+
+	it("reports the host's slot count within 1 to 32", () => {
+		for (const maxSlots of [1, 32]) {
+			const contract = createSubagentRuntimeContract({ maxSlots });
+			expect(Value.Check(SubagentRuntimeContractSchema, contract)).toBe(true);
+			expect(contract.capacity.maxSlots).toBe(maxSlots);
+		}
+		for (const maxSlots of [0, 33, 1.5]) {
+			expect(
+				Value.Check(
+					SubagentRuntimeContractSchema,
+					createSubagentRuntimeContract({ maxSlots }),
+				),
+			).toBe(false);
+		}
+		const { capacity: _capacity, ...withoutCapacity } =
+			SUBAGENT_RUNTIME_CONTRACT;
+		expect(Value.Check(SubagentRuntimeContractSchema, withoutCapacity)).toBe(
+			false,
+		);
 	});
 
 	it("rejects incompatible and extended runtime contracts", () => {

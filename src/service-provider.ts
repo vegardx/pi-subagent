@@ -4,7 +4,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { Value } from "typebox/value";
 import {
-	SUBAGENT_RUNTIME_CONTRACT,
+	SUBAGENT_RUNTIME_FEATURES,
 	type SubagentRuntimeContract,
 	SubagentRuntimeContractSchema,
 } from "./contracts.js";
@@ -56,13 +56,10 @@ function isCompatibleProvider(
 		) {
 			return false;
 		}
-		for (const feature of Object.keys(
-			SUBAGENT_RUNTIME_CONTRACT.features,
-		) as Array<keyof SubagentRuntimeContract["features"]>) {
-			if (
-				contract.features[feature] !==
-				SUBAGENT_RUNTIME_CONTRACT.features[feature]
-			) {
+		for (const feature of Object.keys(SUBAGENT_RUNTIME_FEATURES) as Array<
+			keyof SubagentRuntimeContract["features"]
+		>) {
+			if (contract.features[feature] !== SUBAGENT_RUNTIME_FEATURES[feature]) {
 				return false;
 			}
 		}
@@ -72,12 +69,24 @@ function isCompatibleProvider(
 	}
 }
 
+/**
+ * Publish the runtime. `contract` is the one this runtime was built with: its
+ * `capacity.maxSlots` must be the slot count the runtime's capacity manager
+ * enforces.
+ */
 export function registerSubagentServiceProvider(
 	events: EventBus,
+	contract: SubagentRuntimeContract,
 	acquire: (context: ExtensionContext) => Promise<SubagentService>,
 ): () => void {
+	if (!Value.Check(SubagentRuntimeContractSchema, contract)) {
+		throw new SubagentServiceProviderError(
+			"incompatible",
+			"The pi-subagent runtime contract to publish is invalid.",
+		);
+	}
 	const provider: SubagentServiceProvider = Object.freeze({
-		contract: SUBAGENT_RUNTIME_CONTRACT,
+		contract,
 		acquire,
 	});
 	return events.on(SERVICE_REQUEST_CHANNEL, (value) => {

@@ -8,8 +8,10 @@ import { describe, expect, it } from "vitest";
 import {
 	ClassifiedFailureSchema,
 	CONTRACT_REVISION,
+	DEFAULT_MAX_SLOTS,
 	FailureCodeSchema,
 	HANDOFF_EXPORT_MEDIA_TYPE,
+	MAX_SLOTS,
 	RunStatusSchema,
 	SUBAGENT_RUNTIME_CONTRACT,
 } from "../src/contracts.js";
@@ -33,6 +35,7 @@ import {
 import { AgentFrontmatterSchema } from "../src/preflight/agents.js";
 import { BUDGET_STEERING_STAGES } from "../src/runtime/budget.js";
 import { HOST_TOOL_NAMES } from "../src/runtime/host-tools.js";
+import { DEFAULT_CAPACITY_WAIT_MS } from "../src/sandbox/capacity.js";
 import {
 	GUEST_CACHE_HOME,
 	TOOL_CALL_DEADLINE_MS,
@@ -365,7 +368,10 @@ describe("operating skill budgets, isolation, and evidence", () => {
 	it("states the sandbox facts the runtime configures", () => {
 		const extension = sources.get("extension.ts") ?? "";
 		const gondolin = sources.get("sandbox/gondolin.ts") ?? "";
-		expect(extension).toContain("maxSlots: 4");
+		expect(extension).toContain("maxSlots: runtimeContract.capacity.maxSlots");
+		expect(DEFAULT_MAX_SLOTS).toBe(16);
+		expect(MAX_SLOTS).toBe(32);
+		expect(DEFAULT_CAPACITY_WAIT_MS).toBe(10 * 60_000);
 		expect(extension).toContain('mode: "public-egress"');
 		expect(extension).toContain("blockInternalRanges: true");
 		expect(extension).toContain("allowWebSockets: false");
@@ -380,7 +386,11 @@ describe("operating skill budgets, isolation, and evidence", () => {
 			'cwd: Type.Literal("/workspace")',
 		);
 		expect(flatSkill).toContain("1 GiB of memory, 1 CPU");
-		expect(flatSkill).toContain("At most four VMs run concurrently");
+		expect(flatSkill).toContain(
+			"At most sixteen VMs run concurrently on the host by default",
+		);
+		expect(flatSkill).toContain("`maxSlots` (1 to 32)");
+		expect(flatSkill).toContain("up to 10 minutes");
 		expect(flatSkill).toContain("`public-egress` with internal ranges blocked");
 		expect(flatSkill).toContain("guest working directory `/workspace`");
 		expect(flatSkill).toContain(
@@ -407,6 +417,7 @@ describe("operating skill budgets, isolation, and evidence", () => {
 		expect(SUBAGENT_RUNTIME_CONTRACT.features.sessionModelInherit).toBe(true);
 		expect(SUBAGENT_RUNTIME_CONTRACT.features.workspaceStartAt).toBe(true);
 		expect(SUBAGENT_RUNTIME_CONTRACT.features.resumeAtHandoff).toBe(true);
+		expect(SUBAGENT_RUNTIME_CONTRACT.features.capacityWait).toBe(true);
 		expect(flatSkill).toContain("`background: false`");
 		expect(flatSkill).toContain("`survivesSeatExit: false`");
 		expect(flatSkill).toContain("`vmMemoryCeiling: true`");
@@ -415,6 +426,8 @@ describe("operating skill budgets, isolation, and evidence", () => {
 		expect(flatSkill).toContain("`sessionModelInherit: true`");
 		expect(flatSkill).toContain("`workspaceStartAt: true`");
 		expect(flatSkill).toContain("`resumeAtHandoff: true`");
+		expect(flatSkill).toContain("`capacityWait: true`");
+		expect(flatSkill).toContain("`capacity.maxSlots`");
 	});
 
 	it("quotes the refusal a launch hits with no session model to inherit", () => {

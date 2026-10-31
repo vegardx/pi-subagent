@@ -301,8 +301,8 @@ bound.
 `sandbox.memoryBytes` is the resolved per-run memory grant, so it is part of the
 launch identity digest and of the persisted run and attempt records. Host VM
 capacity stays slot-counted: host memory exposure is `maxSlots` x the per-run
-grant, which for the default four slots and the 4 GiB ceiling is 16 GiB. There
-is no separate total-memory budget; slots are held by OS-owned localhost
+grant, which for the default sixteen slots is 16 GiB at the 1 GiB default and
+64 GiB at the 4 GiB ceiling. There is no separate total-memory budget; slots are held by OS-owned localhost
 listeners and a byte budget would require durable fenced per-slot accounting
 that the listener scheme does not provide.
 
@@ -634,11 +634,15 @@ interface SubagentRuntimeContract {
 		sessionModelInherit: boolean;
 		workspaceStartAt: boolean;
 		resumeAtHandoff: boolean;
+		capacityWait: boolean;
+	};
+	capacity: {
+		maxSlots: number; // integer 1..32
 	};
 }
 ```
 
-The current revision is 11. `handoffExport` states that `exportHandoff`,
+The current revision is 12. `handoffExport` states that `exportHandoff`,
 `HandoffRef`, the `export-handoff` action, durable handoff refs, and the
 `handoff-exported` receipt are implemented. `vmMemoryCeiling` states that agent
 definitions carry an optional `memoryBytes` ceiling, that a request may narrow
@@ -669,6 +673,22 @@ the revision; a consumer requires it by name. Revision 11 raises the
 `memoryBytes` floor and default from 64 MiB and 512 MiB to 1 GiB; it adds no
 feature. A persisted revision 10 launch plan or definition may carry memory
 below the floor, so revision 10 state is not read.
+Revision 12 adds `capacity.maxSlots`, the number of attempt VMs this host runs
+at once across every seat, so a host can cap its own fan-out. It is the
+operator's `maxSlots` setting in `<agentDir>/subagents/settings.json`
+(`{ "maxSlots"?: integer 1..32 }`, no other keys; default 16). A settings file
+that does not match is refused when the extension loads, by path, never partly
+applied. Every seat sharing `<agentDir>/subagents/capacity` must agree: the
+first seat records `maxSlots` and the derived port range in `policy.json`
+there, and a seat whose setting differs refuses to execute attempts with a
+message naming both slot counts and that file. `capacityWait` states that an
+attempt whose host has no free slot waits for one, up to `capacityWaitMs`
+(10 minutes, clamped to the run's remaining cumulative runtime), without
+charging the wait to `attemptTimeoutMs`, and that an attempt that never gets a
+slot fails with the failure code `capacity`, origin `service`, retry `backoff`,
+and complete zero usage. Revision 12 also makes `usageComplete` true for any
+attempt that ended before its model session existed. As with every revision,
+revision 11 state is not read.
 Consumers check the exact contract
 revision and required features rather than
 infer support from package versions. Revisions are not backwards-compatible:
@@ -791,6 +811,12 @@ interface RunResult {
 	truncated: boolean;
 }
 ```
+
+`usageComplete` is `false` only when a model session existed and the attempt
+did not complete, because an interrupted model turn's usage may be partial. An
+attempt that ended before its session existed, such as a `capacity` refusal or
+a VM that failed to construct or start, made no model call and reports its
+zero usage as complete.
 
 Limits define per-attempt timeout, cumulative runtime, optional total model
 tokens, provider-reported dollar cost, output, logs, events, artifact bytes,

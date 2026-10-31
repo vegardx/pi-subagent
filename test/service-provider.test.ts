@@ -4,7 +4,10 @@ import {
 	type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
-import { SUBAGENT_RUNTIME_CONTRACT } from "../src/contracts.js";
+import {
+	createSubagentRuntimeContract,
+	SUBAGENT_RUNTIME_CONTRACT,
+} from "../src/contracts.js";
 import type { SubagentService } from "../src/service.js";
 import {
 	acquireSubagentService,
@@ -18,7 +21,7 @@ describe("subagent service provider", () => {
 	it("acquires the exact lazily provided service", async () => {
 		const events = createEventBus();
 		const factory = vi.fn(async () => service);
-		registerSubagentServiceProvider(events, factory);
+		registerSubagentServiceProvider(events, SUBAGENT_RUNTIME_CONTRACT, factory);
 
 		expect(factory).not.toHaveBeenCalled();
 		await expect(acquireSubagentService(events, context)).resolves.toBe(
@@ -40,8 +43,8 @@ describe("subagent service provider", () => {
 		const events = createEventBus();
 		const first = vi.fn(async () => service);
 		const second = vi.fn(async () => service);
-		registerSubagentServiceProvider(events, first);
-		registerSubagentServiceProvider(events, second);
+		registerSubagentServiceProvider(events, SUBAGENT_RUNTIME_CONTRACT, first);
+		registerSubagentServiceProvider(events, SUBAGENT_RUNTIME_CONTRACT, second);
 
 		await expect(acquireSubagentService(events, context)).rejects.toMatchObject(
 			{ code: "duplicate" },
@@ -85,10 +88,14 @@ describe("subagent service provider", () => {
 		const pending = new Promise<SubagentService>((resolve) => {
 			resolveService = resolve;
 		});
-		const unregister = registerSubagentServiceProvider(events, async () => {
-			started?.();
-			return pending;
-		});
+		const unregister = registerSubagentServiceProvider(
+			events,
+			SUBAGENT_RUNTIME_CONTRACT,
+			async () => {
+				started?.();
+				return pending;
+			},
+		);
 		const acquisition = acquireSubagentService(events, context);
 		await acquisitionStarted;
 		unregister();
@@ -106,14 +113,22 @@ describe("subagent service provider", () => {
 		const pending = new Promise<SubagentService>((resolve) => {
 			resolveService = resolve;
 		});
-		const unregister = registerSubagentServiceProvider(events, async () => {
-			started?.();
-			return pending;
-		});
+		const unregister = registerSubagentServiceProvider(
+			events,
+			SUBAGENT_RUNTIME_CONTRACT,
+			async () => {
+				started?.();
+				return pending;
+			},
+		);
 		const acquisition = acquireSubagentService(events, context);
 		await acquisitionStarted;
 		unregister();
-		registerSubagentServiceProvider(events, async () => service);
+		registerSubagentServiceProvider(
+			events,
+			SUBAGENT_RUNTIME_CONTRACT,
+			async () => service,
+		);
 		resolveService?.(service);
 		await expect(acquisition).rejects.toMatchObject({ code: "replaced" });
 	});
@@ -141,9 +156,38 @@ describe("subagent service provider", () => {
 		);
 	});
 
+	it("publishes the contract it was given, with its slot count", async () => {
+		const events = createEventBus();
+		const contract = createSubagentRuntimeContract({ maxSlots: 3 });
+		registerSubagentServiceProvider(events, contract, async () => service);
+		let published: unknown;
+		events.emit("@vegardx/pi-subagent/service-provider/request/v1", {
+			schema: "pi-subagent-service-request-v1",
+			respond(provider: { contract: unknown }) {
+				published = provider.contract;
+			},
+		});
+		expect(published).toBe(contract);
+		expect(contract.capacity).toEqual({ maxSlots: 3 });
+		await expect(acquireSubagentService(events, context)).resolves.toBe(
+			service,
+		);
+	});
+
+	it("refuses to publish a contract outside the schema", () => {
+		expect(() =>
+			registerSubagentServiceProvider(
+				createEventBus(),
+				{ ...SUBAGENT_RUNTIME_CONTRACT, capacity: { maxSlots: 33 } },
+				async () => service,
+			),
+		).toThrow("runtime contract to publish is invalid");
+	});
+
 	it("freezes the advertised runtime contract", () => {
 		expect(Object.isFrozen(SUBAGENT_RUNTIME_CONTRACT)).toBe(true);
 		expect(Object.isFrozen(SUBAGENT_RUNTIME_CONTRACT.features)).toBe(true);
+		expect(Object.isFrozen(SUBAGENT_RUNTIME_CONTRACT.capacity)).toBe(true);
 		expect(() => {
 			SUBAGENT_RUNTIME_CONTRACT.features.structuredOutput = false;
 		}).toThrow(TypeError);
@@ -153,6 +197,7 @@ describe("subagent service provider", () => {
 		const events = createEventBus();
 		const unregister = registerSubagentServiceProvider(
 			events,
+			SUBAGENT_RUNTIME_CONTRACT,
 			async () => service,
 		);
 		unregister();

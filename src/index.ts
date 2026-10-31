@@ -16,6 +16,8 @@ export {
 	type CleanupOutcome,
 	CleanupOutcomeSchema,
 	CONTRACT_REVISION,
+	createSubagentRuntimeContract,
+	DEFAULT_MAX_SLOTS,
 	type FailureCode,
 	FailureCodeSchema,
 	HANDOFF_EXPORT_MEDIA_TYPE,
@@ -23,6 +25,7 @@ export {
 	HandoffRefSchema,
 	IncompatibleContractRevisionError,
 	isRunResult,
+	MAX_SLOTS,
 	type RunId,
 	RunIdSchema,
 	type RunResult,
@@ -30,6 +33,7 @@ export {
 	type RunStatus,
 	RunStatusSchema,
 	SUBAGENT_RUNTIME_CONTRACT,
+	SUBAGENT_RUNTIME_FEATURES,
 	type SubagentRuntimeContract,
 	SubagentRuntimeContractSchema,
 	type Usage,
@@ -209,10 +213,13 @@ export {
 } from "./runtime/structured-output.js";
 export {
 	createVmCapacityManager,
+	DEFAULT_CAPACITY_WAIT_MS,
+	type VmCapacityAcquireOptions,
 	VmCapacityExhaustedError,
 	type VmCapacityLease,
 	type VmCapacityLeaseRecord,
 	type VmCapacityManager,
+	vmCapacityExhaustedMessage,
 } from "./sandbox/capacity.js";
 export {
 	createGondolinAttemptSandbox,
@@ -265,6 +272,13 @@ export {
 	type SubagentPreflight,
 	type SubagentService,
 } from "./service.js";
+export {
+	readSubagentSettings,
+	type SubagentSettings,
+	SubagentSettingsError,
+	SubagentSettingsSchema,
+	subagentSettingsPath,
+} from "./settings.js";
 export {
 	captureWorktreeHandoff,
 	createAttemptWorktree,

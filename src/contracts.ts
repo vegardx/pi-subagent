@@ -1,7 +1,11 @@
 import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
 
-export const CONTRACT_REVISION = 11 as const;
+export const CONTRACT_REVISION = 12 as const;
+/** The most concurrent VMs a host may configure (`maxSlots`). */
+export const MAX_SLOTS = 32;
+/** Concurrent VMs on a host whose settings leave `maxSlots` unset. */
+export const DEFAULT_MAX_SLOTS = 16;
 
 export class IncompatibleContractRevisionError extends Error {
 	constructor(
@@ -270,6 +274,14 @@ export const SubagentRuntimeContractSchema = Type.Object(
 				sessionModelInherit: Type.Boolean(),
 				workspaceStartAt: Type.Boolean(),
 				resumeAtHandoff: Type.Boolean(),
+				capacityWait: Type.Boolean(),
+			},
+			{ additionalProperties: false },
+		),
+		capacity: Type.Object(
+			{
+				/** Concurrent VMs on this host, across every seat. */
+				maxSlots: Type.Integer({ minimum: 1, maximum: MAX_SLOTS }),
 			},
 			{ additionalProperties: false },
 		),
@@ -280,39 +292,54 @@ export type SubagentRuntimeContract = Static<
 	typeof SubagentRuntimeContractSchema
 >;
 
-export const SUBAGENT_RUNTIME_CONTRACT: SubagentRuntimeContract = Object.freeze(
-	{
+export const SUBAGENT_RUNTIME_FEATURES: SubagentRuntimeContract["features"] =
+	Object.freeze({
+		nativeSessionBackend: true,
+		gondolinSandbox: true,
+		background: false,
+		survivesSeatExit: false,
+		steering: true,
+		followUp: true,
+		structuredOutput: true,
+		preflight: true,
+		idempotentLaunch: true,
+		resume: true,
+		classifiedFailures: true,
+		cumulativeRuntimeBudget: true,
+		costFirstBudgets: true,
+		retryBackoff: true,
+		deepReconciliation: true,
+		worktrees: true,
+		handoffExport: true,
+		vmMemoryCeiling: true,
+		workspaceBudgetRefusal: true,
+		publicNetworkEgress: true,
+		explicitResources: true,
+		ambientExtensionsControl: true,
+		hostBrokeredTools: true,
+		agentRootsFirst: true,
+		delegationCeiling: true,
+		sessionModelInherit: true,
+		workspaceStartAt: true,
+		resumeAtHandoff: true,
+		capacityWait: true,
+	});
+
+/**
+ * The contract a runtime publishes. `capacity.maxSlots` is the host's setting,
+ * so the contract is built once the settings are read.
+ */
+export function createSubagentRuntimeContract(capacity: {
+	maxSlots: number;
+}): SubagentRuntimeContract {
+	return Object.freeze({
 		schema: "pi-subagent-runtime",
 		contractRevision: CONTRACT_REVISION,
-		features: Object.freeze({
-			nativeSessionBackend: true,
-			gondolinSandbox: true,
-			background: false,
-			survivesSeatExit: false,
-			steering: true,
-			followUp: true,
-			structuredOutput: true,
-			preflight: true,
-			idempotentLaunch: true,
-			resume: true,
-			classifiedFailures: true,
-			cumulativeRuntimeBudget: true,
-			costFirstBudgets: true,
-			retryBackoff: true,
-			deepReconciliation: true,
-			worktrees: true,
-			handoffExport: true,
-			vmMemoryCeiling: true,
-			workspaceBudgetRefusal: true,
-			publicNetworkEgress: true,
-			explicitResources: true,
-			ambientExtensionsControl: true,
-			hostBrokeredTools: true,
-			agentRootsFirst: true,
-			delegationCeiling: true,
-			sessionModelInherit: true,
-			workspaceStartAt: true,
-			resumeAtHandoff: true,
-		}),
-	},
-);
+		features: SUBAGENT_RUNTIME_FEATURES,
+		capacity: Object.freeze({ maxSlots: capacity.maxSlots }),
+	});
+}
+
+/** The contract under default settings. */
+export const SUBAGENT_RUNTIME_CONTRACT: SubagentRuntimeContract =
+	createSubagentRuntimeContract({ maxSlots: DEFAULT_MAX_SLOTS });
