@@ -42,7 +42,10 @@ Active attempts stop when their owning seat exits or reloads. A fenced
 cross-process lease prevents another seat from concurrently mutating the same
 run, session, or worktree. Explicit resume restores the persisted Pi session
 into a new attempt with a fresh VM only after the prior seat and VM are proved
-terminal and authority and workspace identity are revalidated.
+terminal and authority and workspace identity are revalidated. A resume at
+the run's hand-off restores the same session after a terminal attempt, with the
+caller's message as its next user turn, in a new worktree checked out at that
+hand-off.
 
 One VM belongs to exactly one attempt. VMs are not pooled or shared between
 agents. A VM is created with the launch plan's resolved `sandbox.memoryBytes`
@@ -217,7 +220,10 @@ manager keeps each handoff commit reachable through a durable
 `refs/pi-subagent/handoffs/` ref and renders it on demand as bounded,
 digest-verified `git format-patch` bytes through `exportHandoff`. Consumers
 never read private worktrees, branches, or refs; retention deletes the ref when
-the run graph is pruned.
+the run graph is pruned. A run's hand-off is its latest one: an attempt resumed
+at the hand-off squashes onto the original baseline, so its hand-off carries
+the earlier change and replaces it as the run's, and one that changes nothing
+leaves the earlier hand-off in place.
 
 The selected repository is mounted as repository content, including local files
 such as `.env` when present. Confidentiality of repository contents is not an
@@ -252,6 +258,9 @@ stateDiagram-v2
     settling --> failed
     settling --> cleanupBlocked: cleanup unproved
     interrupted --> preparing: explicit resume
+    completed --> preparing: resume at hand-off
+    failed --> preparing: resume at hand-off
+    cancelled --> preparing: resume at hand-off
     interrupted --> abandoned: explicit abandon
     failed --> preparing: eligible retry
     cleanupBlocked: cleanup-blocked

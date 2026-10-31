@@ -392,6 +392,33 @@ exit interrupts every active attempt. The next seat may call `resume`, which
 creates a new attempt and VM after validation; it does not reconnect to the old
 VM.
 
+```ts
+interface ResumeInput {
+	continueFromHandoff: true;
+	message: string; // non-blank, at most 65536 UTF-8 bytes
+}
+```
+
+Without `input`, `resume` continues an interrupted run in its retained worktree
+with a fixed resume prompt. With `input`, it continues the session of a
+`completed`, `failed`, or `cancelled` `worktree` run that has a hand-off: the
+new attempt restores the run's Pi session file, delivers `message` verbatim as
+the session's next user message after the restored transcript, and works in a
+new worktree checked out at the run's latest hand-off commit. That worktree's
+record carries `baselineHead` = the hand-off's baseline (the original HEAD)
+and `startCommit` = the hand-off commit. The attempt reruns the plan's
+recorded model, consumes one `limits.resumes`, and draws on the remaining
+run-wide runtime, token, and cost budgets. The failure disposition does not
+gate it. It refuses by name: a run that is not a worktree run, a run in
+another status, a run without a hand-off, a blank or oversized message, and a
+run with no resumes left; the session and workspace revalidation of a plain
+resume also applies, and a repository HEAD that moved since the hand-off's
+baseline fails as "workspace changed before resume". A consumer that resumes
+an implementer once should launch it with `limits.resumes: 1`, the default the
+`subagent` tool uses; each resume, plain or at a hand-off, consumes one. The
+operator surfaces do not offer this resume; it is service-only. A run that
+carries a hand-off refuses `retry`, which would start over without it.
+
 `prune` defaults to dry-run, reports age/budget selection and protected reasons,
 and moves applied selections to recoverable trash under a cross-process
 retention lease plus per-run fencing. Owner pins protect the complete linked run
@@ -433,9 +460,15 @@ part of the repository identity, so editing it changes the rendering. Consumers
 verify `sha256` and `bytes`, then `git am` or `git apply --index` the patch onto
 `baselineHead`. The handoff must be exactly one non-merge commit whose sole
 parent is `baselineHead`; anything else is refused. The host squashes: whether
-the worktree started at HEAD or at a `startAt` hand-off, capture writes one
-commit whose tree is the worktree's final tree and whose parent is
-`baselineHead`, so a hand-off started from another carries both. "No changes"
+the worktree started at HEAD, at a `startAt` hand-off, or at the run's own
+hand-off for a resume, capture writes one commit whose tree is the worktree's
+final tree and whose parent is `baselineHead`, so a hand-off started from
+another carries both. `exportHandoff` returns the run's latest hand-off and
+`HandoffRef.attemptId` names the attempt that captured it: after a resume at
+the hand-off, the resumed attempt's commit when it changed something, otherwise
+still the earlier attempt's. Each attempt keeps its own
+`refs/pi-subagent/handoffs/<run-id>/<attempt-id>` ref; there is no run-level
+pointer. "No changes"
 means the final tree equals the start commit's tree, and then there is no
 handoff; a final tree equal to the baseline's while starting at a hand-off is
 refused by name rather than exported as an empty patch. Export is owner-scoped like
@@ -597,6 +630,7 @@ interface SubagentRuntimeContract {
 		delegationCeiling: boolean;
 		sessionModelInherit: boolean;
 		workspaceStartAt: boolean;
+		resumeAtHandoff: boolean;
 	};
 }
 ```
@@ -624,6 +658,11 @@ is a hand-off of the current HEAD, that both workspace modes start at it, and
 that the export squashes onto `baselineHead`. Revision 10 adds `startAt` to the
 request, the persisted launch plan, and the run record, `startCommit` to the
 worktree record, and the snapshot record, so revision 9 state is not read.
+`resumeAtHandoff` states that `resume` accepts `ResumeInput`, continues the
+session in a worktree at the run's latest hand-off, delivers the message as the
+next user turn, and exports a hand-off squashed onto the original baseline that
+replaces the earlier one. It changes no persisted shape, so it does not advance
+the revision; a consumer requires it by name.
 Consumers check the exact contract
 revision and required features rather than
 infer support from package versions. Revisions are not backwards-compatible:
@@ -690,7 +729,8 @@ interface ClassifiedFailure {
 ```
 
 Unknown failures fail closed to `reconcile`. Explicit retry accepts only `manual`
-or elapsed `backoff`; resume accepts only `resume`. Every attempt records
+or elapsed `backoff`; resume accepts only `resume`, except a resume at the
+run's hand-off, which follows a terminal result. Every attempt records
 measured `runtimeMs`, and retry/resume subtract runtime, configured total model
 tokens, and provider-reported cost from the current remaining plan before
 creating a fresh attempt. When `totalTokens` is configured, it consumes the
@@ -716,6 +756,9 @@ stateDiagram-v2
     cleanupBlocked: cleanup-blocked
     failed --> queued: retry
     interrupted --> queued: resume
+    completed --> queued: resume at hand-off
+    failed --> queued: resume at hand-off
+    cancelled --> queued: resume at hand-off
     interrupted --> abandoned: abandon
 ```
 

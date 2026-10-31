@@ -82,7 +82,10 @@ the resolved exact model and where it came from. Contract revision 10 adds
 `workspaceStartAt`: a request's workspace may start at a hand-off commit of the
 current HEAD, the host checks it out in either mode, and the export squashes the
 final tree onto HEAD. A consumer that pins an earlier revision must move to 10;
-there is no compatibility path.
+there is no compatibility path. Release 0.18 adds `resumeAtHandoff` within
+revision 10: a resume continues a finished worktree run's session at its latest
+hand-off with a caller message, and the hand-off it exports replaces the
+earlier one.
 
 Consumer integration starts only after pi-subagent completes full acceptance,
 dogfood cutover, and stable release qualification:

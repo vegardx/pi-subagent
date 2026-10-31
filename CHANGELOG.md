@@ -6,6 +6,31 @@ The project keeps no backwards compatibility: an incompatible public contract or
 persisted format fails explicitly instead of migrating. Persisted state written
 at an earlier contract revision is quarantined, not read.
 
+## 0.18.0
+
+Contract revision 10, unchanged: no persisted record changes shape.
+
+### Added
+
+- `resume(runId, { continueFromHandoff: true, message })` continues the session
+  of a `completed`, `failed`, or `cancelled` worktree run in a fresh attempt
+  whose worktree is checked out at the run's latest hand-off. `message`
+  (non-blank, at most 64 KiB) is the restored session's next user message. The
+  attempt consumes one `limits.resumes`, reruns the plan's recorded model, and
+  appends a `resume-at-handoff` journal event. Refused by name for a run that is
+  not a worktree run, a run in another status, a run without a hand-off, a bad
+  message, and spent resumes. Feature flag: `resumeAtHandoff`.
+- `ResumeInput` and `MAX_RESUME_MESSAGE_BYTES` are exported.
+
+### Changed
+
+- The run's hand-off is its latest one. A resumed attempt squashes onto the
+  original baseline, so its hand-off carries both changes and `exportHandoff`
+  names the resumed attempt; one that changes nothing leaves the earlier
+  hand-off as the run's, live and after restart.
+- A run that carries a hand-off refuses `retry`, which would start over without
+  it, and no longer reports itself retryable.
+
 ## 0.17.0
 
 Contract revision 10. Revision 9 state is quarantined, not read.

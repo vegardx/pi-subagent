@@ -683,6 +683,7 @@ The extension entry is separate:
 | 0.14 | Contract revision 8: the host delegation ceiling (`delegationCeiling`) in workspace modes and tools, recorded in the launch plan |
 | 0.15 | Contract revision 9: session-model inheritance (`sessionModelInherit`), resolved through a host-registered provider and recorded in the launch plan |
 | 0.17 | Contract revision 10: workspaces that start at a hand-off commit (`workspaceStartAt`), squashed hand-off export, and a per-call deadline on guest tools |
+| 0.18 | Resume at the run's own hand-off with a message (`resumeAtHandoff`), contract revision 10 unchanged |
 | 1.0 | Production-core stable contract |
 
 Versions are capability milestones, not deadlines.
