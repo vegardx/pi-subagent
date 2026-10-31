@@ -298,6 +298,10 @@ export async function executeBoundedHostTool(
 			content: [{ type: "text", text: bounded.content }],
 			details: JSON.parse(detailsJson) as unknown,
 			...(result.usage ? { usage: result.usage } : {}),
+			// Pi honours isError since 0.99; dropping it would hand the child a
+			// provider failure as a success. terminate stays dropped: a host tool
+			// must not end the child's turn.
+			...(result.isError === true ? { isError: true } : {}),
 		};
 	} finally {
 		signal.removeEventListener("abort", onAbort);
