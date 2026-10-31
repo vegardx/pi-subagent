@@ -1,4 +1,5 @@
 import { lstat, realpath } from "node:fs/promises";
+import { createRequire } from "node:module";
 import path from "node:path";
 import {
 	createHttpHooks,
@@ -20,7 +21,21 @@ import type {
 import { createGondolinTools } from "./tools.js";
 import { type WriteBudget, withWriteBudget } from "./write-budget.js";
 
-const GONDOLIN_VERSION = "0.12.0";
+/**
+ * The installed Gondolin version, read from its package manifest so the
+ * sandbox grant and record name the backend that actually runs.
+ */
+export const GONDOLIN_VERSION: string = (
+	createRequire(import.meta.url)("@earendil-works/gondolin/package.json") as {
+		version: string;
+	}
+).version;
+/**
+ * The guest image every attempt boots, pinned by its immutable versioned ref.
+ * `alpine-base:0.4.0` is the image released with Gondolin 0.14.0; the tmpfs
+ * option and VFS chmod forwarding need an image of that line.
+ */
+export const GUEST_IMAGE_SELECTOR = "alpine-base:0.4.0";
 const DEFAULT_CPUS = 1;
 const DEFAULT_START_TIMEOUT_MS = 60_000;
 /**
@@ -50,7 +65,7 @@ export function guestMemorySize(memoryBytes: number): string {
 
 export type GondolinSandboxRecord = {
 	backend: "gondolin";
-	packageVersion: typeof GONDOLIN_VERSION;
+	packageVersion: string;
 	vmId: string;
 	hostPid: number;
 	hostProcessIdentity: ProcessIdentity;
@@ -201,7 +216,7 @@ export async function createGondolinAttemptSandbox(options: {
 	let vm: VM;
 	try {
 		vm = await VM.create({
-			sandbox: { vmm: "qemu" },
+			sandbox: { vmm: "qemu", imagePath: GUEST_IMAGE_SELECTOR },
 			memory,
 			cpus,
 			rootfs: { mode: "memory" },

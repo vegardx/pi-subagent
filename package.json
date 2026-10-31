@@ -67,7 +67,7 @@
 		"typebox": "*"
 	},
 	"dependencies": {
-		"@earendil-works/gondolin": "0.12.0",
+		"@earendil-works/gondolin": "0.14.0",
 		"ajv": "8.20.0",
 		"yaml": "2.9.0"
 	},

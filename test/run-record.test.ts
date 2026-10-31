@@ -56,7 +56,7 @@ function plan(): AgentLaunchPlan {
 		},
 		sandbox: {
 			backend: "gondolin" as const,
-			packageVersion: "0.12.0",
+			packageVersion: "0.14.0",
 			imageSha256: hash,
 			mountPolicySha256: hash,
 			networkPolicySha256: hash,

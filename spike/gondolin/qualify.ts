@@ -13,12 +13,14 @@ import path from "node:path";
 import { promisify } from "node:util";
 import {
 	createHttpHooks,
+	ensureImageSelector,
 	ReadonlyProvider,
 	RealFSProvider,
 	VM,
 } from "@earendil-works/gondolin";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { ArtifactStore } from "../../src/artifacts/store.js";
+import { DEFAULT_MEMORY_BYTES } from "../../src/launch-contracts.js";
 import { RunJournal } from "../../src/persistence/journal.js";
 import { acquireRunLease } from "../../src/persistence/run-lease.js";
 import { canonicalSha256 } from "../../src/preflight/canonical.js";
@@ -29,7 +31,12 @@ import {
 	createVmCapacityManager,
 	VmCapacityExhaustedError,
 } from "../../src/sandbox/capacity.js";
-import { createGondolinAttemptSandbox } from "../../src/sandbox/gondolin.js";
+import {
+	createGondolinAttemptSandbox,
+	GONDOLIN_VERSION,
+	GUEST_IMAGE_SELECTOR,
+	guestMemorySize,
+} from "../../src/sandbox/gondolin.js";
 import { createSubagentService } from "../../src/service.js";
 import {
 	driveNativeSession,
@@ -65,7 +72,8 @@ type QualificationReport = {
 	platform: NodeJS.Platform;
 	architecture: string;
 	node: string;
-	gondolin: "0.12.0";
+	gondolin: string;
+	image: { selector: string; buildId: string | undefined };
 	qemu: string;
 	fixtureRoot: string;
 	checks: Check[];
@@ -75,7 +83,7 @@ type QualificationReport = {
 };
 
 const execFileAsync = promisify(execFile);
-const MEMORY = "512M";
+const MEMORY = guestMemorySize(DEFAULT_MEMORY_BYTES);
 const CPUS = 1;
 const root = path.resolve(
 	process.cwd(),
@@ -133,7 +141,7 @@ async function createVm(workspace: string, readOnly = false): Promise<VM> {
 	const { httpHooks } = createHttpHooks({ blockInternalRanges: true });
 	const startedAt = performance.now();
 	const vm = await VM.create({
-		sandbox: { vmm: "qemu" },
+		sandbox: { vmm: "qemu", imagePath: GUEST_IMAGE_SELECTOR },
 		memory: MEMORY,
 		cpus: CPUS,
 		rootfs: { mode: "memory" },
@@ -384,7 +392,7 @@ async function qualifyWriteBudget() {
 	const { httpHooks } = createHttpHooks({ blockInternalRanges: true });
 	const startedAt = performance.now();
 	const vm = await VM.create({
-		sandbox: { vmm: "qemu" },
+		sandbox: { vmm: "qemu", imagePath: GUEST_IMAGE_SELECTOR },
 		memory: MEMORY,
 		cpus: CPUS,
 		rootfs: { mode: "memory" },
@@ -480,7 +488,7 @@ async function qualifyConcurrentIsolation() {
 	} finally {
 		await Promise.all([closeVm(vmA), closeVm(vmB)]);
 	}
-	return "Two 512M/1-vCPU VMs booted concurrently and wrote only their own mounts.";
+	return `Two ${MEMORY}/1-vCPU VMs booted concurrently and wrote only their own mounts.`;
 }
 
 async function qualifyProductionAdapter(): Promise<string> {
@@ -493,7 +501,7 @@ async function qualifyProductionAdapter(): Promise<string> {
 		owner: "qualification-adapter",
 		workspace,
 		readOnly: false,
-		memoryBytes: 512 * 1024 * 1024,
+		memoryBytes: DEFAULT_MEMORY_BYTES,
 		workspaceWriteBytes: 64 * 1024,
 		capacity,
 		skillMounts: [
@@ -655,7 +663,7 @@ async function qualifyForegroundService(): Promise<string> {
 		contextScopes: ["project" as const],
 		workspaceModes: ["read-only" as const],
 		limitCeiling: limits,
-		memoryCeilingBytes: 512 * 1024 * 1024,
+		memoryCeilingBytes: DEFAULT_MEMORY_BYTES,
 		prompt:
 			"Read task.txt with the read tool, then call final_answer exactly once with an object whose marker is the single-line file content.",
 		scope: "builtin" as const,
@@ -671,7 +679,7 @@ async function qualifyForegroundService(): Promise<string> {
 			maxSlots: 1,
 		}),
 		sandbox: {
-			packageVersion: "0.12.0",
+			packageVersion: "0.14.0",
 			imageSha256: canonicalSha256("qualification-image"),
 			mountPolicySha256: canonicalSha256("qualification-mount"),
 			networkPolicySha256: canonicalSha256("qualification-network"),
@@ -751,7 +759,7 @@ async function qualifyForegroundService(): Promise<string> {
 			maxSlots: 1,
 		}),
 		sandbox: {
-			packageVersion: "0.12.0",
+			packageVersion: "0.14.0",
 			imageSha256: canonicalSha256("qualification-image"),
 			mountPolicySha256: canonicalSha256("qualification-mount"),
 			networkPolicySha256: canonicalSha256("qualification-network"),
@@ -807,7 +815,7 @@ async function qualifyAttemptRunner(): Promise<string> {
 			retries: 0,
 			resumes: 0,
 		},
-		memoryCeilingBytes: 512 * 1024 * 1024,
+		memoryCeilingBytes: DEFAULT_MEMORY_BYTES,
 		prompt:
 			"Read task.txt with the read tool, then respond with exactly its single-line content and nothing else.",
 		scope: "builtin" as const,
@@ -855,7 +863,7 @@ async function qualifyAttemptRunner(): Promise<string> {
 			baselineSha256: workspaceIdentity,
 		},
 		sandbox: {
-			packageVersion: "0.12.0",
+			packageVersion: "0.14.0",
 			imageSha256: canonicalSha256("qualification-image"),
 			mountPolicySha256: canonicalSha256("qualification-mount"),
 			networkPolicySha256: canonicalSha256("qualification-network"),
@@ -984,6 +992,7 @@ async function qemuVersion(): Promise<string> {
 }
 
 async function main() {
+	const image = await ensureImageSelector(GUEST_IMAGE_SELECTOR);
 	await setupFixtures();
 	await check("read-only workspace", qualifyReadOnly);
 	await check("tool routing and host boundary", qualifyToolsAndBoundary);
@@ -1007,7 +1016,8 @@ async function main() {
 		platform: process.platform,
 		architecture: process.arch,
 		node: process.version,
-		gondolin: "0.12.0",
+		gondolin: GONDOLIN_VERSION,
+		image: { selector: GUEST_IMAGE_SELECTOR, buildId: image.buildId },
 		qemu: await qemuVersion(),
 		fixtureRoot: root,
 		checks,

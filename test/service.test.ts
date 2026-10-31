@@ -219,7 +219,7 @@ async function serviceFor(
 			maxSlots: 2,
 		}),
 		sandbox: {
-			packageVersion: "0.12.0",
+			packageVersion: "0.14.0",
 			imageSha256: hash,
 			mountPolicySha256: hash,
 			networkPolicySha256: hash,
@@ -253,7 +253,7 @@ async function worktreeServiceFor(
 			maxSlots: 1,
 		}),
 		sandbox: {
-			packageVersion: "0.12.0",
+			packageVersion: "0.14.0",
 			imageSha256: hash,
 			mountPolicySha256: hash,
 			networkPolicySha256: hash,
@@ -277,7 +277,7 @@ async function reopenService(data: { root: string; agent: DiscoveredAgent }) {
 			maxSlots: 2,
 		}),
 		sandbox: {
-			packageVersion: "0.12.0",
+			packageVersion: "0.14.0",
 			imageSha256: hash,
 			mountPolicySha256: hash,
 			networkPolicySha256: hash,
@@ -435,7 +435,7 @@ describe("foreground subagent service", () => {
 				maxSlots: 2,
 			}),
 			sandbox: {
-				packageVersion: "0.12.0",
+				packageVersion: "0.14.0",
 				imageSha256: hash,
 				mountPolicySha256: hash,
 				networkPolicySha256: hash,
@@ -492,7 +492,7 @@ describe("foreground subagent service", () => {
 				maxSlots: 1,
 			}),
 			sandbox: {
-				packageVersion: "0.12.0",
+				packageVersion: "0.14.0",
 				imageSha256: hash,
 				mountPolicySha256: hash,
 				networkPolicySha256: hash,
@@ -559,7 +559,7 @@ describe("foreground subagent service", () => {
 				maxSlots: 1,
 			}),
 			sandbox: {
-				packageVersion: "0.12.0",
+				packageVersion: "0.14.0",
 				imageSha256: hash,
 				mountPolicySha256: hash,
 				networkPolicySha256: hash,
@@ -871,7 +871,7 @@ describe("foreground subagent service", () => {
 						maxSlots: 1,
 					}),
 					sandbox: {
-						packageVersion: "0.12.0",
+						packageVersion: "0.14.0",
 						imageSha256: hash,
 						mountPolicySha256: hash,
 						networkPolicySha256: hash,
@@ -1125,7 +1125,7 @@ describe("foreground subagent service", () => {
 				maxSlots: 2,
 			}),
 			sandbox: {
-				packageVersion: "0.12.0",
+				packageVersion: "0.14.0",
 				imageSha256: hash,
 				mountPolicySha256: hash,
 				networkPolicySha256: hash,
@@ -1540,7 +1540,7 @@ describe("foreground subagent service", () => {
 				maxSlots: 2,
 			}),
 			sandbox: {
-				packageVersion: "0.12.0",
+				packageVersion: "0.14.0",
 				imageSha256: hash,
 				mountPolicySha256: hash,
 				networkPolicySha256: hash,
@@ -1617,7 +1617,7 @@ describe("foreground subagent service", () => {
 				maxSlots: 2,
 			}),
 			sandbox: {
-				packageVersion: "0.12.0",
+				packageVersion: "0.14.0",
 				imageSha256: hash,
 				mountPolicySha256: hash,
 				networkPolicySha256: hash,
@@ -1686,7 +1686,7 @@ describe("foreground subagent service", () => {
 					maxSlots: 2,
 				}),
 				sandbox: {
-					packageVersion: "0.12.0",
+					packageVersion: "0.14.0",
 					imageSha256: hash,
 					mountPolicySha256: hash,
 					networkPolicySha256: hash,
@@ -2145,7 +2145,7 @@ async function sessionModelServiceFor(
 			maxSlots: 1,
 		}),
 		sandbox: {
-			packageVersion: "0.12.0",
+			packageVersion: "0.14.0",
 			imageSha256: hash,
 			mountPolicySha256: hash,
 			networkPolicySha256: hash,
