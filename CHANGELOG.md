@@ -20,6 +20,9 @@ at an earlier contract revision is quarantined, not read.
 - Fork-context preflight works on Pi 1.4: `convertToLlm` moved from
   `pi-agent-core` to `pi-coding-agent`, and the old import left every
   `contextMode: "fork"` request failing.
+- A brokered web tool result with `isError: true` reaches the child as an
+  error. Pi honours the flag since 0.99 and the result was rebuilt without it;
+  `terminate` is still dropped.
 
 ## 0.15.0
 

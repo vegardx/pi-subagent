@@ -132,6 +132,30 @@ describe("host-brokered web tools", () => {
 		expect(called).toBe(false);
 	});
 
+	it("forwards a provider error result but not a turn termination", async () => {
+		const [fetch] = discoverWebHostTools(eventsWith(provider()));
+		if (!fetch) throw new Error("fetch tool missing");
+		const result = await executeBoundedHostTool(
+			{
+				...fetch,
+				execute: async () => ({
+					content: [{ type: "text" as const, text: "upstream refused" }],
+					details: {},
+					isError: true,
+					terminate: true,
+				}),
+			},
+			{ id: "owner", runId: "run_test", attemptId: "attempt_test" },
+			{},
+			new AbortController().signal,
+		);
+		expect(result.isError).toBe(true);
+		expect(result.terminate).toBeUndefined();
+		expect(result.content).toEqual([
+			{ type: "text", text: "upstream refused" },
+		]);
+	});
+
 	it("rejects duplicate and incompatible providers", () => {
 		expect(() =>
 			discoverWebHostTools(eventsWith(provider(), provider())),
