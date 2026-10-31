@@ -6,6 +6,47 @@ The project keeps no backwards compatibility: an incompatible public contract or
 persisted format fails explicitly instead of migrating. Persisted state written
 at an earlier contract revision is quarantined, not read.
 
+## 0.20.0
+
+Contract revision 12. Revision 11 state is quarantined, not read.
+
+Upgrading: a host that ran 0.19 recorded `maxSlots: 4` in
+`<agentDir>/subagents/capacity/policy.json`. With the new default of 16 every
+seat refuses to run attempts, naming both values and that file, until either
+`<agentDir>/subagents/settings.json` sets `"maxSlots": 4` or the policy file is
+removed while no pi-subagent seat is running.
+
+### Added
+
+- `maxSlots` setting in `<agentDir>/subagents/settings.json`
+  (`{ "maxSlots"?: integer 1..32 }`, no other keys), default 16 (was a fixed
+  4). An invalid file refuses the extension load by path. The runtime contract
+  reports it as `capacity.maxSlots`, so a host can cap its fan-out.
+- `capacityWait` feature: an attempt whose host has no free VM slot waits for
+  one, polling with backoff, up to `capacityWaitMs` (10 minutes, clamped to the
+  run's remaining cumulative runtime). The wait stops when the attempt is
+  cancelled and is not charged to `attemptTimeoutMs`; `runtimeMs` stays
+  wall-clock.
+- Failure code `capacity`, origin `service`, retry `backoff` with
+  `retryAfterMs` 30 000, for an attempt that never got a slot. Its message is
+  `VM capacity exhausted: <N> slots busy for <S> s`, built from the slot count
+  and the measured wait.
+- `createSubagentRuntimeContract`, `SUBAGENT_RUNTIME_FEATURES`,
+  `readSubagentSettings`, `DEFAULT_MAX_SLOTS`, `MAX_SLOTS`, and
+  `DEFAULT_CAPACITY_WAIT_MS` are exported. `registerSubagentServiceProvider`
+  takes the contract to publish.
+
+### Fixed
+
+- A full host refused attempts at once as `unknown`/`reconcile` with
+  `usageComplete: false`, so a caller that treats incomplete usage as a refusal
+  failed whole runs. Attempts now wait for a slot, and a refusal is typed.
+- `usageComplete` is `true`, with zero usage, for any attempt that ended before
+  its model session existed: a capacity refusal, a VM that failed to construct
+  or start, or a refused model. Nothing ran, so nothing is missing.
+- The capacity policy mismatch message names this seat's and the recorded
+  `maxSlots` and `basePort` and the policy file.
+
 ## 0.19.0
 
 Contract revision 11. Revision 10 state is quarantined, not read: a revision 10

@@ -37,6 +37,7 @@ these definitions rather than redefine them.
 | Capability | Stable semantic permission mapped to concrete tools and resources. |
 | Authority ceiling | Maximum capabilities an agent definition permits. Calls may narrow but not widen it. |
 | Memory ceiling | Per-agent maximum guest VM memory (`memoryBytes`): a multiple of 64 MiB from 1 GiB to 4 GiB, default 1 GiB. A launch request may narrow it; the resolved value is part of the launch identity. |
+| VM capacity slot | One of `maxSlots` (default 16, at most 32) host-wide leases, held as an OS-owned localhost listener, that an attempt holds while its VM runs. An attempt waits up to `capacityWaitMs` for one before failing as `capacity`. |
 | Workspace write budget | Cumulative `workspaceWriteBytes` bound enforced by the workspace VFS. Exhaustion refuses guest writes with `EDQUOT` and classifies the attempt `workspace-budget`. |
 | Resource projection | Immutable resolution of tools, normal skill catalog, forced skill preloads, scoped context files, fork transcript, and prompts granted to an attempt. |
 | Context scope | Explicit `global` or trusted `project` selection of Pi context files, separate from transcript fork mode. |
