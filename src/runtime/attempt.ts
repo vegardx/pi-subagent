@@ -391,6 +391,8 @@ export async function runNativeAttempt(options: {
 			workspace: options.workspacePath,
 			readOnly: options.plan.workspace.mode === "read-only",
 			workspaceWriteBytes: options.plan.limits.workspaceWriteBytes,
+			createDependencyMountpoints:
+				options.worktree !== undefined || options.snapshot !== undefined,
 			capacity: options.capacity,
 			capacityWait: {
 				signal: runSignal,

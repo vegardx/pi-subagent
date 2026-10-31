@@ -113,6 +113,22 @@ The VM receives `/workspace` and only explicitly declared auxiliary mounts.
 Host home, Pi configuration, provider authentication, runtime state, and
 unrelated repositories are absent.
 
+Dependency directories are taken off the workspace mount. Before any tool
+runs, the root `node_modules` and each npm `workspaces` member's `node_modules`
+(literal or single-segment `*` patterns; `**` and negations are skipped) are
+bind-mounted in the guest onto `/var/lib/pi-subagent/deps/<digest>` on the
+attempt's root disk. A directory is bound only when the workspace's own Git
+reports it ignored (`git check-ignore`), so binding never changes what reaches
+a handoff: the handoff is a Git commit and ignored paths were never in it.
+Symlinked, non-directory, and unignored candidates are skipped, and the sandbox
+record lists every bound and skipped path with its reason. The host creates an
+absent mountpoint, empty, only in a checkout it owns (a worktree or a
+read-only snapshot); in the operator's live checkout an absent directory is
+skipped. Consequence: what the guest installs into a bound directory lives on
+the root disk and never reaches the host, and a bound directory hides the host
+directory's existing contents from the guest. A bind that fails fails the
+start as `sandbox-launch`.
+
 Read-only attempts receive a `ReadonlyProvider`. Writing attempts receive a
 `RealFSProvider` rooted at a private worktree and wrapped in the
 `workspaceWriteBytes` budget. A write past the budget is refused with `EDQUOT`

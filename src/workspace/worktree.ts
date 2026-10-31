@@ -169,7 +169,7 @@ export class WorktreeError extends Error {
 	}
 }
 
-function gitEnvironment(): NodeJS.ProcessEnv {
+export function gitEnvironment(): NodeJS.ProcessEnv {
 	const environment: NodeJS.ProcessEnv = {
 		GIT_AUTHOR_EMAIL: "pi-subagent@localhost",
 		GIT_AUTHOR_NAME: "pi-subagent",
