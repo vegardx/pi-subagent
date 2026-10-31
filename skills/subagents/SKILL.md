@@ -253,20 +253,26 @@ Every failure carries a `retry` class. It decides what is even possible:
 
 | Class | Meaning | What to do |
 | --- | --- | --- |
-| `backoff` | transient provider or sandbox-launch failure | one retry after the given delay is reasonable |
+| `backoff` | transient provider or sandbox-launch failure, or no free VM slot | one retry after the given delay is reasonable |
 | `manual` | a fatal guest tool abort ("Guest command timeout closed the attempt VM") or an attempt timeout ("Attempt runtime limit exceeded") | change the task or the budget, then retry |
 | `resume` | the seat was interrupted mid-run | resume preserves the session |
 | `reconcile` | cleanup, lease, persistence, or workspace state is unresolved, or the failure is unclassified | the human reconciles; do not retry |
 | `never` | authentication, cancellation, bad model output, resource drift, or an exceeded token/cost or workspace-write budget | do not retry; report it |
 
 Codes the runtime actually emits, which you should name rather than
-paraphrase: `authentication`, `cancellation`, `lease-loss`, `model-output`,
-`operator-abandoned`, `persistence`, `provider-transient`, `resource-drift`,
-`sandbox-cleanup`, `sandbox-launch`, `seat-interruption`, `timeout`,
-`tool`, `unknown`, `validation`, `workspace`,
+paraphrase: `authentication`, `cancellation`, `capacity`, `lease-loss`,
+`model-output`, `operator-abandoned`, `persistence`, `provider-transient`,
+`resource-drift`, `sandbox-cleanup`, `sandbox-launch`, `seat-interruption`,
+`timeout`, `tool`, `unknown`, `validation`, `workspace`,
 `workspace-budget`. The contract also declares `mount-policy`,
 `network-policy`, `sandbox-capability`, and `trust`, which no current code
 path produces - do not predict them.
+
+`capacity` - every VM slot on the host stayed busy for the whole capacity
+wait, so the attempt never started a VM
+(`VM capacity exhausted: <N> slots busy for <S> s`). Nothing ran: its zero
+usage is complete. Retry after the given delay, or launch fewer attempts at
+once.
 
 `workspace-budget` - the attempt exhausted its `workspaceWriteBytes` budget.
 Guest writes under `/workspace` were refused with `EDQUOT` ("Disk quota

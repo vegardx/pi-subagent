@@ -1,6 +1,16 @@
 import type { ClassifiedFailure, CleanupOutcome } from "../contracts.js";
+import {
+	VmCapacityExhaustedError,
+	vmCapacityExhaustedMessage,
+} from "../sandbox/capacity.js";
 
 const MAX_MESSAGE_BYTES = 4096;
+/**
+ * The retry delay a capacity refusal suggests. The attempt already waited the
+ * whole capacity bound, so the slots are busy with long work; backoff doubles
+ * it per attempt ordinal up to the 300 s ceiling.
+ */
+export const CAPACITY_RETRY_AFTER_MS = 30_000;
 
 function boundedMessage(error: unknown): string {
 	const raw = error instanceof Error ? error.message : String(error);
@@ -85,6 +95,19 @@ export function classifyAttemptFailure(options: {
 			"never",
 			"The operator cancelled the active attempt",
 			"Start a new run if the cancelled task is still required.",
+		);
+	}
+	if (options.error instanceof VmCapacityExhaustedError) {
+		return failure(
+			"capacity",
+			"service",
+			"backoff",
+			vmCapacityExhaustedMessage(
+				options.error.maxSlots,
+				options.error.waitedMs,
+			),
+			"Every VM slot stayed busy for the whole capacity wait; retry after the backoff delay or launch fewer concurrent attempts.",
+			CAPACITY_RETRY_AFTER_MS,
 		);
 	}
 	if (

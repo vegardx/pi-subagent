@@ -12,7 +12,11 @@ import {
 	captureQemuProcessIdentity,
 	type ProcessIdentity,
 } from "../reconciliation/process.js";
-import type { VmCapacityLease, VmCapacityManager } from "./capacity.js";
+import type {
+	VmCapacityAcquireOptions,
+	VmCapacityLease,
+	VmCapacityManager,
+} from "./capacity.js";
 import { createGondolinTools } from "./tools.js";
 import { type WriteBudget, withWriteBudget } from "./write-budget.js";
 
@@ -117,6 +121,8 @@ export async function createGondolinAttemptSandbox(options: {
 	readOnly: boolean;
 	workspaceWriteBytes: number;
 	capacity: VmCapacityManager;
+	/** Bounds and cancels the wait for a free VM slot. */
+	capacityWait?: VmCapacityAcquireOptions;
 	memoryBytes: number;
 	cpus?: number;
 	startTimeoutMs?: number;
@@ -188,7 +194,10 @@ export async function createGondolinAttemptSandbox(options: {
 	const memory = guestMemorySize(options.memoryBytes);
 	const cpus = options.cpus ?? DEFAULT_CPUS;
 	const startTimeoutMs = options.startTimeoutMs ?? DEFAULT_START_TIMEOUT_MS;
-	const capacityLease = await options.capacity.acquire(options.owner);
+	const capacityLease = await options.capacity.acquire(
+		options.owner,
+		options.capacityWait,
+	);
 	let vm: VM;
 	try {
 		vm = await VM.create({

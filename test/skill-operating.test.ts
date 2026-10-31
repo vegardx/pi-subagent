@@ -492,6 +492,10 @@ describe("operating skill quoted runtime messages", () => {
 			],
 			["limit exceeds ceiling: <key>", `limit exceeds ceiling: ${slot("key")}`],
 			[
+				"VM capacity exhausted: <N> slots busy for <S> s",
+				`VM capacity exhausted: ${slot("maxSlots")} slots busy for ${slot("seconds")} s`,
+			],
+			[
 				"<action> is unavailable while the run is <status>",
 				`${slot("subcommand")} is unavailable while the run is ${slot("run.status")}`,
 			],
