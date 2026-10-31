@@ -5,7 +5,7 @@ description: Use when delegating one bounded task to an isolated Pi subagent thr
 
 # Operating Pi subagents
 
-This skill covers `@vegardx/pi-subagent` 0.18.0, contract revision 11. Every
+This skill covers `@vegardx/pi-subagent` 0.19.0, contract revision 11. Every
 claim is taken from the runtime source (`src/extension.ts`, `src/service.ts`,
 `src/contracts.ts`, `src/launch-contracts.ts`, `src/preflight/*`,
 `src/sandbox/*`, `src/runtime/*`, `src/workspace/worktree.ts`) and is pinned
@@ -81,7 +81,8 @@ Things that surprise people:
 - **`timeoutMs` sets the whole budget.** It is the per-attempt timeout, and
   the run's cumulative runtime becomes the smaller of one hour and
   `timeoutMs` times three, because one retry and one resume are
-  pre-authorized.
+  pre-authorized. VM boot is not charged to `timeoutMs`: a guest that never
+  becomes ready fails as `sandbox-launch`, not `timeout`.
 - **Leave `memoryBytes` unset for nearly every task.** The 1 GiB default is
   right for nearly all work; raise it only for memory-heavy work such as a large
   build or test suite. It goes from 1 GiB to 4 GiB in 64 MiB steps and cannot

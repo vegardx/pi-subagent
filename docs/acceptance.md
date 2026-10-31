@@ -132,6 +132,12 @@ Using bounded disposable fixtures:
   `workspaceWriteBytes`;
 - a per-agent VM memory ceiling is enforced: a request above the ceiling fails
   preflight and the resolved grant is bound into the launch identity;
+- guest memory is bounded to 1 GiB..4 GiB in 64 MiB steps, default 1 GiB: a
+  request or definition below 1 GiB is refused by the schema, because a smaller
+  guest never reaches readiness;
+- a guest that does not become ready within the 60 s start bound fails as
+  `sandbox-launch` with a message built from the launch's own timeout and
+  memory, and VM boot is not charged to `attemptTimeoutMs`;
 - output and artifact streams truncate or fail at documented bounds;
 - a fork loop or CPU loop remains confined and is stopped by cancellation or
   timeout;
