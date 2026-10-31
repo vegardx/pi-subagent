@@ -10,6 +10,9 @@ at an earlier contract revision is quarantined, not read.
 
 Contract revision 12. Revision 11 state is quarantined, not read.
 
+The first launch downloads the pinned guest image `alpine-base:0.4.0`
+(about 330 MB) into the Gondolin image cache.
+
 Upgrading: a host that ran 0.19 recorded `maxSlots: 4` in
 `<agentDir>/subagents/capacity/policy.json`. With the new default of 16 every
 seat refuses to run attempts, naming both values and that file, until either
@@ -35,6 +38,34 @@ removed while no pi-subagent seat is running.
   `readSubagentSettings`, `DEFAULT_MAX_SLOTS`, `MAX_SLOTS`, and
   `DEFAULT_CAPACITY_WAIT_MS` are exported. `registerSubagentServiceProvider`
   takes the contract to publish.
+
+- Warm per-project checkpoints for npm projects: an attempt whose workspace has
+  `package-lock.json` boots from a Gondolin disk checkpoint on which a
+  model-free warm-up already ran `npm ci`, under
+  `<agentDir>/subagents/checkpoints` (20 GiB, least recently used evicted,
+  leased and in-progress keys kept). The sandbox record's `boot` states warm or
+  cold, the warm-up outcome, the checkpoint key, and any warm-up failure code.
+- Git-ignored `node_modules` directories (root and npm `workspaces` members)
+  are bind-mounted onto the guest root disk before tools start; the sandbox
+  record's `dependencies` lists bound and skipped paths with reasons.
+- `sandbox.rootfsPolicySha256` in the launch grant.
+
+### Changed
+
+- Gondolin 0.14.0 (was 0.12.0), whose fs-rpc ordering closes a path-check race
+  on `RealFSProvider` mounts and whose `VM.close()` is terminal. The guest image
+  is pinned by ref to `alpine-base:0.4.0`: Gondolin's default selector resolves
+  a locally cached `latest` that is never refreshed, which on an upgraded host
+  is an older image. The grant's `packageVersion` comes from the installed
+  package.
+- Each attempt boots on a 4 GiB copy-on-write root disk (per-VM qcow2 overlay,
+  deleted at close) with Gondolin's scratch tmpfs set disabled, so `/tmp` and
+  `/var/cache` no longer spend guest memory. `guestDiskBytes` is that disk's
+  size. The guest cache root moves from `/tmp/cache` to
+  `/var/cache/pi-subagent`.
+- The mount policy digest covers dependency binds (`GUEST_MOUNT_POLICY`).
+- Docs no longer call the rootfs memory-backed or 1 GiB the boot floor: the
+  pinned image boots at 96 MiB; 1 GiB stays as a workload floor.
 
 ### Fixed
 
