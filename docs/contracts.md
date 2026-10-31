@@ -78,8 +78,10 @@ interface DelegationCeiling {
 }
 
 type WorkspaceRequest =
-	| { mode: "read-only"; cwd: string }
-	| { mode: "worktree"; cwd: string };
+	| { mode: "read-only"; cwd: string; startAt?: CommitId }
+	| { mode: "worktree"; cwd: string; startAt?: CommitId };
+
+type CommitId = string; // ^[a-f0-9]{40,64}$
 
 interface RunLimits {
 	cumulativeRuntimeMs: number; // cumulative across every attempt
@@ -111,6 +113,21 @@ interface OwnerRegistration {
 	resultDestination?: string;
 }
 ```
+
+`startAt` is the hand-off commit the workspace is checked out at. Preflight
+refuses, by name, a commit the repository at `cwd` does not hold ("workspace
+startAt commit does not exist in the repository"), one no
+`refs/pi-subagent/handoffs/<run-id>/<attempt-id>` ref points at ("workspace
+startAt is not the target of a hand-off ref in this repository"), and one whose
+sole parent is not the current HEAD ("workspace startAt must have exactly one
+parent, the repository HEAD"). The commit is bound into `baselineSha256` and
+recorded as `workspace.startAt` in the launch plan, so retry and resume start at
+it again. A `worktree` workspace is checked out at the commit on a private
+branch; a `read-only` workspace gets a detached host checkout of it, mounted
+read-only and removed when the attempt's VM is closed. Without `startAt` both
+modes behave as before: the worktree starts at HEAD and a read-only attempt
+mounts the live checkout. The guest never applies a hand-off and has no `git`;
+the host prepares the tree.
 
 `agentRoots` lets an owner that ships agent definitions with its own package
 name the directories holding them. Each entry must be absolute; a relative entry
@@ -415,7 +432,13 @@ content is part of the commit pair, and `.git/info/attributes` is treated as
 part of the repository identity, so editing it changes the rendering. Consumers
 verify `sha256` and `bytes`, then `git am` or `git apply --index` the patch onto
 `baselineHead`. The handoff must be exactly one non-merge commit whose sole
-parent is `baselineHead`; anything else is refused. Export is owner-scoped like
+parent is `baselineHead`; anything else is refused. The host squashes: whether
+the worktree started at HEAD or at a `startAt` hand-off, capture writes one
+commit whose tree is the worktree's final tree and whose parent is
+`baselineHead`, so a hand-off started from another carries both. "No changes"
+means the final tree equals the start commit's tree, and then there is no
+handoff; a final tree equal to the baseline's while starting at a hand-off is
+refused by name rather than exported as an empty patch. Export is owner-scoped like
 `exportArtifact`, requires a durable `completed`, `failed`, `cancelled`, or
 `cleanup-blocked` result whose `handoff` carries a `handoffCommit`, holds the
 run lease while reading the repository, and is bounded by `maxBytes` and the
@@ -573,11 +596,12 @@ interface SubagentRuntimeContract {
 		agentRootsFirst: boolean;
 		delegationCeiling: boolean;
 		sessionModelInherit: boolean;
+		workspaceStartAt: boolean;
 	};
 }
 ```
 
-The current revision is 9. `handoffExport` states that `exportHandoff`,
+The current revision is 10. `handoffExport` states that `exportHandoff`,
 `HandoffRef`, the `export-handoff` action, durable handoff refs, and the
 `handoff-exported` receipt are implemented. `vmMemoryCeiling` states that agent
 definitions carry an optional `memoryBytes` ceiling, that a request may narrow
@@ -594,8 +618,12 @@ that the `subagent` tool consults at every launch. `sessionModelInherit` states
 that a request's `model` may be the literal `inherit`, that a host may register
 one session-model provider which preflight and the `subagent` tool consult, that
 a definition's `allowedModels` may admit `inherit`, and that the compiled plan
-records the resolved exact model and its `modelSource`. Revision 9 adds
-`modelSource` to the persisted launch plan, so revision 8 state is not read.
+records the resolved exact model and its `modelSource`. `workspaceStartAt`
+states that `WorkspaceRequest.startAt` is accepted and refused by name unless it
+is a hand-off of the current HEAD, that both workspace modes start at it, and
+that the export squashes onto `baselineHead`. Revision 10 adds `startAt` to the
+request, the persisted launch plan, and the run record, `startCommit` to the
+worktree record, and the snapshot record, so revision 9 state is not read.
 Consumers check the exact contract
 revision and required features rather than
 infer support from package versions. Revisions are not backwards-compatible:

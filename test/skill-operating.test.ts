@@ -32,7 +32,10 @@ import {
 import { AgentFrontmatterSchema } from "../src/preflight/agents.js";
 import { BUDGET_STEERING_STAGES } from "../src/runtime/budget.js";
 import { HOST_TOOL_NAMES } from "../src/runtime/host-tools.js";
-import { GUEST_CACHE_HOME } from "../src/sandbox/tools.js";
+import {
+	GUEST_CACHE_HOME,
+	TOOL_CALL_DEADLINE_MS,
+} from "../src/sandbox/tools.js";
 import {
 	HANDOFF_EXPORT_STATUSES,
 	IMPLEMENTED_TOOLS,
@@ -380,6 +383,14 @@ describe("operating skill budgets, isolation, and evidence", () => {
 		);
 	});
 
+	it("states the guest tool-call bound the sandbox enforces", () => {
+		const seconds = TOOL_CALL_DEADLINE_MS / 1000;
+		expect(flatSkill).toContain(
+			`Every guest tool call is bounded at ${seconds} seconds.`,
+		);
+		expect(flatSkill).toContain("The guest has no `git`.");
+	});
+
 	it("states the contract features that bound delegation", () => {
 		expect(SUBAGENT_RUNTIME_CONTRACT.features.background).toBe(false);
 		expect(SUBAGENT_RUNTIME_CONTRACT.features.survivesSeatExit).toBe(false);
@@ -389,12 +400,14 @@ describe("operating skill budgets, isolation, and evidence", () => {
 		);
 		expect(SUBAGENT_RUNTIME_CONTRACT.features.delegationCeiling).toBe(true);
 		expect(SUBAGENT_RUNTIME_CONTRACT.features.sessionModelInherit).toBe(true);
+		expect(SUBAGENT_RUNTIME_CONTRACT.features.workspaceStartAt).toBe(true);
 		expect(flatSkill).toContain("`background: false`");
 		expect(flatSkill).toContain("`survivesSeatExit: false`");
 		expect(flatSkill).toContain("`vmMemoryCeiling: true`");
 		expect(flatSkill).toContain("`workspaceBudgetRefusal: true`");
 		expect(flatSkill).toContain("`delegationCeiling: true`");
 		expect(flatSkill).toContain("`sessionModelInherit: true`");
+		expect(flatSkill).toContain("`workspaceStartAt: true`");
 	});
 
 	it("quotes the refusal a launch hits with no session model to inherit", () => {

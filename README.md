@@ -61,7 +61,7 @@ inferred, and what a worktree handoff requires from a human.
 
 The project does not provide backwards compatibility. Public contracts and
 persisted formats may change incompatibly; consumers must use the exact supported
-contract revision. The current contract revision is 9.
+contract revision. The current contract revision is 10.
 
 ## Agent definitions
 
@@ -108,6 +108,15 @@ Guest package-manager caches are redirected outside the workspace
 never appear in a handoff patch. When a writing attempt does exhaust
 `workspaceWriteBytes`, guest writes fail with `EDQUOT` and the attempt records
 the `workspace-budget` failure code.
+
+Every guest tool call is bounded at 300 s: a file tool returns an error naming
+the bound, a search rooted at `/` is refused, and `bash` runs under the smaller
+of the bound and its own `timeout` (expiry closes the VM).
+
+A service request may set `workspace.startAt` to a handoff commit whose parent
+is HEAD and that a `refs/pi-subagent/handoffs/...` ref points at. The host
+checks the workspace out at that commit in either mode and squashes the result
+into one commit on HEAD; the guest has no `git` and never applies a handoff.
 
 ## Models
 
@@ -253,7 +262,8 @@ runtime contract before starting work and never creates, replaces, or shuts down
 the physical execution service. Revision 7 adds the `vmMemoryCeiling` and
 `workspaceBudgetRefusal` features and the `workspace-budget` failure code; a
 consumer pinned to revision 6 must move to 7, because persisted state and the
-feature set are not backwards compatible.
+feature set are not backwards compatible. Revision 10 adds `workspaceStartAt`,
+so a consumer can require by name that work starts at a handoff.
 
 ## License
 
