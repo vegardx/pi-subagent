@@ -10,11 +10,10 @@ import {
 } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
+import { MAX_SLOTS } from "../contracts.js";
 
 const MIN_DERIVED_PORT = 42_000;
 const DERIVED_PORT_SPAN = 20_000;
-export const MAX_SLOTS = 32;
-export const DEFAULT_MAX_SLOTS = 16;
 /**
  * How long `acquire` waits for a slot before refusing. Slots are short leases
  * held for one attempt's VM, so a full host is normally a queue, not a fault.

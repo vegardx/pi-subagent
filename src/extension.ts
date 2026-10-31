@@ -13,6 +13,7 @@ import {
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { resolveDelegationCeiling } from "./ceiling-provider.js";
+import { createSubagentRuntimeContract } from "./contracts.js";
 import {
 	DEFAULT_MAX_TASK_COST,
 	DEFAULT_MEMORY_BYTES,
@@ -35,6 +36,7 @@ import {
 } from "./service.js";
 import { registerSubagentServiceProvider } from "./service-provider.js";
 import { resolveSessionModel } from "./session-model-provider.js";
+import { readSubagentSettings } from "./settings.js";
 import { formatBytes } from "./ui/format.js";
 import {
 	attentionWidgetLines,
@@ -211,6 +213,12 @@ export async function discoverExtensionAgents(
 }
 
 export default function piSubagentExtension(pi: ExtensionAPI): void {
+	// Read before anything registers: the published contract reports maxSlots,
+	// and an invalid settings file refuses the extension instead of guessing.
+	const settings = readSubagentSettings(getAgentDir());
+	const runtimeContract = createSubagentRuntimeContract({
+		maxSlots: settings.maxSlots,
+	});
 	const agents = new Map<string, DiscoveredAgent>();
 	let modelRuntime: ModelRuntime | undefined;
 	let service: SubagentService | undefined;
@@ -258,12 +266,13 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 					if (!manifest) {
 						throw new Error("Gondolin image manifest is unavailable.");
 					}
-					// Host memory exposure is slots x per-run memoryBytes. With four
-					// slots and the 4 GiB per-run ceiling the worst case is 16 GiB of
-					// guest memory; there is no separate total-memory budget.
+					// Host memory exposure is slots x per-run memoryBytes. With the
+					// default sixteen slots that is 16 GiB of guest memory at the 1 GiB
+					// default and 64 GiB at the 4 GiB per-run ceiling; there is no
+					// separate total-memory budget.
 					const capacity = await capacityModule.createVmCapacityManager({
 						root: path.join(getAgentDir(), "subagents", "capacity"),
-						maxSlots: 4,
+						maxSlots: runtimeContract.capacity.maxSlots,
 					});
 					const rootfs = await stat(assets.rootfsPath);
 					return {
@@ -305,6 +314,7 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 
 	const unregisterServiceProvider = registerSubagentServiceProvider(
 		pi.events,
+		runtimeContract,
 		ensureService,
 	);
 

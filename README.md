@@ -101,7 +101,22 @@ Agent prompt.
 1 GiB to 4 GiB; a request above the agent ceiling fails preflight. Raise it for
 memory-hungry guest toolchains such as a full-repository `tsc --noEmit`. Guest
 vCPU count is fixed at one. Host memory exposure is the VM capacity slot count
-(4) times the per-run grant.
+times the per-run grant.
+
+At most `maxSlots` attempt VMs run at once on the host, across every seat. It
+defaults to 16 and is set in `<agentDir>/subagents/settings.json`:
+
+```json
+{ "maxSlots": 8 }
+```
+
+The value must be an integer from 1 to 32; an invalid file stops the extension
+from loading. All seats on a host must use the same value: the first records it
+in `<agentDir>/subagents/capacity/policy.json`, and a seat with a different
+setting refuses to run attempts until the setting matches or that file is
+removed while no seat runs. When every slot is busy an attempt waits up to 10
+minutes for one, uncharged to its timeout, and then fails with the `capacity`
+failure code.
 
 Guest package-manager caches are redirected outside the workspace
 (`XDG_CACHE_HOME=/tmp/cache`), so they never consume `workspaceWriteBytes` and
@@ -268,6 +283,9 @@ adds `resumeAtHandoff` within revision 10: `resume(runId, { continueFromHandoff:
 true, message })` continues a finished worktree run's session at its latest
 handoff. Revision 11 raises the guest memory floor and default to 1 GiB, so a
 plan or definition below it is refused and revision 10 state is not read.
+Revision 12 reports the host's `capacity.maxSlots` so a consumer can cap
+fan-out, adds `capacityWait` and the `capacity` failure code, and reports
+`usageComplete: true` for attempts that ended before a model session existed.
 
 ## License
 
