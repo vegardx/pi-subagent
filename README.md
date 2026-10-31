@@ -226,7 +226,7 @@ win and a project or global agent of the same name cannot shadow one. With no co
 Gondolin or alter standalone subagent behavior.
 
 Pi loads the declared extension from `dist/extension.js`. The supported release
-line requires Pi `>=0.85.0 <0.86`, Node.js 23.6 or newer, and macOS Apple Silicon
+line requires Pi `>=1.4.0 <2`, Node.js 23.6 or newer, and macOS Apple Silicon
 with the qualified Gondolin/QEMU stack.
 
 ## Documentation
