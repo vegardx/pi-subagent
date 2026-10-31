@@ -40,6 +40,7 @@ const events = {
 	blockCleanup: { type: "cleanup-blocked" },
 	retry: { type: "retry" },
 	resume: { type: "resume" },
+	resumeAtHandoff: { type: "resume-at-handoff" },
 	abandon: {
 		type: "abandon",
 		sandboxCleanup: "proved",
@@ -78,6 +79,9 @@ const expected = new Map<string, RunStatus>([
 	["stopping:cancel", "cancelled"],
 	["stopping:blockCleanup", "cleanup-blocked"],
 	["failed:retry", "queued"],
+	["failed:resumeAtHandoff", "queued"],
+	["completed:resumeAtHandoff", "queued"],
+	["cancelled:resumeAtHandoff", "queued"],
 	["interrupted:resume", "queued"],
 	["interrupted:abandon", "abandoned"],
 	["cleanup-blocked:cleanupProved", "completed"],
