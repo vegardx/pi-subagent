@@ -34,4 +34,5 @@ from pi-workflow and pi-maestro policy.
 - Do not preserve backwards compatibility. Incompatible public contracts,
   consumers, or persisted state must fail explicitly; do not add aliases,
   adapters, migration shims, or dual-format readers.
-- Use Conventional Commits.
+- Use Conventional Commits; the husky `commit-msg` hook
+  (`scripts/commit-msg.mjs`) enforces them.
