@@ -127,7 +127,10 @@ export type WorktreeRecord = {
 	recordPath: string;
 	branch: string;
 	baselineHead: string;
-	/** The hand-off commit the worktree was checked out at, when not HEAD. */
+	/**
+	 * The hand-off commit the worktree was checked out at, when not HEAD: the
+	 * workspace's `startAt`, or the run's own hand-off a resume continues from.
+	 */
 	startCommit?: string;
 	createdAt: string;
 	handoffCommit?: string;
@@ -299,12 +302,36 @@ function identitySegment(value: string, length: number): string {
 	return createHash("sha256").update(value).digest("hex").slice(0, length);
 }
 
+/**
+ * A worktree that continues a run from its own hand-off starts at that
+ * hand-off but keeps the hand-off's baseline, so its capture squashes onto the
+ * same baseline and replaces the earlier hand-off rather than stacking on it.
+ */
+async function continuedStartCommit(
+	runId: RunId,
+	workspace: WorkspacePreflight,
+	handoff: WorktreeRecord,
+): Promise<string> {
+	if (handoff.runId !== runId || !handoff.handoffCommit) {
+		throw new WorktreeError("continued hand-off does not belong to this run");
+	}
+	if (handoff.baselineHead !== workspace.head) {
+		throw new WorktreeError(
+			"repository HEAD is not the baseline of the hand-off being continued",
+		);
+	}
+	await assertHandoffReachable(handoff);
+	return handoff.handoffCommit;
+}
+
 export async function createAttemptWorktree(options: {
 	root: string;
 	runId: RunId;
 	attemptId: AttemptId;
 	workspace: WorkspacePreflight;
 	lease: RunLease;
+	/** The run's own hand-off this attempt continues from, in place of `startAt`. */
+	continueFrom?: WorktreeRecord;
 }): Promise<WorktreeRecord> {
 	if (options.lease.record.runId !== options.runId) {
 		throw new WorktreeError("worktree run lease identity mismatch");
@@ -315,6 +342,13 @@ export async function createAttemptWorktree(options: {
 			"writing worktree requires a clean worktree preflight",
 		);
 	}
+	const start = options.continueFrom
+		? await continuedStartCommit(
+				options.runId,
+				options.workspace,
+				options.continueFrom,
+			)
+		: options.workspace.startAt;
 	await mkdir(options.root, { recursive: true, mode: 0o700 });
 	const root = await realpath(options.root);
 	const worktreesRoot = path.join(root, "worktrees");
@@ -334,9 +368,7 @@ export async function createAttemptWorktree(options: {
 		recordPath,
 		branch,
 		baselineHead: options.workspace.head,
-		...(options.workspace.startAt
-			? { startCommit: options.workspace.startAt }
-			: {}),
+		...(start ? { startCommit: start } : {}),
 		createdAt: new Date().toISOString(),
 	};
 	const reservation = await open(recordPath, "wx", 0o600).catch((error) => {

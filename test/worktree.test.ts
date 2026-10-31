@@ -704,6 +704,110 @@ describe("worktree started at a hand-off", () => {
 	});
 });
 
+describe("worktree continuing the run's own hand-off", () => {
+	async function continuedFixture(name: string) {
+		const repositoryRoot = await repository(name);
+		const baselineHead = await git(repositoryRoot, "rev-parse", "HEAD");
+		const managerRoot = fixture(`manager-${name}`);
+		const runId = "run_continued";
+		const lease = await acquireRunLease({
+			root: path.join(managerRoot, "leases"),
+			runId,
+		});
+		const workspace = await preflightWorkspace({
+			mode: "worktree",
+			cwd: repositoryRoot,
+		});
+		const first = await createAttemptWorktree({
+			root: managerRoot,
+			runId,
+			attemptId: "attempt_first",
+			workspace,
+			lease,
+		});
+		await writeFile(path.join(first.worktreePath, "first.txt"), "first\n");
+		const handoff = await finalizeWorktreeHandoff(first, "test: first", lease);
+		if (!handoff?.handoffCommit) throw new Error("fixture has no hand-off");
+		return {
+			repositoryRoot,
+			baselineHead,
+			managerRoot,
+			runId,
+			lease,
+			workspace,
+			handoff,
+		};
+	}
+
+	it("starts at the hand-off and keeps the original baseline", async () => {
+		const data = await continuedFixture("continue");
+		const record = await createAttemptWorktree({
+			root: data.managerRoot,
+			runId: data.runId,
+			attemptId: "attempt_second",
+			workspace: data.workspace,
+			lease: data.lease,
+			continueFrom: data.handoff,
+		});
+		expect(record.baselineHead).toBe(data.baselineHead);
+		expect(record.startCommit).toBe(data.handoff.handoffCommit);
+		expect(await git(record.worktreePath, "rev-parse", "HEAD")).toBe(
+			data.handoff.handoffCommit,
+		);
+		await writeFile(path.join(record.worktreePath, "second.txt"), "second\n");
+		const second = await finalizeWorktreeHandoff(
+			record,
+			"test: second",
+			data.lease,
+		);
+		const commit = second?.handoffCommit ?? "";
+		expect(
+			(await git(data.repositoryRoot, "rev-list", "--parents", "-n1", commit))
+				.split(" ")
+				.slice(1),
+		).toEqual([data.baselineHead]);
+		expect(
+			(
+				await git(data.repositoryRoot, "ls-tree", "-r", "--name-only", commit)
+			).split("\n"),
+		).toEqual(["file.txt", "first.txt", "second.txt"]);
+		await data.lease.release();
+	});
+
+	it("refuses a hand-off of another run or of a moved HEAD", async () => {
+		const data = await continuedFixture("continue-refused");
+		await expect(
+			createAttemptWorktree({
+				root: data.managerRoot,
+				runId: data.runId,
+				attemptId: "attempt_foreign",
+				workspace: data.workspace,
+				lease: data.lease,
+				continueFrom: { ...data.handoff, runId: "run_other" },
+			}),
+		).rejects.toThrow("continued hand-off does not belong to this run");
+		await expect(
+			createAttemptWorktree({
+				root: data.managerRoot,
+				runId: data.runId,
+				attemptId: "attempt_moved",
+				workspace: {
+					...data.workspace,
+					head: data.handoff.handoffCommit ?? "",
+				},
+				lease: data.lease,
+				continueFrom: data.handoff,
+			}),
+		).rejects.toThrow(
+			"repository HEAD is not the baseline of the hand-off being continued",
+		);
+		expect(await git(data.repositoryRoot, "worktree", "list")).not.toContain(
+			"attempt_foreign",
+		);
+		await data.lease.release();
+	});
+});
+
 describe("read-only snapshot at a hand-off", () => {
 	async function handoffRepository(name: string) {
 		const repositoryRoot = await repository(name);
