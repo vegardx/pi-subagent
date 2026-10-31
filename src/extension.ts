@@ -244,11 +244,13 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 				isProjectTrusted: (cwd) => cwd === ctx.cwd && ctx.isProjectTrusted(),
 				onNotice: (message) => operatorOutput(ctx, message, "warning"),
 				async loadExecution() {
-					const [gondolin, capacityModule, sandboxModule] = await Promise.all([
-						import("@earendil-works/gondolin"),
-						import("./sandbox/capacity.js"),
-						import("./sandbox/gondolin.js"),
-					]);
+					const [gondolin, capacityModule, sandboxModule, checkpointModule] =
+						await Promise.all([
+							import("@earendil-works/gondolin"),
+							import("./sandbox/capacity.js"),
+							import("./sandbox/gondolin.js"),
+							import("./sandbox/checkpoints.js"),
+						]);
 					modelRuntime = await ModelRuntime.create();
 					for (const providerId of ctx.modelRegistry.getRegisteredProviderIds()) {
 						const provider =
@@ -267,7 +269,7 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 						sandboxModule.GUEST_IMAGE_SELECTOR,
 					);
 					const manifest = gondolin.loadAssetManifest(image.assetDir);
-					if (!manifest) {
+					if (!manifest?.buildId) {
 						throw new Error("Gondolin image manifest is unavailable.");
 					}
 					// Host memory exposure is slots x per-run memoryBytes. With the
@@ -281,13 +283,18 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 					return {
 						modelRuntime,
 						capacity,
+						warmCheckpoints: {
+							store: new checkpointModule.WarmCheckpointStore({
+								root: path.join(getAgentDir(), "subagents", "checkpoints"),
+							}),
+							guestAssetBuildId: manifest.buildId,
+						},
 						sandbox: {
 							packageVersion: sandboxModule.GONDOLIN_VERSION,
 							imageSha256: canonicalSha256(manifest.checksums),
-							mountPolicySha256: canonicalSha256({
-								backend: "gondolin-vfs",
-								version: 1,
-							}),
+							mountPolicySha256: canonicalSha256(
+								sandboxModule.GUEST_MOUNT_POLICY,
+							),
 							networkPolicySha256: canonicalSha256({
 								mode: "public-egress",
 								blockInternalRanges: true,

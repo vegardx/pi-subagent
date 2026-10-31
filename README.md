@@ -127,6 +127,15 @@ patch. When a writing attempt does exhaust
 `workspaceWriteBytes`, guest writes fail with `EDQUOT` and the attempt records
 the `workspace-budget` failure code.
 
+Ignored dependency directories (`node_modules` at the root and in each npm
+`workspaces` member) are bind-mounted onto the guest root disk, so installs do
+not cross the workspace mount and never reach the host. A project with a
+`package-lock.json` gets a warm checkpoint: the first attempt runs a
+model-free `npm ci` in a throwaway VM and checkpoints its disk under
+`<agentDir>/subagents/checkpoints` (20 GiB, least recently used evicted), and
+later attempts with the same lockfile boot with `node_modules` already
+installed.
+
 Every guest file tool call is bounded at 300 s and returns an error naming the
 bound when it expires, and a search rooted at `/` is refused. `bash` is bounded
 only by its own `timeout` (expiry closes the VM) and the attempt deadline.

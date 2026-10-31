@@ -38,6 +38,7 @@ import type { VmCapacityManager } from "../sandbox/capacity.js";
 import {
 	createGondolinAttemptSandbox,
 	type GondolinAttemptSandbox,
+	type WarmCheckpointOptions,
 } from "../sandbox/gondolin.js";
 import { GUEST_WORKSPACE } from "../sandbox/tools.js";
 import {
@@ -231,6 +232,7 @@ export async function runNativeAttempt(options: {
 	snapshot?: SnapshotRecord;
 	modelRuntime: ModelRuntime;
 	capacity: VmCapacityManager;
+	warmCheckpoints?: WarmCheckpointOptions;
 	lease: RunLease;
 	journal: RunJournal;
 	artifactStore: ArtifactStore;
@@ -393,6 +395,9 @@ export async function runNativeAttempt(options: {
 			workspaceWriteBytes: options.plan.limits.workspaceWriteBytes,
 			createDependencyMountpoints:
 				options.worktree !== undefined || options.snapshot !== undefined,
+			...(options.warmCheckpoints
+				? { warmCheckpoints: options.warmCheckpoints }
+				: {}),
 			capacity: options.capacity,
 			capacityWait: {
 				signal: runSignal,

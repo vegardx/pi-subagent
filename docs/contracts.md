@@ -707,8 +707,11 @@ and complete zero usage. Revision 12 also makes `usageComplete` true for any
 attempt that ended before its model session existed. It adds
 `sandbox.rootfsPolicySha256` to the launch grant: attempts boot the pinned
 guest image on a 4 GiB copy-on-write root disk with no scratch tmpfs, and
-`guestDiskBytes` is that disk's size. As with every revision, revision 11 state
-is not read.
+`guestDiskBytes` is that disk's size. The sandbox record gains `rootfs`,
+`dependencies` (bound and skipped dependency directories with reasons), and
+`boot` (`mode` `warm` or `cold`, the warm-up outcome, the checkpoint key, and
+any warm-up failure code); `docs/authority.md` describes warm checkpoints and
+dependency binds. As with every revision, revision 11 state is not read.
 Consumers check the exact contract
 revision and required features rather than
 infer support from package versions. Revisions are not backwards-compatible:

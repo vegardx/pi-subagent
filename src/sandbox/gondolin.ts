@@ -8,7 +8,10 @@ import {
 	RealFSProvider,
 	type VirtualProvider,
 	VM,
+	type VMOptions,
+	VmCheckpoint,
 } from "@earendil-works/gondolin";
+import { canonicalSha256 } from "../preflight/canonical.js";
 import {
 	captureQemuProcessIdentity,
 	type ProcessIdentity,
@@ -19,11 +22,26 @@ import type {
 	VmCapacityManager,
 } from "./capacity.js";
 import {
+	type CheckpointLease,
+	detectWarmProject,
+	WARM_CHECKPOINT_SCHEMA,
+	type WarmCheckpointInputs,
+	type WarmCheckpointStore,
+	type WarmupFailureCode,
+	warmCheckpointKey,
+} from "./checkpoints.js";
+import {
 	type DependencyDirectoryPlan,
 	dependencyBindCommands,
+	GUEST_DEPENDENCY_ROOT,
 	planDependencyDirectories,
 } from "./dependencies.js";
-import { createGondolinTools, GUEST_WORKSPACE } from "./tools.js";
+import {
+	createGondolinTools,
+	GUEST_CACHE_HOME,
+	GUEST_WORKSPACE,
+	sanitizeGuestEnvironment,
+} from "./tools.js";
 import { type WriteBudget, withWriteBudget } from "./write-budget.js";
 
 /**
@@ -87,6 +105,61 @@ export function guestMemorySize(memoryBytes: number): string {
 	return `${memoryBytes / (1024 * 1024)}M`;
 }
 
+/**
+ * The mount layout every attempt gets, digested into the launch grant's
+ * `mountPolicySha256`: the workspace over Gondolin's VFS, with Git-ignored
+ * dependency directories bound onto the root disk.
+ */
+export const GUEST_MOUNT_POLICY = Object.freeze({
+	backend: "gondolin-vfs",
+	version: 2,
+	workspace: GUEST_WORKSPACE,
+	dependencyBinds: {
+		root: GUEST_DEPENDENCY_ROOT,
+		directories: "node_modules of the root and npm workspaces members",
+		requires: "git check-ignore",
+	},
+} as const);
+
+/** Bound on one warm-up's dependency install. */
+export const WARMUP_TIMEOUT_MS = 10 * 60_000;
+/** How long an attempt waits for another process's warm-up of its key. */
+export const WARMUP_WAIT_MS = 10 * 60_000;
+
+/** Where warm checkpoints come from, supplied by the runtime host. */
+export type WarmCheckpointOptions = {
+	store: WarmCheckpointStore;
+	/** Build id of the pinned guest image; part of every checkpoint key. */
+	guestAssetBuildId: string;
+	warmupTimeoutMs?: number;
+	waitTimeoutMs?: number;
+};
+
+export type WarmupOutcome =
+	| "reused"
+	| "created"
+	| "waited"
+	| "failed"
+	| "failed-recently"
+	| "wait-timeout"
+	| "abandoned"
+	| "build-mismatch"
+	| "resume-failed"
+	| "disabled"
+	| "no-lockfile"
+	| "unsupported-lockfile"
+	| "unreadable-lockfile"
+	| "no-dependency-directory";
+
+/** How an attempt's VM booted. Keys, never paths. */
+export type SandboxBootRecord = {
+	mode: "warm" | "cold";
+	warmup: WarmupOutcome;
+	checkpointKey?: string;
+	failure?: WarmupFailureCode;
+	warmupMs?: number;
+};
+
 export type GondolinSandboxRecord = {
 	backend: "gondolin";
 	packageVersion: string;
@@ -102,6 +175,7 @@ export type GondolinSandboxRecord = {
 	rootfs: typeof GUEST_ROOTFS_POLICY;
 	/** Workspace dependency directories bound onto the root disk. */
 	dependencies: DependencyDirectoryPlan;
+	boot: SandboxBootRecord;
 	startedAt: string;
 };
 
@@ -125,6 +199,7 @@ export class GondolinSandboxError extends Error {
 async function closeStartedVm(
 	vm: VM,
 	capacity: VmCapacityLease,
+	checkpoint?: CheckpointLease,
 ): Promise<void> {
 	await vm.close();
 	if (vm.getHostPid() !== null) {
@@ -132,7 +207,145 @@ async function closeStartedVm(
 			`VM ${vm.id} retained a host PID after close`,
 		);
 	}
+	// The overlay read the checkpoint as its backing file until the VM closed.
+	await checkpoint?.release();
 	await capacity.release();
+}
+
+/** A warm-up VM whose close was not proved; its slot must stay held. */
+class WarmupCleanupError extends GondolinSandboxError {
+	constructor() {
+		super("warm-up VM cleanup was not proved");
+	}
+}
+
+type WarmBoot = {
+	outcome: WarmupOutcome;
+	key?: string;
+	inputs?: WarmCheckpointInputs;
+	lease?: CheckpointLease;
+	unlock?: () => Promise<void>;
+	failure?: WarmupFailureCode;
+	warmupMs?: number;
+};
+
+/**
+ * Find or claim the warm checkpoint for this workspace, before a VM slot is
+ * held: reuse a published one, take the warm-up, or wait for another
+ * process's warm-up up to its bound. Anything else boots cold.
+ */
+async function prepareWarmBoot(options: {
+	warm: WarmCheckpointOptions | undefined;
+	workspace: string;
+	dependencies: DependencyDirectoryPlan;
+	signal: AbortSignal | undefined;
+}): Promise<WarmBoot> {
+	if (!options.warm) return { outcome: "disabled" };
+	const project = await detectWarmProject(options.workspace);
+	if (project.kind === "skip") return { outcome: project.reason };
+	if (!options.dependencies.bound.includes("node_modules")) {
+		return { outcome: "no-dependency-directory" };
+	}
+	const inputs: WarmCheckpointInputs = {
+		schema: WARM_CHECKPOINT_SCHEMA,
+		installCommand: "npm ci",
+		lockfileSha256: project.lockfileSha256,
+		workspaces: project.workspaces,
+		dependencies: options.dependencies.bound,
+		guestAssetBuildId: options.warm.guestAssetBuildId,
+		gondolinVersion: GONDOLIN_VERSION,
+		rootfsPolicySha256: canonicalSha256(GUEST_ROOTFS_POLICY),
+		guestCacheHome: GUEST_CACHE_HOME,
+	};
+	const key = warmCheckpointKey(inputs);
+	const store = options.warm.store;
+	const lease = await store.lease(key);
+	if (lease) return { outcome: "reused", key, lease };
+	if (await store.failedRecently(key))
+		return { outcome: "failed-recently", key };
+	const unlock = await store.tryLock(key);
+	if (unlock) return { outcome: "created", key, inputs, unlock };
+	const waited = await store.waitFor(key, {
+		timeoutMs: options.warm.waitTimeoutMs ?? WARMUP_WAIT_MS,
+		...(options.signal ? { signal: options.signal } : {}),
+	});
+	if (waited === "ready") {
+		const ready = await store.lease(key);
+		if (ready) return { outcome: "waited", key, lease: ready };
+		return { outcome: "abandoned", key };
+	}
+	return {
+		outcome: waited === "timeout" ? "wait-timeout" : waited,
+		key,
+	};
+}
+
+/**
+ * The model-free warm-up: boot a VM with the attempt's policies and the
+ * workspace read-only, bind its dependency directories, run `npm ci`, and
+ * checkpoint the root disk. Returns a failure code, never install output.
+ * Cancellation propagates; the VM is always closed, and a VM whose close is
+ * not proved fails the start instead of releasing its slot.
+ */
+async function runWarmup(options: {
+	vmOptions: VMOptions;
+	dependencies: DependencyDirectoryPlan;
+	timeoutMs: number;
+	signal: AbortSignal | undefined;
+	checkpointPath: string;
+}): Promise<WarmupFailureCode | undefined> {
+	let vm: VM | undefined;
+	let failure: WarmupFailureCode | undefined;
+	let cancelled: unknown;
+	try {
+		vm = await VM.create(options.vmOptions);
+		await vm.start();
+	} catch {
+		failure = "boot-failed";
+	}
+	if (vm && !failure) {
+		try {
+			await bindDependencyDirectories(vm, options.dependencies);
+		} catch {
+			failure = "bind-failed";
+		}
+	}
+	if (vm && !failure) {
+		const timeout = AbortSignal.timeout(options.timeoutMs);
+		const signal = options.signal
+			? AbortSignal.any([options.signal, timeout])
+			: timeout;
+		try {
+			const result = await vm.exec(
+				["/bin/sh", "-lc", "npm ci --no-audit --no-fund"],
+				{
+					cwd: GUEST_WORKSPACE,
+					env: sanitizeGuestEnvironment(undefined),
+					signal,
+					stdout: "ignore",
+					stderr: "ignore",
+				},
+			);
+			if (result.exitCode !== 0) failure = "install-failed";
+		} catch {
+			failure = "install-failed";
+		}
+		if (options.signal?.aborted) cancelled = options.signal.reason;
+		else if (timeout.aborted) failure = "timeout";
+	}
+	if (vm && !failure && cancelled === undefined) {
+		try {
+			await vm.checkpoint(options.checkpointPath);
+		} catch {
+			failure = "checkpoint-failed";
+		}
+	}
+	if (vm) {
+		await vm.close().catch(() => {});
+		if (vm.getHostPid() !== null) throw new WarmupCleanupError();
+	}
+	if (cancelled !== undefined) throw cancelled;
+	return failure;
 }
 
 function isGuestReadinessTimeout(error: unknown): boolean {
@@ -194,6 +407,8 @@ export async function createGondolinAttemptSandbox(options: {
 	 * or a read-only snapshot, never the operator's live checkout.
 	 */
 	createDependencyMountpoints?: boolean;
+	/** Boot from a warm per-project checkpoint when one exists or can be made. */
+	warmCheckpoints?: WarmCheckpointOptions;
 	onFatalToolAbort?: () => void;
 }): Promise<GondolinAttemptSandbox> {
 	let workspace: string;
@@ -266,41 +481,150 @@ export async function createGondolinAttemptSandbox(options: {
 		await provider.writeFile(`/${guestName}`, context.content);
 		mounts[guestDir] = new ReadonlyProvider(provider);
 	}
-	const { httpHooks } = createHttpHooks({ blockInternalRanges: true });
 	const memory = guestMemorySize(options.memoryBytes);
 	const cpus = options.cpus ?? DEFAULT_CPUS;
 	const startTimeoutMs = options.startTimeoutMs ?? DEFAULT_START_TIMEOUT_MS;
-	const capacityLease = await options.capacity.acquire(
-		options.owner,
-		options.capacityWait,
-	);
+	const vmOptions = (
+		vfsMounts: Record<string, VirtualProvider>,
+	): VMOptions => ({
+		sandbox: { vmm: "qemu", imagePath: GUEST_IMAGE_SELECTOR },
+		memory,
+		cpus,
+		rootfs: {
+			mode: GUEST_ROOTFS_POLICY.mode,
+			size: GUEST_ROOTFS_POLICY.sizeBytes,
+		},
+		// An empty set keeps every scratch path on the root disk.
+		tmpfs: {},
+		startTimeoutMs,
+		allowWebSockets: false,
+		maxHttpBodyBytes: 8 * 1024 * 1024,
+		maxHttpResponseBodyBytes: 32 * 1024 * 1024,
+		httpHooks: createHttpHooks({ blockInternalRanges: true }).httpHooks,
+		dns: { mode: "synthetic" },
+		sessionLabel: `pi-subagent ${options.owner}`,
+		vfs: { mounts: vfsMounts },
+	});
+	const signal = options.capacityWait?.signal;
+	const warm = await prepareWarmBoot({
+		warm: options.warmCheckpoints,
+		workspace,
+		dependencies,
+		signal,
+	});
+	let capacityLease: VmCapacityLease;
+	try {
+		capacityLease = await options.capacity.acquire(
+			options.owner,
+			options.capacityWait,
+		);
+	} catch (error) {
+		await warm.unlock?.();
+		await warm.lease?.release();
+		throw error;
+	}
+	if (warm.unlock && warm.key && warm.inputs && options.warmCheckpoints) {
+		const store = options.warmCheckpoints.store;
+		const startedAt = performance.now();
+		try {
+			const checkpointPath = await store.temporaryPath();
+			const failure = await runWarmup({
+				vmOptions: vmOptions({
+					[GUEST_WORKSPACE]: new ReadonlyProvider(
+						new RealFSProvider(workspace),
+					),
+				}),
+				dependencies,
+				timeoutMs: options.warmCheckpoints.warmupTimeoutMs ?? WARMUP_TIMEOUT_MS,
+				signal,
+				checkpointPath,
+			});
+			if (failure) {
+				await store.recordFailure(warm.key, failure);
+				warm.outcome = "failed";
+				warm.failure = failure;
+			} else {
+				await store.publish(warm.key, checkpointPath, warm.inputs);
+				await store.evict();
+				const lease = await store.lease(warm.key);
+				if (lease) warm.lease = lease;
+				else warm.outcome = "abandoned";
+			}
+		} catch (error) {
+			if (error instanceof WarmupCleanupError) {
+				// The slot stays held: a VM that may still run keeps counting.
+				await warm.unlock();
+				throw error;
+			}
+			await warm.unlock();
+			await capacityLease.release();
+			if (signal?.aborted) throw signal.reason;
+			throw new GondolinSandboxError("sandbox warm-up failed", {
+				cause: error,
+			});
+		} finally {
+			warm.warmupMs = Math.round(performance.now() - startedAt);
+		}
+		await warm.unlock();
+	}
+	let checkpointLease = warm.lease;
+	if (checkpointLease && options.warmCheckpoints) {
+		const lease = checkpointLease;
+		let buildId: string | undefined;
+		try {
+			buildId = VmCheckpoint.load(lease.path).guestAssetBuildId;
+		} catch {
+			warm.outcome = "resume-failed";
+			warm.failure = "resume-failed";
+		}
+		if (
+			buildId !== undefined &&
+			buildId !== options.warmCheckpoints.guestAssetBuildId
+		) {
+			warm.outcome = "build-mismatch";
+		}
+		if (buildId !== options.warmCheckpoints.guestAssetBuildId) {
+			await lease.release();
+			checkpointLease = undefined;
+		}
+	}
 	let vm: VM;
 	try {
-		vm = await VM.create({
-			sandbox: { vmm: "qemu", imagePath: GUEST_IMAGE_SELECTOR },
-			memory,
-			cpus,
-			rootfs: {
-				mode: GUEST_ROOTFS_POLICY.mode,
-				size: GUEST_ROOTFS_POLICY.sizeBytes,
-			},
-			// An empty set keeps every scratch path on the root disk.
-			tmpfs: {},
-			startTimeoutMs,
-			allowWebSockets: false,
-			maxHttpBodyBytes: 8 * 1024 * 1024,
-			maxHttpResponseBodyBytes: 32 * 1024 * 1024,
-			httpHooks,
-			dns: { mode: "synthetic" },
-			sessionLabel: `pi-subagent ${options.owner}`,
-			vfs: { mounts },
-		});
+		if (checkpointLease) {
+			const lease = checkpointLease;
+			try {
+				vm = await VmCheckpoint.load(lease.path).resume<VM>(vmOptions(mounts));
+			} catch {
+				// A checkpoint that will not resume is recorded and the attempt
+				// boots cold, so no later attempt retries it until the key changes.
+				if (warm.key && options.warmCheckpoints) {
+					await options.warmCheckpoints.store
+						.recordFailure(warm.key, "resume-failed")
+						.catch(() => {});
+				}
+				warm.outcome = "resume-failed";
+				warm.failure = "resume-failed";
+				await lease.release();
+				checkpointLease = undefined;
+				vm = await VM.create(vmOptions(mounts));
+			}
+		} else {
+			vm = await VM.create(vmOptions(mounts));
+		}
 	} catch (error) {
+		await checkpointLease?.release();
 		await capacityLease.release();
 		throw new GondolinSandboxError("sandbox construction failed", {
 			cause: error,
 		});
 	}
+	const boot: SandboxBootRecord = {
+		mode: checkpointLease ? "warm" : "cold",
+		warmup: warm.outcome,
+		...(warm.key ? { checkpointKey: warm.key } : {}),
+		...(warm.failure ? { failure: warm.failure } : {}),
+		...(warm.warmupMs !== undefined ? { warmupMs: warm.warmupMs } : {}),
+	};
 	try {
 		await vm.start();
 		const hostPid = vm.getHostPid();
@@ -313,7 +637,7 @@ export async function createGondolinAttemptSandbox(options: {
 		let closePromise: Promise<void> | undefined;
 		const close = () => {
 			if (closed) return Promise.resolve();
-			closePromise ??= closeStartedVm(vm, capacityLease)
+			closePromise ??= closeStartedVm(vm, capacityLease, checkpointLease)
 				.then(() => {
 					closed = true;
 				})
@@ -354,6 +678,7 @@ export async function createGondolinAttemptSandbox(options: {
 			cpus,
 			rootfs: GUEST_ROOTFS_POLICY,
 			dependencies,
+			boot,
 			startedAt: new Date().toISOString(),
 		};
 		return {
@@ -367,7 +692,7 @@ export async function createGondolinAttemptSandbox(options: {
 		};
 	} catch (error) {
 		try {
-			await closeStartedVm(vm, capacityLease);
+			await closeStartedVm(vm, capacityLease, checkpointLease);
 		} catch (cleanupError) {
 			throw new GondolinSandboxError(
 				"sandbox startup failed and cleanup was not proved",

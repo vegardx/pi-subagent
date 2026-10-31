@@ -166,6 +166,13 @@ removed, and that is not an error.
   nor the `workspaceWriteBytes` budget, and they never reach the handoff
   patch. Tell a subagent that installs dependencies to leave the cache
   defaults alone.
+- Ignored `node_modules` directories (root and npm `workspaces` members) are
+  bound onto the root disk: what a subagent installs there stays in the VM and
+  never reaches the host or the handoff. For a project with a
+  `package-lock.json` the VM usually boots from a warm checkpoint with
+  `node_modules` already installed and the npm cache filled, so the subagent
+  need not reinstall, and `npm ci --offline` works. pnpm and yarn projects
+  boot cold.
 - Only the workspace, projected skill trees under `/skills/...`, and
   projected context files are mounted. Skill and context mounts are read-only.
 - Network is **on**: `public-egress` with internal ranges blocked and

@@ -72,15 +72,23 @@ it is cancelled. An attempt that never gets a slot fails as `capacity`, origin
 never from exception text). Nothing ran, so its zero usage is complete
 (`usageComplete: true`) and its sandbox cleanup is `not-needed`.
 
+A warm-up, when this attempt is the one that builds its project's warm
+checkpoint, runs after the slot is taken and before the attempt's VM boots;
+it has its own 10 minute bound and is not charged to `attemptTimeoutMs`
+either. Waiting for another process's warm-up of the same key is bounded at
+10 minutes and holds no slot. A warm-up that fails does not fail the attempt:
+the attempt boots cold and the sandbox record carries the warm-up's failure
+code. Cancellation stops the warm-up and the wait.
+
 Boot has its own bound, Gondolin's 60 s guest-readiness timeout, so a guest
 that never becomes ready fails as `sandbox-launch` ("sandbox startup failed:
 guest did not become ready within 60 s at 1024M", built from the launch's own
 timeout and memory), never as `timeout`. Every other start failure reads
 "sandbox startup failed"; the underlying exception's text is not persisted.
 Every terminal attempt records measured wall-clock milliseconds, including
-the capacity wait, boot, startup, and cleanup, so one attempt's `runtimeMs` may
-exceed its `attemptTimeoutMs` by at most the capacity wait plus the boot bound
-plus cleanup. Retry or resume subtracts that wall-clock duration, so waiting
+the capacity wait, any warm-up or wait for one, boot, startup, and cleanup, so
+one attempt's `runtimeMs` may exceed its `attemptTimeoutMs` by at most those
+bounds plus cleanup. Retry or resume subtracts that wall-clock duration, so waiting
 and boot are charged to `cumulativeRuntimeMs`; it clamps the next attempt
 deadline to the remaining runtime and fails before execution when fewer than
 1,000 milliseconds remain. A run's wall-clock total can therefore overrun
