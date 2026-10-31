@@ -263,7 +263,10 @@ the physical execution service. Revision 7 adds the `vmMemoryCeiling` and
 `workspaceBudgetRefusal` features and the `workspace-budget` failure code; a
 consumer pinned to revision 6 must move to 7, because persisted state and the
 feature set are not backwards compatible. Revision 10 adds `workspaceStartAt`,
-so a consumer can require by name that work starts at a handoff.
+so a consumer can require by name that work starts at a handoff. Release 0.18
+adds `resumeAtHandoff` within revision 10: `resume(runId, { continueFromHandoff:
+true, message })` continues a finished worktree run's session at its latest
+handoff.
 
 ## License
 

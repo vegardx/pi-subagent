@@ -401,6 +401,7 @@ describe("operating skill budgets, isolation, and evidence", () => {
 		expect(SUBAGENT_RUNTIME_CONTRACT.features.delegationCeiling).toBe(true);
 		expect(SUBAGENT_RUNTIME_CONTRACT.features.sessionModelInherit).toBe(true);
 		expect(SUBAGENT_RUNTIME_CONTRACT.features.workspaceStartAt).toBe(true);
+		expect(SUBAGENT_RUNTIME_CONTRACT.features.resumeAtHandoff).toBe(true);
 		expect(flatSkill).toContain("`background: false`");
 		expect(flatSkill).toContain("`survivesSeatExit: false`");
 		expect(flatSkill).toContain("`vmMemoryCeiling: true`");
@@ -408,6 +409,7 @@ describe("operating skill budgets, isolation, and evidence", () => {
 		expect(flatSkill).toContain("`delegationCeiling: true`");
 		expect(flatSkill).toContain("`sessionModelInherit: true`");
 		expect(flatSkill).toContain("`workspaceStartAt: true`");
+		expect(flatSkill).toContain("`resumeAtHandoff: true`");
 	});
 
 	it("quotes the refusal a launch hits with no session model to inherit", () => {

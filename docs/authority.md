@@ -117,8 +117,13 @@ The VM does not receive unrestricted access to the repository's common Git dir.
 A workspace that must start from earlier work names that hand-off commit as
 `startAt`; the host checks the attempt's worktree out at it (or, read-only,
 mounts a detached host checkout of it) and squashes the final tree into one
-commit on the baseline HEAD. The guest never applies a hand-off and is not
-expected to have `git`.
+commit on the baseline HEAD. A resume with `continueFromHandoff` checks a new
+worktree out at the run's own latest hand-off instead, keeps that hand-off's
+baseline, and refuses a hand-off of another run or one whose baseline is no
+longer HEAD. The resume message enters the restored session as an ordinary user
+message: it grants nothing, and the resumed attempt runs under the plan it was
+compiled with. The guest never applies a hand-off and is not expected to have
+`git`.
 
 ## Network policy
 

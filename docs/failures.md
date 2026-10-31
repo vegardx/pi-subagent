@@ -34,7 +34,20 @@ A retry creates a new attempt under the same logical run. `manual` permits only
 an explicit operator retry. `backoff` additionally enforces
 `min(300s, retryAfterMs × 2^attemptOrdinal)` from the durable terminal event.
 `never`, `resume`, and `reconcile` cannot enter the retry path. Resume is reserved
-for a validated persisted Pi session whose failure disposition is `resume`.
+for a validated persisted Pi session whose failure disposition is `resume`, with
+one exception: a resume with `continueFromHandoff` follows a completed, failed,
+or cancelled worktree run that has a hand-off, whatever its failure disposition.
+It refuses by name a run that is not a worktree run ("resume at hand-off
+requires a worktree run"), one in another status ("resume at hand-off requires
+a completed, failed, or cancelled run; run is <status>"), one without a
+hand-off ("run has no exported hand-off to continue from"), a blank or
+oversized message ("resume message must be non-blank and at most 65536
+bytes"), and spent resumes ("resume budget exhausted"). A resumed attempt whose
+final tree equals the baseline fails with the capture refusal "worktree
+reverted the hand-off it started at; its final tree equals the baseline" and
+leaves the earlier hand-off as the run's. A run that carries a hand-off refuses
+retry ("retry would discard the run's hand-off; resume at the hand-off
+instead"), because a retry starts over at the plan's start.
 Both operations create a fresh Gondolin VM. Neither operation erases prior
 evidence, reuses live guest state, or resets run-wide budgets. Abandonment is
 not retry or cancellation: it removes recovery authority from an interrupted

@@ -164,6 +164,17 @@ Before launch it validates:
 A changed policy requires new preflight authority. Cleanup-blocked runs are not
 automatically resumable.
 
+A resume with `continueFromHandoff` validates the same list, except that it
+follows a durable `completed`, `failed`, or `cancelled` worktree run rather than
+an interrupted one, and checks the run's hand-off record, ref, and baseline
+instead of a retained worktree. It appends one `resume-at-handoff` journal
+event (new attempt, the attempt it continues from, the start commit, and the
+message length in bytes; not the message) before creating the worktree. The new
+worktree record carries `baselineHead` from the hand-off and `startCommit` set to
+the hand-off commit; no persisted record changes shape. The message lives only
+in the Pi session file. If the resumed attempt is interrupted, a plain resume
+continues it in the same worktree with the fixed resume prompt.
+
 ## Abandonment
 
 Abandonment is an owner-bound, fenced, irreversible transition from interrupted
