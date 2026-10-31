@@ -73,7 +73,8 @@ not a sufficient grant.
 | VM memory | 1 GiB; agent ceiling 1 GiB to 4 GiB in 64 MiB steps; a request may only narrow it, never below 1 GiB |
 | VM CPUs | 1; not configurable per agent |
 | Concurrent VMs | `maxSlots` per host across every seat, default 16, at most 32; operator setting only |
-| Package-manager caches | `/tmp/cache` through `XDG_CACHE_HOME`; never inside `/workspace` |
+| Guest storage | Per-VM copy-on-write root disk, 4 GiB virtual, on host temporary storage, deleted at VM close; no scratch tmpfs |
+| Package-manager caches | `/var/cache/pi-subagent` through `XDG_CACHE_HOME`, on the root disk; never inside `/workspace` |
 | Network | Public internet; internal ranges blocked |
 | Repository-local files | Visible, including `.env` and similar files |
 | Host credentials and home | Not mounted |
@@ -84,14 +85,21 @@ fixed to `/workspace` and `/tmp`. Host `PATH`, tokens, provider variables, proxy
 configuration, and arbitrary extension environment are denied.
 
 Every VM-backed process tool also receives fixed cache locations outside the
-workspace: `XDG_CACHE_HOME=/tmp/cache`, `npm_config_cache=/tmp/cache/npm`,
-`YARN_CACHE_FOLDER=/tmp/cache/yarn`, `PNPM_STORE_DIR=/tmp/cache/pnpm`, and
-`PIP_CACHE_DIR=/tmp/cache/pip`. `HOME` stays `/workspace` because guest tooling
-expects a writable home, but a package cache under `HOME` would otherwise
-consume `workspaceWriteBytes` and land in the handoff patch. `/tmp` is part of
-the VM's own memory-backed rootfs, so cache bytes are charged to the VM memory
-and guest-disk grants instead of the workspace budget, and they never reach the
-host checkout.
+workspace: `XDG_CACHE_HOME=/var/cache/pi-subagent`,
+`npm_config_cache=/var/cache/pi-subagent/npm`,
+`YARN_CACHE_FOLDER=/var/cache/pi-subagent/yarn`,
+`PNPM_STORE_DIR=/var/cache/pi-subagent/pnpm`, and
+`PIP_CACHE_DIR=/var/cache/pi-subagent/pip`. `HOME` stays `/workspace` because
+guest tooling expects a writable home, but a package cache under `HOME` would
+otherwise consume `workspaceWriteBytes` and land in the handoff patch. The
+cache lives on the attempt's copy-on-write root disk: its bytes are charged to
+the guest-disk grant (`guestDiskBytes`), not to guest memory and not to the
+workspace budget, and they never reach the host checkout. The root disk is a
+qcow2 overlay Gondolin creates per VM in the host's temporary directory and
+deletes when the VM closes. Earlier releases described a memory-backed rootfs:
+Gondolin's `memory` rootfs mode on QEMU is a host-side write cache, and the
+guest memory pressure came from its default scratch tmpfs mounts (`/tmp` and
+others), which this runtime now disables.
 
 ## Filesystem policy
 

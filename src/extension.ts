@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { realpath, stat, writeFile } from "node:fs/promises";
+import { realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
 import {
@@ -266,7 +266,6 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 					const image = await gondolin.ensureImageSelector(
 						sandboxModule.GUEST_IMAGE_SELECTOR,
 					);
-					const assets = gondolin.loadGuestAssets(image.assetDir);
 					const manifest = gondolin.loadAssetManifest(image.assetDir);
 					if (!manifest) {
 						throw new Error("Gondolin image manifest is unavailable.");
@@ -279,7 +278,6 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 						root: path.join(getAgentDir(), "subagents", "capacity"),
 						maxSlots: runtimeContract.capacity.maxSlots,
 					});
-					const rootfs = await stat(assets.rootfsPath);
 					return {
 						modelRuntime,
 						capacity,
@@ -299,7 +297,10 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 								basePort: capacity.basePort,
 								maxSlots: capacity.maxSlots,
 							}),
-							guestDiskBytes: rootfs.size,
+							rootfsPolicySha256: canonicalSha256(
+								sandboxModule.GUEST_ROOTFS_POLICY,
+							),
+							guestDiskBytes: sandboxModule.GUEST_ROOTFS_POLICY.sizeBytes,
 						},
 					};
 				},

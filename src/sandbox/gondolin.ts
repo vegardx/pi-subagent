@@ -37,6 +37,25 @@ export const GONDOLIN_VERSION: string = (
  */
 export const GUEST_IMAGE_SELECTOR = "alpine-base:0.4.0";
 const DEFAULT_CPUS = 1;
+/**
+ * Virtual size of each attempt's root disk. The root disk is a per-VM qcow2
+ * overlay on the host's temporary directory that grows on demand and is
+ * deleted when the VM closes, so this bounds the host disk one attempt can
+ * consume (about 4 GiB plus qcow2 metadata), not what it reserves. The image
+ * itself uses under 200 MiB of it.
+ */
+export const GUEST_ROOTFS_BYTES = 4 * 1024 * 1024 * 1024;
+/**
+ * How each attempt's guest storage is laid out: a copy-on-write root disk of
+ * `GUEST_ROOTFS_BYTES`, with no scratch tmpfs, so `/tmp`, `/var/tmp`,
+ * `/var/cache`, `/var/log`, and `/root` live on that disk instead of in guest
+ * memory. Its digest is the launch grant's `rootfsPolicySha256`.
+ */
+export const GUEST_ROOTFS_POLICY = Object.freeze({
+	mode: "cow",
+	sizeBytes: GUEST_ROOTFS_BYTES,
+	tmpfs: "root-disk",
+} as const);
 const DEFAULT_START_TIMEOUT_MS = 60_000;
 /**
  * The code Gondolin sets on the error `vm.start()` rejects with when the guest
@@ -75,6 +94,7 @@ export type GondolinSandboxRecord = {
 	readOnly: boolean;
 	memory: string;
 	cpus: number;
+	rootfs: typeof GUEST_ROOTFS_POLICY;
 	startedAt: string;
 };
 
@@ -219,7 +239,12 @@ export async function createGondolinAttemptSandbox(options: {
 			sandbox: { vmm: "qemu", imagePath: GUEST_IMAGE_SELECTOR },
 			memory,
 			cpus,
-			rootfs: { mode: "memory" },
+			rootfs: {
+				mode: GUEST_ROOTFS_POLICY.mode,
+				size: GUEST_ROOTFS_POLICY.sizeBytes,
+			},
+			// An empty set keeps every scratch path on the root disk.
+			tmpfs: {},
 			startTimeoutMs,
 			allowWebSockets: false,
 			maxHttpBodyBytes: 8 * 1024 * 1024,
@@ -285,6 +310,7 @@ export async function createGondolinAttemptSandbox(options: {
 			readOnly: options.readOnly,
 			memory,
 			cpus,
+			rootfs: GUEST_ROOTFS_POLICY,
 			startedAt: new Date().toISOString(),
 		};
 		return {

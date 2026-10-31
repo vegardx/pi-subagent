@@ -83,6 +83,7 @@ const sandbox = {
 	mountPolicySha256: b,
 	networkPolicySha256: a,
 	capacityPolicySha256: b,
+	rootfsPolicySha256: b,
 	guestDiskBytes: 2 * 1024 * 1024 * 1024,
 };
 

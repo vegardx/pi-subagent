@@ -19,6 +19,7 @@ import {
 	createGondolinAttemptSandbox,
 	type GondolinAttemptSandbox,
 	GondolinSandboxError,
+	GUEST_ROOTFS_POLICY,
 } from "../src/sandbox/gondolin.js";
 
 vi.mock("../src/sandbox/gondolin.js", async (importOriginal) => ({
@@ -120,6 +121,7 @@ function plan(): AgentLaunchPlan {
 			mountPolicySha256: hash,
 			networkPolicySha256: hash,
 			capacityPolicySha256: hash,
+			rootfsPolicySha256: hash,
 			memoryBytes: 1024 * 1024 * 1024,
 			guestDiskBytes: 1024,
 			workspaceWriteBytes: 0,
@@ -182,6 +184,7 @@ function fakeSandbox(): GondolinAttemptSandbox {
 			readOnly: true,
 			memory: "1024M",
 			cpus: 1,
+			rootfs: GUEST_ROOTFS_POLICY,
 			startedAt: new Date().toISOString(),
 		},
 		vm: {} as GondolinAttemptSandbox["vm"],

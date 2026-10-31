@@ -137,6 +137,7 @@ async function startService(
 			mountPolicySha256: hash,
 			networkPolicySha256: hash,
 			capacityPolicySha256: hash,
+			rootfsPolicySha256: hash,
 			guestDiskBytes: 1024,
 		},
 		resolveModel: async (model) => model,

@@ -48,6 +48,7 @@ export type ResolvedSandbox = {
 	mountPolicySha256: string;
 	networkPolicySha256: string;
 	capacityPolicySha256: string;
+	rootfsPolicySha256: string;
 	guestDiskBytes: number;
 };
 
