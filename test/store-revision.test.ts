@@ -98,6 +98,14 @@ async function writeStaleRun(
 			attemptId,
 		},
 	);
+	await writeJson(
+		path.join(root, "workspace", "snapshots", "records", `${attemptId}.json`),
+		{
+			schema: "pi-subagent-snapshot",
+			contractRevision: revision,
+			attemptId,
+		},
+	);
 	return { runId, attemptId };
 }
 
@@ -177,6 +185,28 @@ describe("store contract revision gate", () => {
 		await expect(
 			stat(path.join(quarantine, "workspace", "records", `${attemptId}.json`)),
 		).resolves.toBeDefined();
+		await expect(
+			stat(
+				path.join(
+					quarantine,
+					"workspace",
+					"snapshots",
+					"records",
+					`${attemptId}.json`,
+				),
+			),
+		).resolves.toBeDefined();
+		expect(
+			await missing(
+				path.join(
+					root,
+					"workspace",
+					"snapshots",
+					"records",
+					`${attemptId}.json`,
+				),
+			),
+		).toBe(true);
 
 		expect(await missing(path.join(root, "run-records", `${runId}.json`))).toBe(
 			true,

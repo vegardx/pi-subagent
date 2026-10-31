@@ -159,13 +159,22 @@ async function probeStore(root: string): Promise<{
 	}
 
 	const attemptScoped: Probe[] = [];
-	for (const entry of await entries(path.join(root, "workspace", "records"))) {
-		if (!entry.endsWith(".json")) continue;
-		await probe(root, path.join("workspace", "records", entry), attemptScoped);
+	for (const directory of [
+		path.join("workspace", "records"),
+		path.join("workspace", "snapshots", "records"),
+	]) {
+		for (const entry of await entries(path.join(root, directory))) {
+			if (!entry.endsWith(".json")) continue;
+			await probe(root, path.join(directory, entry), attemptScoped);
+		}
 	}
 	for (const found of attemptScoped) {
 		const file = path.basename(found.relative);
-		attempts.set(file.slice(0, -".json".length), found.revision);
+		const attemptId = file.slice(0, -".json".length);
+		attempts.set(
+			attemptId,
+			Math.min(attempts.get(attemptId) ?? found.revision, found.revision),
+		);
 		newest = Math.max(newest, found.revision);
 	}
 
@@ -248,6 +257,11 @@ export async function quarantineStaleState(
 		add(path.join("sessions", attemptId), revision);
 		add(path.join("workspace", "records", `${attemptId}.json`), revision);
 		add(path.join("workspace", "worktrees", attemptId), revision);
+		add(
+			path.join("workspace", "snapshots", "records", `${attemptId}.json`),
+			revision,
+		);
+		add(path.join("workspace", "snapshots", "trees", attemptId), revision);
 	}
 	for (const found of loose) {
 		if (found.revision < CONTRACT_REVISION) add(found.relative, found.revision);
