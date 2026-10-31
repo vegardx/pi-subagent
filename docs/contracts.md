@@ -711,7 +711,9 @@ guest image on a 4 GiB copy-on-write root disk with no scratch tmpfs, and
 `dependencies` (bound and skipped dependency directories with reasons), and
 `boot` (`mode` `warm` or `cold`, the warm-up outcome, the checkpoint key, and
 any warm-up failure code); `docs/authority.md` describes warm checkpoints and
-dependency binds. As with every revision, revision 11 state is not read.
+dependency binds. `mountPolicySha256` now digests `GUEST_MOUNT_POLICY`
+(mount layout version 2, which adds the dependency binds) instead of the
+revision 11 layout. As with every revision, revision 11 state is not read.
 Consumers check the exact contract
 revision and required features rather than
 infer support from package versions. Revisions are not backwards-compatible:

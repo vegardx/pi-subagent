@@ -168,7 +168,9 @@ removed, and that is not an error.
   defaults alone.
 - Ignored `node_modules` directories (root and npm `workspaces` members) are
   bound onto the root disk: what a subagent installs there stays in the VM and
-  never reaches the host or the handoff. For a project with a
+  never reaches the host or the handoff. A bound directory starts empty (or
+  warm, below), so a read-only subagent on the operator's checkout does not see
+  the host's installed `node_modules`. For a project with a
   `package-lock.json` the VM usually boots from a warm checkpoint with
   `node_modules` already installed and the npm cache filled, so the subagent
   need not reinstall, and `npm ci --offline` works. pnpm and yarn projects

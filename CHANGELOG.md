@@ -64,6 +64,10 @@ removed while no pi-subagent seat is running.
   size. The guest cache root moves from `/tmp/cache` to
   `/var/cache/pi-subagent`.
 - The mount policy digest covers dependency binds (`GUEST_MOUNT_POLICY`).
+- A read-only attempt on the operator's live checkout no longer sees the host's
+  installed `node_modules`: an existing ignored `node_modules` is bound over in
+  the guest and starts empty, or warm from a checkpoint. An absent one is not
+  created in a live checkout and is left on the workspace mount.
 - Docs no longer call the rootfs memory-backed or 1 GiB the boot floor: the
   pinned image boots at 96 MiB; 1 GiB stays as a workload floor.
 
