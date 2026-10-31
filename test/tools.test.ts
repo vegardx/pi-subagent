@@ -230,7 +230,7 @@ describe("guest tool call deadline", () => {
 		expect(record.calls).toEqual([]);
 	});
 
-	it("caps a bash timeout at the bound and keeps its expiry fatal", async () => {
+	it("leaves bash outside the file-tool deadline", async () => {
 		const record: Hang = { calls: [], aborted: [] };
 		let closed = 0;
 		const tools = await createGondolinTools(hungVm(record), workspace, {
@@ -239,17 +239,21 @@ describe("guest tool call deadline", () => {
 				closed++;
 			},
 		});
-		expect(tools.bash.description).toContain("at most 1 seconds");
-		await expect(
-			tools.bash.execute(
-				"call",
-				{ command: "sleep 600", timeout: 600 },
-				undefined,
-				undefined,
-				undefined as never,
-			),
-		).rejects.toThrow("Command timed out after 0.05 seconds");
-		expect(record.aborted).toEqual(["exec"]);
+		const caller = new AbortController();
+		const running = tools.bash.execute(
+			"call",
+			{ command: "npm ci && npm run check" },
+			caller.signal,
+			undefined,
+			undefined as never,
+		);
+		running.catch(() => {});
+		await new Promise((resolve) => setTimeout(resolve, 250));
+		expect(record.calls).toEqual(["exec"]);
+		expect(record.aborted).toEqual([]);
+		expect(closed).toBe(0);
+		caller.abort();
+		await expect(running).rejects.toThrow("Command aborted");
 		expect(closed).toBe(1);
 	});
 });

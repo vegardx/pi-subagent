@@ -164,7 +164,8 @@ Using bounded disposable fixtures:
   absence, prevents late writes, and prevents subsequent VM reuse;
 - a file tool call that hangs ends at the per-call deadline with an error result
   naming the bound, and a search rooted at the guest's `/` is refused by name;
-- bash runs under the smaller of its `timeout` and the per-call deadline;
+- bash is not subject to the file-tool deadline; only its own `timeout` and the
+  attempt deadline bound it;
 - arbitrary child extension code is absent.
 
 ## Network

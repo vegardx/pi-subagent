@@ -167,11 +167,11 @@ removed, and that is not an error.
   child. A subagent cannot spawn a subagent.
 - `search` and `fetch`, when present, execute in the host seat through
   bounded adapters, so credentials stay outside the VM.
-- Every guest tool call is bounded at 300 seconds. A file tool that reaches the
-  bound returns an error result that names the bound, and `find`,
-  `ls`, or `grep` rooted at `/` is refused by name. `bash` runs under the
-  smaller of the bound and its own `timeout`, and its expiry closes the VM, so
-  ask for long work in bounded steps.
+- Every guest file tool call (`read`, `write`, `edit`, `ls`, `find`, `grep`) is
+  bounded at 300 seconds. A call that reaches the bound returns an error result
+  that names the bound, and `find`, `ls`, or `grep` rooted at `/` is refused by
+  name. `bash` is not bounded by it: only its own `timeout`, whose expiry closes
+  the VM, and the attempt timeout limit a command.
 - The guest has no `git`. Never ask a subagent to apply a handoff or check out a
   commit; a host service that needs a run to start from an earlier handoff names
   it as the request's `workspace.startAt`, and the host checks the workspace out

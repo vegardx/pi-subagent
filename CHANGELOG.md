@@ -20,18 +20,17 @@ Contract revision 10. Revision 9 state is quarantined, not read.
 - A worktree with `startAt` is checked out at that commit. A read-only attempt
   with `startAt` mounts a detached host checkout of it, removed once the VM is
   closed; reconciliation removes one a crash left behind.
-- Every guest tool call is bounded at 300 s (`TOOL_CALL_DEADLINE_MS`). File
-  tools that reach it return an error result naming the bound; `find`, `ls`, and
-  `grep` rooted at `/` are refused by name.
+- Every guest file tool call (`read`, `write`, `edit`, `ls`, `find`, `grep`) is
+  bounded at 300 s (`TOOL_CALL_DEADLINE_MS`) and returns an error result naming
+  the bound when it expires; `find`, `ls`, and `grep` rooted at `/` are refused
+  by name. `bash` is unchanged: only its own `timeout` and the attempt deadline
+  bound it.
 
 ### Changed
 
 - Hand-off capture squashes: one commit whose tree is the worktree's final tree
   and whose parent is the baseline HEAD, whatever commit the worktree started
   at. Without `startAt` the commit is the same as before.
-- `bash` runs under the smaller of its `timeout` and the 300 s bound; a command
-  without a `timeout` is no longer bounded only by the attempt deadline. Expiry
-  still closes the VM.
 
 ## 0.16.0
 

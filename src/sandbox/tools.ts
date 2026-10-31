@@ -34,11 +34,11 @@ export const GUEST_WORKSPACE = "/workspace";
 export const GUEST_CACHE_HOME = "/tmp/cache";
 const DEFAULT_GREP_LIMIT = 100;
 /**
- * Wall bound on one guest tool call. A file tool that reaches it returns an
+ * Wall bound on one guest file tool call. A call that reaches it returns an
  * error result naming the bound, so the model can narrow the call and budget
- * steering still reaches it. `bash` runs under the smaller of this bound and
- * its own `timeout`; a bash timeout stays fatal to the VM, because aborting a
- * guest command cannot prove the guest process ended.
+ * steering still reaches it. `bash` is not bounded here: it keeps its own
+ * `timeout` and the attempt deadline, because a bash timeout is fatal to the
+ * VM and long builds are legitimate.
  */
 export const TOOL_CALL_DEADLINE_MS = 300_000;
 
@@ -550,7 +550,6 @@ function createGondolinBashOps(
 	vm: VM,
 	hostWorkspace: WorkspacePathContext,
 	shellPath: string,
-	deadlineMs: number,
 	onCommandAbort?: () => Promise<void>,
 	writeBudget?: WriteBudget,
 ): BashOperations {
@@ -571,14 +570,13 @@ function createGondolinBashOps(
 			signal?.addEventListener("abort", onAbort, { once: true });
 
 			let timedOut = false;
-			const bound = Math.min(
-				timeout && timeout > 0 ? timeout : Number.POSITIVE_INFINITY,
-				deadlineMs / 1000,
-			);
-			const timer = setTimeout(() => {
-				timedOut = true;
-				controller.abort();
-			}, bound * 1000);
+			const timer =
+				timeout && timeout > 0
+					? setTimeout(() => {
+							timedOut = true;
+							controller.abort();
+						}, timeout * 1000)
+					: undefined;
 
 			try {
 				const sanitizedEnvironment = sanitizeGuestEnvironment(env);
@@ -606,10 +604,10 @@ function createGondolinBashOps(
 					}
 				}
 				if (signal?.aborted) throw new Error("aborted");
-				if (timedOut) throw new Error(`timeout:${bound}`);
+				if (timedOut) throw new Error(`timeout:${timeout}`);
 				throw error;
 			} finally {
-				clearTimeout(timer);
+				if (timer) clearTimeout(timer);
 				signal?.removeEventListener("abort", onAbort);
 			}
 		},
@@ -668,21 +666,16 @@ export async function createGondolinTools(
 		}),
 		deadlineMs,
 	);
-	const localBash = createBashToolDefinition(GUEST_WORKSPACE, {
+	const bash = createBashToolDefinition(GUEST_WORKSPACE, {
 		operations: createGondolinBashOps(
 			vm,
 			hostWorkspace,
 			shellPath,
-			deadlineMs,
 			options.onCommandAbort,
 			options.writeBudget,
 		),
 		exposeSessionEnvironment: false,
 	});
-	const bash = {
-		...localBash,
-		description: `${localBash.description} In this sandbox a command runs at most ${Math.ceil(deadlineMs / 1000)} seconds, and a larger timeout is capped to that; reaching the bound closes the VM and ends the attempt, so keep long work in bounded steps.`,
-	};
 	const lsTemplate = createLsToolDefinition(GUEST_WORKSPACE);
 	const ls = withToolCallDeadline(
 		{

@@ -386,7 +386,7 @@ describe("operating skill budgets, isolation, and evidence", () => {
 	it("states the guest tool-call bound the sandbox enforces", () => {
 		const seconds = TOOL_CALL_DEADLINE_MS / 1000;
 		expect(flatSkill).toContain(
-			`Every guest tool call is bounded at ${seconds} seconds.`,
+			`(\`read\`, \`write\`, \`edit\`, \`ls\`, \`find\`, \`grep\`) is bounded at ${seconds} seconds.`,
 		);
 		expect(flatSkill).toContain("The guest has no `git`.");
 	});
