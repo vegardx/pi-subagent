@@ -244,9 +244,10 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 				isProjectTrusted: (cwd) => cwd === ctx.cwd && ctx.isProjectTrusted(),
 				onNotice: (message) => operatorOutput(ctx, message, "warning"),
 				async loadExecution() {
-					const [gondolin, capacityModule] = await Promise.all([
+					const [gondolin, capacityModule, sandboxModule] = await Promise.all([
 						import("@earendil-works/gondolin"),
 						import("./sandbox/capacity.js"),
+						import("./sandbox/gondolin.js"),
 					]);
 					modelRuntime = await ModelRuntime.create();
 					for (const providerId of ctx.modelRegistry.getRegisteredProviderIds()) {
@@ -259,10 +260,14 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 						const provider = ctx.modelRegistry.getProvider(ctx.model.provider);
 						if (provider) modelRuntime.registerNativeProvider(provider);
 					}
-					const assets = await gondolin.ensureGuestAssets();
-					const manifest = gondolin.loadAssetManifest(
-						path.dirname(assets.kernelPath),
+					// The image is pinned by ref: the default selector resolves a locally
+					// cached `latest` that never refreshes, so it can predate the
+					// installed Gondolin.
+					const image = await gondolin.ensureImageSelector(
+						sandboxModule.GUEST_IMAGE_SELECTOR,
 					);
+					const assets = gondolin.loadGuestAssets(image.assetDir);
+					const manifest = gondolin.loadAssetManifest(image.assetDir);
 					if (!manifest) {
 						throw new Error("Gondolin image manifest is unavailable.");
 					}
@@ -279,7 +284,7 @@ export default function piSubagentExtension(pi: ExtensionAPI): void {
 						modelRuntime,
 						capacity,
 						sandbox: {
-							packageVersion: "0.12.0",
+							packageVersion: sandboxModule.GONDOLIN_VERSION,
 							imageSha256: canonicalSha256(manifest.checksums),
 							mountPolicySha256: canonicalSha256({
 								backend: "gondolin-vfs",

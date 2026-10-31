@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
+import { GONDOLIN_VERSION } from "../src/sandbox/gondolin.js";
 
 type PackageJson = {
 	version?: string;
@@ -15,6 +16,15 @@ type PackageJson = {
 };
 
 describe("package contract", () => {
+	it("records the installed Gondolin version, which is the exact pin", async () => {
+		const packageJson = JSON.parse(
+			await readFile(new URL("../package.json", import.meta.url), "utf8"),
+		) as PackageJson;
+		expect(GONDOLIN_VERSION).toBe(
+			packageJson.dependencies?.["@earendil-works/gondolin"],
+		);
+	});
+
 	it("pins the qualified Gondolin and Pi lines", async () => {
 		const packageJson = JSON.parse(
 			await readFile(new URL("../package.json", import.meta.url), "utf8"),
@@ -25,7 +35,7 @@ describe("package contract", () => {
 		expect(packageJson.types).toBe("./dist/index.d.ts");
 		expect(packageJson.engines?.node).toBe(">=23.6.0");
 		expect(packageJson.dependencies?.["@earendil-works/gondolin"]).toBe(
-			"0.12.0",
+			"0.14.0",
 		);
 		expect(
 			packageJson.peerDependencies?.["@earendil-works/pi-coding-agent"],

@@ -8,7 +8,8 @@ Gondolin, image, QEMU, macOS, or architecture versions require explicit
 qualification. Linux and macOS Intel are not supported hosts.
 
 The current Gondolin qualification candidate is
-`@earendil-works/gondolin` 0.12.0. Production code pins the exact version and
+`@earendil-works/gondolin` 0.14.0 with guest image `alpine-base:0.4.0`.
+Production code pins the exact version and
 image identity that pass the qualification gate.
 
 The stable core includes:
