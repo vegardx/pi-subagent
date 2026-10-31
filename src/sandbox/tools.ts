@@ -17,11 +17,13 @@ import {
 	type GrepToolInput,
 	type LsOperations,
 	type ReadOperations,
+	type ToolDefinition,
 	truncateHead,
 	truncateLine,
 	type WriteOperations,
 } from "@earendil-works/pi-coding-agent";
 
+import type { TSchema } from "typebox";
 import { type WriteBudget, workspaceBudgetNotice } from "./write-budget.js";
 
 export const GUEST_WORKSPACE = "/workspace";
@@ -31,6 +33,14 @@ export const GUEST_WORKSPACE = "/workspace";
  */
 export const GUEST_CACHE_HOME = "/tmp/cache";
 const DEFAULT_GREP_LIMIT = 100;
+/**
+ * Wall bound on one guest tool call. A file tool that reaches it returns an
+ * error result naming the bound, so the model can narrow the call and budget
+ * steering still reaches it. `bash` runs under the smaller of this bound and
+ * its own `timeout`; a bash timeout stays fatal to the VM, because aborting a
+ * guest command cannot prove the guest process ended.
+ */
+export const TOOL_CALL_DEADLINE_MS = 300_000;
 
 type TextToolResult<TDetails> = {
 	content: Array<{ type: "text"; text: string }>;
@@ -102,12 +112,14 @@ export function toGuestPath(
 function createGondolinReadOps(
 	vm: VM,
 	hostWorkspace: WorkspacePathContext,
+	signal?: AbortSignal,
 ): ReadOperations {
+	const options = signal ? { signal } : {};
 	return {
 		readFile: async (filePath) =>
-			vm.fs.readFile(toGuestPath(hostWorkspace, filePath)),
+			vm.fs.readFile(toGuestPath(hostWorkspace, filePath), options),
 		access: async (filePath) => {
-			await vm.fs.access(toGuestPath(hostWorkspace, filePath));
+			await vm.fs.access(toGuestPath(hostWorkspace, filePath), options);
 		},
 		detectImageMimeType: async (filePath) => {
 			const extension = path.posix
@@ -158,19 +170,23 @@ function createGondolinEditOps(
 function createGondolinLsOps(
 	vm: VM,
 	hostWorkspace: WorkspacePathContext,
+	signal?: AbortSignal,
 ): LsOperations {
+	const options = signal ? { signal } : {};
 	return {
 		exists: async (filePath) => {
 			try {
-				await vm.fs.access(toGuestPath(hostWorkspace, filePath));
+				await vm.fs.access(toGuestPath(hostWorkspace, filePath), options);
 				return true;
 			} catch {
+				signal?.throwIfAborted();
 				return false;
 			}
 		},
-		stat: async (filePath) => vm.fs.stat(toGuestPath(hostWorkspace, filePath)),
+		stat: async (filePath) =>
+			vm.fs.stat(toGuestPath(hostWorkspace, filePath), options),
 		readdir: async (directoryPath) =>
-			vm.fs.listDir(toGuestPath(hostWorkspace, directoryPath)),
+			vm.fs.listDir(toGuestPath(hostWorkspace, directoryPath), options),
 	};
 }
 
@@ -231,26 +247,123 @@ function matchesToolGlob(relativePath: string, pattern: string): boolean {
 function createGondolinFindOps(
 	vm: VM,
 	hostWorkspace: WorkspacePathContext,
+	signal?: AbortSignal,
 ): FindOperations {
 	return {
 		exists: async (filePath) => {
 			try {
-				await vm.fs.access(toGuestPath(hostWorkspace, filePath));
+				await vm.fs.access(
+					toGuestPath(hostWorkspace, filePath),
+					signal ? { signal } : {},
+				);
 				return true;
 			} catch {
+				signal?.throwIfAborted();
 				return false;
 			}
 		},
 		glob: async (pattern, cwd, options) => {
 			const root = toGuestPath(hostWorkspace, cwd);
 			const results: string[] = [];
-			await walkGuestFiles(vm, root, async (guestPath, relativePath) => {
-				if (results.length >= options.limit) return false;
-				if (matchesToolGlob(relativePath, pattern)) results.push(guestPath);
-				return results.length < options.limit;
-			});
+			await walkGuestFiles(
+				vm,
+				root,
+				async (guestPath, relativePath) => {
+					if (results.length >= options.limit) return false;
+					if (matchesToolGlob(relativePath, pattern)) results.push(guestPath);
+					return results.length < options.limit;
+				},
+				signal,
+			);
 			return results;
 		},
+	};
+}
+
+type ToolResult<TDetails> = Awaited<
+	ReturnType<ToolDefinition<TSchema, TDetails>["execute"]>
+>;
+
+function toolError<TDetails>(text: string): ToolResult<TDetails | undefined> {
+	return {
+		content: [{ type: "text", text }],
+		details: undefined,
+		isError: true,
+	};
+}
+
+/**
+ * Bounds one tool call at `deadlineMs`. The call's own signal is aborted at the
+ * bound so guest filesystem walks stop, and the model receives an error result
+ * naming the bound instead of waiting on the attempt deadline. `refuse`
+ * rejects a call by name before any guest work starts.
+ */
+export function withToolCallDeadline<TParams extends TSchema, TDetails>(
+	tool: ToolDefinition<TParams, TDetails | undefined>,
+	deadlineMs: number,
+	refuse?: (params: unknown) => string | undefined,
+): ToolDefinition<TParams, TDetails | undefined> {
+	const seconds = Math.ceil(deadlineMs / 1000);
+	return {
+		...tool,
+		execute: async (toolCallId, params, signal, onUpdate, context) => {
+			const refusal = refuse?.(params);
+			if (refusal !== undefined) return toolError<TDetails>(refusal);
+			const controller = new AbortController();
+			const forward = () => controller.abort(signal?.reason);
+			if (signal?.aborted) forward();
+			else signal?.addEventListener("abort", forward, { once: true });
+			let timer: NodeJS.Timeout | undefined;
+			const expired = new Promise<ToolResult<TDetails | undefined>>(
+				(resolve) => {
+					timer = setTimeout(() => {
+						controller.abort(new Error(`tool call exceeded ${seconds}s`));
+						resolve(
+							toolError<TDetails>(
+								`${tool.name} tool call exceeded ${seconds}s and was stopped; narrow the path, pattern, or range and try again`,
+							),
+						);
+					}, deadlineMs);
+				},
+			);
+			try {
+				return await Promise.race([
+					tool.execute(
+						toolCallId,
+						params,
+						controller.signal,
+						onUpdate,
+						context,
+					),
+					expired,
+				]);
+			} finally {
+				clearTimeout(timer);
+				signal?.removeEventListener("abort", forward);
+			}
+		},
+	};
+}
+
+/**
+ * A search rooted at the guest's `/` walks the VM's whole filesystem, `/proc`
+ * included, through one guest command per entry; it is refused by name.
+ */
+function refuseGuestRoot(
+	hostWorkspace: WorkspacePathContext,
+	toolName: string,
+): (params: unknown) => string | undefined {
+	return (params) => {
+		const requested =
+			typeof params === "object" &&
+			params !== null &&
+			"path" in params &&
+			typeof params.path === "string"
+				? params.path
+				: ".";
+		return toGuestPath(hostWorkspace, requested) === "/"
+			? `${toolName} refuses to search from /; the repository is ${GUEST_WORKSPACE}, so search it or a specific directory instead`
+			: undefined;
 	};
 }
 
@@ -437,6 +550,7 @@ function createGondolinBashOps(
 	vm: VM,
 	hostWorkspace: WorkspacePathContext,
 	shellPath: string,
+	deadlineMs: number,
 	onCommandAbort?: () => Promise<void>,
 	writeBudget?: WriteBudget,
 ): BashOperations {
@@ -457,13 +571,14 @@ function createGondolinBashOps(
 			signal?.addEventListener("abort", onAbort, { once: true });
 
 			let timedOut = false;
-			const timer =
-				timeout && timeout > 0
-					? setTimeout(() => {
-							timedOut = true;
-							controller.abort();
-						}, timeout * 1000)
-					: undefined;
+			const bound = Math.min(
+				timeout && timeout > 0 ? timeout : Number.POSITIVE_INFINITY,
+				deadlineMs / 1000,
+			);
+			const timer = setTimeout(() => {
+				timedOut = true;
+				controller.abort();
+			}, bound * 1000);
 
 			try {
 				const sanitizedEnvironment = sanitizeGuestEnvironment(env);
@@ -491,10 +606,10 @@ function createGondolinBashOps(
 					}
 				}
 				if (signal?.aborted) throw new Error("aborted");
-				if (timedOut) throw new Error(`timeout:${timeout}`);
+				if (timedOut) throw new Error(`timeout:${bound}`);
 				throw error;
 			} finally {
-				if (timer) clearTimeout(timer);
+				clearTimeout(timer);
 				signal?.removeEventListener("abort", onAbort);
 			}
 		},
@@ -517,48 +632,91 @@ export async function createGondolinTools(
 	options: {
 		onCommandAbort?: () => Promise<void>;
 		writeBudget?: WriteBudget;
+		/** Lowered by tests; production runs at `TOOL_CALL_DEADLINE_MS`. */
+		toolCallDeadlineMs?: number;
 	} = {},
 ): Promise<GondolinTools> {
+	const deadlineMs = options.toolCallDeadlineMs ?? TOOL_CALL_DEADLINE_MS;
 	const shellProbe = await vm.exec([
 		"/bin/sh",
 		"-lc",
 		"command -v bash || true",
 	]);
 	const shellPath = shellProbe.stdout.trim() || "/bin/sh";
-	const read = createReadToolDefinition(GUEST_WORKSPACE, {
-		operations: createGondolinReadOps(vm, hostWorkspace),
-	});
-	const write = createWriteToolDefinition(GUEST_WORKSPACE, {
-		operations: createGondolinWriteOps(vm, hostWorkspace),
-	});
-	const edit = createEditToolDefinition(GUEST_WORKSPACE, {
-		operations: createGondolinEditOps(vm, hostWorkspace),
-	});
-	const bash = createBashToolDefinition(GUEST_WORKSPACE, {
+	// Read, ls, and find bind their guest operations to each call's signal, so
+	// the deadline stops the guest work rather than only the wait for it.
+	const readTemplate = createReadToolDefinition(GUEST_WORKSPACE);
+	const read = withToolCallDeadline(
+		{
+			...readTemplate,
+			execute: (toolCallId, params, signal, onUpdate, context) =>
+				createReadToolDefinition(GUEST_WORKSPACE, {
+					operations: createGondolinReadOps(vm, hostWorkspace, signal),
+				}).execute(toolCallId, params, signal, onUpdate, context),
+		},
+		deadlineMs,
+	);
+	const write = withToolCallDeadline(
+		createWriteToolDefinition(GUEST_WORKSPACE, {
+			operations: createGondolinWriteOps(vm, hostWorkspace),
+		}),
+		deadlineMs,
+	);
+	const edit = withToolCallDeadline(
+		createEditToolDefinition(GUEST_WORKSPACE, {
+			operations: createGondolinEditOps(vm, hostWorkspace),
+		}),
+		deadlineMs,
+	);
+	const localBash = createBashToolDefinition(GUEST_WORKSPACE, {
 		operations: createGondolinBashOps(
 			vm,
 			hostWorkspace,
 			shellPath,
+			deadlineMs,
 			options.onCommandAbort,
 			options.writeBudget,
 		),
 		exposeSessionEnvironment: false,
 	});
-	const ls = createLsToolDefinition(GUEST_WORKSPACE, {
-		operations: createGondolinLsOps(vm, hostWorkspace),
-	});
-	const find = createFindToolDefinition(GUEST_WORKSPACE, {
-		operations: createGondolinFindOps(vm, hostWorkspace),
-	});
-	const localGrep = createGrepToolDefinition(GUEST_WORKSPACE);
-	const grep = {
-		...localGrep,
-		execute: async (
-			_id: string,
-			parameters: GrepToolInput,
-			signal?: AbortSignal,
-		) => executeGondolinGrep(vm, hostWorkspace, parameters, signal),
+	const bash = {
+		...localBash,
+		description: `${localBash.description} In this sandbox a command runs at most ${Math.ceil(deadlineMs / 1000)} seconds, and a larger timeout is capped to that; reaching the bound closes the VM and ends the attempt, so keep long work in bounded steps.`,
 	};
+	const lsTemplate = createLsToolDefinition(GUEST_WORKSPACE);
+	const ls = withToolCallDeadline(
+		{
+			...lsTemplate,
+			execute: (toolCallId, params, signal, onUpdate, context) =>
+				createLsToolDefinition(GUEST_WORKSPACE, {
+					operations: createGondolinLsOps(vm, hostWorkspace, signal),
+				}).execute(toolCallId, params, signal, onUpdate, context),
+		},
+		deadlineMs,
+		refuseGuestRoot(hostWorkspace, "ls"),
+	);
+	const findTemplate = createFindToolDefinition(GUEST_WORKSPACE);
+	const find = withToolCallDeadline(
+		{
+			...findTemplate,
+			execute: (toolCallId, params, signal, onUpdate, context) =>
+				createFindToolDefinition(GUEST_WORKSPACE, {
+					operations: createGondolinFindOps(vm, hostWorkspace, signal),
+				}).execute(toolCallId, params, signal, onUpdate, context),
+		},
+		deadlineMs,
+		refuseGuestRoot(hostWorkspace, "find"),
+	);
+	const localGrep = createGrepToolDefinition(GUEST_WORKSPACE);
+	const grep = withToolCallDeadline(
+		{
+			...localGrep,
+			execute: async (_id, parameters, signal) =>
+				executeGondolinGrep(vm, hostWorkspace, parameters, signal),
+		},
+		deadlineMs,
+		refuseGuestRoot(hostWorkspace, "grep"),
+	);
 
 	return { read, write, edit, bash, grep, find, ls };
 }

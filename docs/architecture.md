@@ -134,6 +134,15 @@ abort or tool timeout is fatal to the attempt VM because aborting `vm.exec()`
 alone cannot prove guest-process termination; QEMU closes before the error is
 returned and the VM cannot be reused.
 
+Every guest tool call is bounded by `TOOL_CALL_DEADLINE_MS` (300 s,
+`src/sandbox/tools.ts`). `read`, `write`, `edit`, `ls`, `find`, and `grep`
+abort their guest filesystem work at the bound and return an `isError` result
+naming it ("tool call exceeded 300s"), so the model can narrow the call and
+budget steering still reaches it. `find`, `ls`, and `grep` rooted at the
+guest's `/` are refused by name before any guest work. `bash` runs under the
+smaller of the bound and its own `timeout`, and its expiry stays fatal to the
+VM as described above.
+
 The initial external tools are `search` and `fetch` from the exact
 extension-owned `pi-web` service. The provider publishes schema, description,
 authority, implementation identity, and execution together. Preflight persists
