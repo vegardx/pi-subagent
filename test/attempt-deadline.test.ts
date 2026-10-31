@@ -10,7 +10,11 @@ import type { DiscoveredAgent } from "../src/preflight/agents.js";
 import { canonicalSha256 } from "../src/preflight/canonical.js";
 import { runNativeAttempt } from "../src/runtime/attempt.js";
 import { createAttemptDeadline } from "../src/runtime/deadline.js";
-import type { VmCapacityManager } from "../src/sandbox/capacity.js";
+import {
+	createVmCapacityManager,
+	VmCapacityExhaustedError,
+	type VmCapacityManager,
+} from "../src/sandbox/capacity.js";
 import {
 	createGondolinAttemptSandbox,
 	type GondolinAttemptSandbox,
@@ -189,7 +193,9 @@ function fakeSandbox(): GondolinAttemptSandbox {
 	};
 }
 
-async function attempt() {
+async function attempt(
+	overrides: { capacity?: VmCapacityManager; signal?: AbortSignal } = {},
+) {
 	const root = path.resolve(".pi", "test-attempt-deadline", randomUUID());
 	const lease = await acquireRunLease({
 		root: path.join(root, "leases"),
@@ -207,7 +213,8 @@ async function attempt() {
 		agent,
 		workspacePath: root,
 		modelRuntime: {} as ModelRuntime,
-		capacity: {} as VmCapacityManager,
+		capacity: overrides.capacity ?? ({} as VmCapacityManager),
+		...(overrides.signal ? { signal: overrides.signal } : {}),
 		lease,
 		journal,
 		artifactStore,
@@ -219,6 +226,44 @@ async function attempt() {
 
 function delay(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+const zeroUsage = {
+	input: 0,
+	output: 0,
+	cacheRead: 0,
+	cacheWrite: 0,
+	totalTokens: 0,
+	cost: 0,
+};
+
+/** A one-slot manager whose only slot another holder keeps busy. */
+async function fullCapacity(capacityWaitMs?: number) {
+	const capacity = await createVmCapacityManager({
+		root: path.resolve(".pi", "test-attempt-capacity", randomUUID()),
+		maxSlots: 1,
+		...(capacityWaitMs === undefined ? {} : { capacityWaitMs }),
+	});
+	const held = await capacity.acquire("other-attempt");
+	return { capacity, held };
+}
+
+/** The production sandbox's first step: wait for a slot, then boot. */
+function sandboxBehindCapacity() {
+	vi.mocked(createGondolinAttemptSandbox).mockImplementation(
+		async (options) => {
+			const lease = await options.capacity.acquire(
+				options.owner,
+				options.capacityWait,
+			);
+			const sandbox = fakeSandbox();
+			const close = async () => {
+				await lease.release();
+				await sandbox.close();
+			};
+			return { ...sandbox, close, cancel: close };
+		},
+	);
 }
 
 describe("attempt deadline and VM boot", () => {
@@ -239,6 +284,9 @@ describe("attempt deadline and VM boot", () => {
 		expect(result.failure?.message).toBe(message);
 		expect(error).toBe(message);
 		expect(result.runtimeMs).toBeGreaterThanOrEqual(ATTEMPT_TIMEOUT_MS + 300);
+		// No session ever ran, so the zero usage is the whole usage.
+		expect(result.usage).toEqual(zeroUsage);
+		expect(result.usageComplete).toBe(true);
 	});
 
 	it("starts the attempt deadline once the VM is ready", async () => {
@@ -253,6 +301,71 @@ describe("attempt deadline and VM boot", () => {
 		// runtimeMs is wall-clock: boot plus the full attempt deadline.
 		expect(result.runtimeMs).toBeGreaterThanOrEqual(
 			bootMs + ATTEMPT_TIMEOUT_MS,
+		);
+		// A session existed, so its usage may be partial.
+		expect(result.usageComplete).toBe(false);
+	});
+});
+
+describe("attempt deadline and VM capacity", () => {
+	afterEach(() => {
+		vi.mocked(createGondolinAttemptSandbox).mockReset();
+	});
+
+	it("does not charge the wait for a free slot to attemptTimeoutMs", async () => {
+		const waitMs = 1_500;
+		const { capacity, held } = await fullCapacity();
+		sandboxBehindCapacity();
+		setTimeout(() => void held.release(), waitMs);
+		const { result } = await attempt({ capacity });
+		// The deadline still had its whole second once the slot freed; a
+		// charged wait would have timed out inside acquire instead.
+		expect(result.failure?.code).toBe("timeout");
+		expect(result.runtimeMs).toBeGreaterThanOrEqual(
+			waitMs + ATTEMPT_TIMEOUT_MS,
+		);
+	});
+
+	it("refuses as capacity with complete zero usage once the wait bound passes", async () => {
+		const { capacity, held } = await fullCapacity(ATTEMPT_TIMEOUT_MS + 500);
+		sandboxBehindCapacity();
+		const { result, error } = await attempt({ capacity });
+		await held.release();
+		expect(result.status).toBe("failed");
+		expect(result.failure).toEqual({
+			code: "capacity",
+			origin: "service",
+			retry: "backoff",
+			message: expect.stringMatching(
+				/^VM capacity exhausted: 1 slots busy for \d+ s$/,
+			),
+			guidance: expect.any(String),
+			retryAfterMs: 30_000,
+		});
+		expect(error).toBe(result.failure?.message);
+		expect(result.usage).toEqual(zeroUsage);
+		expect(result.usageComplete).toBe(true);
+		expect(result.sandboxCleanup).toBe("not-needed");
+		expect(result.runtimeMs).toBeGreaterThanOrEqual(ATTEMPT_TIMEOUT_MS + 500);
+	});
+
+	it("stops waiting for a slot when the caller cancels", async () => {
+		const { capacity, held } = await fullCapacity();
+		sandboxBehindCapacity();
+		const controller = new AbortController();
+		setTimeout(() => controller.abort("caller-interrupt"), 300);
+		const startedAt = performance.now();
+		const { result } = await attempt({ capacity, signal: controller.signal });
+		await held.release();
+		expect(performance.now() - startedAt).toBeLessThan(5_000);
+		expect(result.status).toBe("cancelled");
+		expect(result.failure?.code).toBe("cancellation");
+		expect(result.usageComplete).toBe(true);
+	});
+
+	it("reports a capacity refusal by type, never by exception text", () => {
+		expect(new VmCapacityExhaustedError(16, 600_000).message).toBe(
+			"VM capacity exhausted: 16 slots busy for 600 s",
 		);
 	});
 });

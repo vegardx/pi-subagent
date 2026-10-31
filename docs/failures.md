@@ -12,6 +12,7 @@ transient.
 | Model resolution | Unknown or unavailable exact model | Never |
 | Authentication | Missing or rejected provider credential | Never automatically |
 | Sandbox capability | QEMU unavailable, image unsupported, Gondolin probe failed | Never without environment change |
+| Capacity | Every VM slot stayed busy for the whole capacity wait | Backoff from 30 s |
 | Sandbox launch | VM boot or agent handshake failed | Bounded when classified transient |
 | Mount policy | Path containment, VFS construction, or read-only enforcement failed | Never; re-preflight after correction |
 | Network policy | Destination denied or policy could not be enforced | Never without a new grant |
@@ -58,20 +59,40 @@ run graph until ordinary retention selects it.
 cost, optional `totalTokens`, retry count, and resume count. A configured total
 model-token guard consumes `Usage.totalTokens`, including cache traffic.
 `attemptTimeoutMs` is the per-attempt deadline and may not exceed the
-remaining cumulative runtime. It does not run while the attempt's VM boots:
-boot has its own bound, Gondolin's 60 s guest-readiness timeout, so a guest
+remaining cumulative runtime. It does not run while the attempt waits for a VM
+slot or while its VM boots.
+
+The wait for a slot has its own bound, `capacityWaitMs` (10 minutes by
+default), clamped to the run's remaining cumulative runtime. Slots are short
+leases, one per running attempt VM, so a full host is a queue: the attempt polls
+for a free slot with backoff from 250 ms to 2 s and stops waiting at once when
+it is cancelled. An attempt that never gets a slot fails as `capacity`, origin
+`service`, retry `backoff` with `retryAfterMs` 30,000 ("VM capacity exhausted:
+16 slots busy for 600 s", built from the slot count and the measured wait,
+never from exception text). Nothing ran, so its zero usage is complete
+(`usageComplete: true`) and its sandbox cleanup is `not-needed`.
+
+Boot has its own bound, Gondolin's 60 s guest-readiness timeout, so a guest
 that never becomes ready fails as `sandbox-launch` ("sandbox startup failed:
 guest did not become ready within 60 s at 1024M", built from the launch's own
 timeout and memory), never as `timeout`. Every other start failure reads
 "sandbox startup failed"; the underlying exception's text is not persisted.
 Every terminal attempt records measured wall-clock milliseconds, including
-boot, startup, and cleanup, so one attempt's `runtimeMs` may exceed its
-`attemptTimeoutMs` by at most the boot bound plus cleanup. Retry or resume
-subtracts that wall-clock duration, so boot is charged to `cumulativeRuntimeMs`;
-it clamps the next attempt deadline to the remaining runtime and fails before
-execution when fewer than 1,000 milliseconds remain. A run's wall-clock total
-can therefore overrun `cumulativeRuntimeMs` by at most one boot bound plus
-cleanup, after which no further attempt is admitted. Resume records
+the capacity wait, boot, startup, and cleanup, so one attempt's `runtimeMs` may
+exceed its `attemptTimeoutMs` by at most the capacity wait plus the boot bound
+plus cleanup. Retry or resume subtracts that wall-clock duration, so waiting
+and boot are charged to `cumulativeRuntimeMs`; it clamps the next attempt
+deadline to the remaining runtime and fails before execution when fewer than
+1,000 milliseconds remain. A run's wall-clock total can therefore overrun
+`cumulativeRuntimeMs` by at most one boot bound plus cleanup (the wait is
+already clamped to the remaining runtime), after which no further attempt is
+admitted.
+
+`usageComplete` is `false` only when a model session existed and the attempt
+did not complete, because usage of an interrupted model turn may be partial.
+An attempt that ended before its session was created (a capacity refusal, a
+VM that failed to construct or start, a refused model) made no model call, so
+its zero usage is complete. Resume records
 the retained session's message count and accumulated usage before prompting, then
 accounts and returns only assistant output, usage, and cost added by the new
 attempt; prior session usage is not charged twice.

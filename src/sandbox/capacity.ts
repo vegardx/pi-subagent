@@ -13,7 +13,15 @@ import path from "node:path";
 
 const MIN_DERIVED_PORT = 42_000;
 const DERIVED_PORT_SPAN = 20_000;
-const MAX_SLOTS = 32;
+export const MAX_SLOTS = 32;
+export const DEFAULT_MAX_SLOTS = 16;
+/**
+ * How long `acquire` waits for a slot before refusing. Slots are short leases
+ * held for one attempt's VM, so a full host is normally a queue, not a fault.
+ */
+export const DEFAULT_CAPACITY_WAIT_MS = 10 * 60_000;
+const INITIAL_POLL_MS = 250;
+const MAX_POLL_MS = 2_000;
 
 type VmCapacityPolicy = {
 	schema: "pi-subagent-vm-capacity-policy";
@@ -38,27 +46,73 @@ export type VmCapacityLease = {
 	release(): Promise<void>;
 };
 
+export type VmCapacityAcquireOptions = {
+	/** Stops waiting; `acquire` rejects with the signal's reason. */
+	signal?: AbortSignal;
+	/** Overrides the manager's `capacityWaitMs` for this call. */
+	waitMs?: number;
+};
+
 export type VmCapacityManager = {
 	root: string;
 	maxSlots: number;
 	basePort: number;
-	acquire(owner: string): Promise<VmCapacityLease>;
+	capacityWaitMs: number;
+	acquire(
+		owner: string,
+		options?: VmCapacityAcquireOptions,
+	): Promise<VmCapacityLease>;
 };
 
+/** Every slot stayed busy for the whole wait bound. */
 export class VmCapacityExhaustedError extends Error {
 	readonly maxSlots: number;
+	readonly waitedMs: number;
 
-	constructor(maxSlots: number) {
-		super(`VM capacity exhausted (${maxSlots} slots)`);
+	constructor(maxSlots: number, waitedMs: number) {
+		super(vmCapacityExhaustedMessage(maxSlots, waitedMs));
 		this.name = "VmCapacityExhaustedError";
 		this.maxSlots = maxSlots;
+		this.waitedMs = waitedMs;
 	}
+}
+
+export function vmCapacityExhaustedMessage(
+	maxSlots: number,
+	waitedMs: number,
+): string {
+	const seconds = Math.round(waitedMs / 1000);
+	return `VM capacity exhausted: ${maxSlots} slots busy for ${seconds} s`;
 }
 
 function validateMaxSlots(maxSlots: number): void {
 	if (!Number.isSafeInteger(maxSlots) || maxSlots < 1 || maxSlots > MAX_SLOTS) {
 		throw new Error(`maxSlots must be an integer from 1 to ${MAX_SLOTS}`);
 	}
+}
+
+function validateWaitMs(waitMs: number): void {
+	if (!Number.isSafeInteger(waitMs) || waitMs < 0) {
+		throw new Error("capacity wait must be a non-negative safe integer");
+	}
+}
+
+function sleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
+	return new Promise((resolve, reject) => {
+		if (signal?.aborted) {
+			reject(signal.reason);
+			return;
+		}
+		const onAbort = () => {
+			clearTimeout(timer);
+			reject(signal?.reason);
+		};
+		const timer = setTimeout(() => {
+			signal?.removeEventListener("abort", onAbort);
+			resolve();
+		}, ms);
+		signal?.addEventListener("abort", onAbort, { once: true });
+	});
 }
 
 function validateOwner(owner: string): void {
@@ -150,8 +204,10 @@ async function ensurePolicy(
 		current.maxSlots !== policy.maxSlots ||
 		current.basePort !== policy.basePort
 	) {
+		// Every seat sharing this root must count the same slots; a seat never
+		// rewrites the recorded policy, because another seat may be using it.
 		throw new Error(
-			`VM capacity policy mismatch: expected=${JSON.stringify(policy)} actual=${JSON.stringify(current)}`,
+			`VM capacity policy mismatch: this seat uses maxSlots=${policy.maxSlots} basePort=${policy.basePort}, but ${policyPath} records maxSlots=${String(current.maxSlots)} basePort=${String(current.basePort)}. Set "maxSlots" in subagents/settings.json to the recorded value, or remove ${policyPath} while no pi-subagent seat is running.`,
 		);
 	}
 }
@@ -168,17 +224,23 @@ async function writeRecord(filePath: string, record: VmCapacityLeaseRecord) {
 /**
  * Host VM capacity is counted in slots, not bytes. Host memory exposure is
  * `maxSlots x` the per-run `sandbox.memoryBytes` grant, so the worst case for
- * the default four slots is four times the 4 GiB per-agent ceiling. There is no
- * cross-process total-memory budget: slots are held by OS-owned localhost
+ * the default sixteen slots is sixteen times the 4 GiB per-agent ceiling. There
+ * is no cross-process total-memory budget: slots are held by OS-owned localhost
  * listeners, and a byte budget would need durable, fenced per-slot accounting
  * that the listener scheme deliberately does not provide.
+ *
+ * When every slot is busy, `acquire` polls with backoff until a slot frees or
+ * `capacityWaitMs` passes, then throws `VmCapacityExhaustedError`.
  */
 export async function createVmCapacityManager(options: {
 	root: string;
 	maxSlots: number;
 	basePort?: number;
+	capacityWaitMs?: number;
 }): Promise<VmCapacityManager> {
 	validateMaxSlots(options.maxSlots);
+	const capacityWaitMs = options.capacityWaitMs ?? DEFAULT_CAPACITY_WAIT_MS;
+	validateWaitMs(capacityWaitMs);
 	await mkdir(options.root, { recursive: true, mode: 0o700 });
 	const root = await realpath(options.root);
 	const basePort = options.basePort ?? deriveBasePort(root);
@@ -193,53 +255,79 @@ export async function createVmCapacityManager(options: {
 		root,
 		maxSlots: options.maxSlots,
 		basePort,
-		async acquire(owner) {
+		capacityWaitMs,
+		async acquire(owner, acquireOptions = {}) {
 			validateOwner(owner);
-			for (let slot = 0; slot < options.maxSlots; slot++) {
-				const port = basePort + slot;
-				const server = await listen(port);
-				if (!server) continue;
-
-				const record: VmCapacityLeaseRecord = {
-					schema: "pi-subagent-vm-capacity",
-					leaseId: randomUUID(),
-					owner,
-					pid: process.pid,
-					processStartedAt: performance.timeOrigin,
-					slot,
-					port,
-					acquiredAt: new Date().toISOString(),
-				};
-				const recordPath = path.join(root, `slot-${slot}.json`);
-				try {
-					await writeRecord(recordPath, record);
-				} catch (error) {
-					await close(server);
-					throw error;
+			const waitMs = acquireOptions.waitMs ?? capacityWaitMs;
+			validateWaitMs(waitMs);
+			const signal = acquireOptions.signal;
+			const startedAt = performance.now();
+			let pollMs = INITIAL_POLL_MS;
+			for (;;) {
+				signal?.throwIfAborted();
+				const lease = await tryAcquire(owner);
+				if (lease) return lease;
+				const waitedMs = performance.now() - startedAt;
+				const remainingMs = waitMs - waitedMs;
+				if (remainingMs <= 0) {
+					throw new VmCapacityExhaustedError(
+						options.maxSlots,
+						Math.round(waitedMs),
+					);
 				}
-
-				let releasePromise: Promise<void> | undefined;
-				return {
-					record,
-					release() {
-						releasePromise ??= (async () => {
-							let recordError: unknown;
-							try {
-								await writeRecord(recordPath, {
-									...record,
-									releaseRequestedAt: new Date().toISOString(),
-								});
-							} catch (error) {
-								recordError = error;
-							}
-							await close(server);
-							if (recordError) throw recordError;
-						})();
-						return releasePromise;
-					},
-				};
+				await sleep(Math.min(pollMs, remainingMs), signal);
+				pollMs = Math.min(MAX_POLL_MS, pollMs * 2);
 			}
-			throw new VmCapacityExhaustedError(options.maxSlots);
 		},
 	};
+
+	async function tryAcquire(
+		owner: string,
+	): Promise<VmCapacityLease | undefined> {
+		for (let slot = 0; slot < options.maxSlots; slot++) {
+			const port = basePort + slot;
+			const server = await listen(port);
+			if (!server) continue;
+
+			const record: VmCapacityLeaseRecord = {
+				schema: "pi-subagent-vm-capacity",
+				leaseId: randomUUID(),
+				owner,
+				pid: process.pid,
+				processStartedAt: performance.timeOrigin,
+				slot,
+				port,
+				acquiredAt: new Date().toISOString(),
+			};
+			const recordPath = path.join(root, `slot-${slot}.json`);
+			try {
+				await writeRecord(recordPath, record);
+			} catch (error) {
+				await close(server);
+				throw error;
+			}
+
+			let releasePromise: Promise<void> | undefined;
+			return {
+				record,
+				release() {
+					releasePromise ??= (async () => {
+						let recordError: unknown;
+						try {
+							await writeRecord(recordPath, {
+								...record,
+								releaseRequestedAt: new Date().toISOString(),
+							});
+						} catch (error) {
+							recordError = error;
+						}
+						await close(server);
+						if (recordError) throw recordError;
+					})();
+					return releasePromise;
+				},
+			};
+		}
+		return undefined;
+	}
 }

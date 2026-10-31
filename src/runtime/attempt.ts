@@ -328,6 +328,9 @@ export async function runNativeAttempt(options: {
 	let session: AgentSession | undefined;
 	let handoff: WorktreeRecord | undefined;
 	let sessionFile: string | undefined;
+	// No model call happens before a session exists, so an attempt that ends
+	// without one has complete (zero) usage.
+	let sessionCreated = false;
 	let sandboxCleanup: RunResult["sandboxCleanup"] = "not-needed";
 	let workspaceCleanup: RunResult["workspaceCleanup"] =
 		options.plan.workspace.mode === "read-only" && !options.snapshot
@@ -379,8 +382,9 @@ export async function runNativeAttempt(options: {
 			options.plan.model,
 			runSignal,
 		);
-		// VM boot has its own bound, the sandbox start timeout, and is not
-		// charged to attemptTimeoutMs. runtimeMs stays wall-clock and includes it.
+		// The wait for a VM slot and VM boot have their own bounds, the capacity
+		// wait and the sandbox start timeout, and are not charged to
+		// attemptTimeoutMs. runtimeMs stays wall-clock and includes both.
 		deadline.pause();
 		sandbox = await createGondolinAttemptSandbox({
 			owner: `${options.plan.runId}/${options.plan.attemptId}`,
@@ -388,6 +392,18 @@ export async function runNativeAttempt(options: {
 			readOnly: options.plan.workspace.mode === "read-only",
 			workspaceWriteBytes: options.plan.limits.workspaceWriteBytes,
 			capacity: options.capacity,
+			capacityWait: {
+				signal: runSignal,
+				// Waiting past the run's remaining runtime buys nothing: the
+				// attempt could not run and a retry would be refused.
+				waitMs: Math.max(
+					0,
+					Math.min(
+						options.capacity.capacityWaitMs,
+						options.plan.limits.cumulativeRuntimeMs - elapsedRuntimeMs(),
+					),
+				),
+			},
 			memoryBytes: options.plan.sandbox.memoryBytes,
 			...(options.workspaceAliases
 				? { workspaceAliases: options.workspaceAliases }
@@ -502,6 +518,7 @@ export async function runNativeAttempt(options: {
 			settingsManager,
 		});
 		session = created.session;
+		sessionCreated = true;
 		baselineUsage = usage(session);
 		baselineMessageIndex = session.messages.length;
 		const priorBudgetEvents = await options.journal.readEvents();
@@ -825,7 +842,7 @@ export async function runNativeAttempt(options: {
 			plan: options.plan,
 			status,
 			usage: collectedUsage,
-			usageComplete: false,
+			usageComplete: !sessionCreated,
 			runtimeMs: elapsedRuntimeMs(),
 			failure,
 			sandboxCleanup,

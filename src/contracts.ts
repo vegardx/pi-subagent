@@ -126,6 +126,7 @@ export type HandoffRef = Static<typeof HandoffRefSchema>;
 
 export const FailureCodeSchema = Type.Union([
 	Type.Literal("authentication"),
+	Type.Literal("capacity"),
 	Type.Literal("cancellation"),
 	Type.Literal("operator-abandoned"),
 	Type.Literal("lease-loss"),

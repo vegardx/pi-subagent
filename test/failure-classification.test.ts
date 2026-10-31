@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { classifyAttemptFailure } from "../src/runtime/failure.js";
+import { VmCapacityExhaustedError } from "../src/sandbox/capacity.js";
 
 const cleanup = {
 	sandboxCleanup: "proved" as const,
@@ -111,6 +112,28 @@ describe("attempt failure classification", () => {
 			retry: "never",
 		},
 		{
+			name: "exhausted VM capacity",
+			input: {
+				error: new VmCapacityExhaustedError(16, 600_000),
+				timedOut: false,
+				sandboxCleanup: "not-needed" as const,
+				workspaceCleanup: "not-needed" as const,
+			},
+			code: "capacity",
+			retry: "backoff",
+		},
+		{
+			name: "cancelled while waiting for VM capacity",
+			input: {
+				error: new VmCapacityExhaustedError(16, 600_000),
+				timedOut: false,
+				externalAbortReason: "caller-interrupt",
+				...cleanup,
+			},
+			code: "cancellation",
+			retry: "never",
+		},
+		{
 			name: "cleanup block",
 			input: {
 				error: new Error("close failed"),
@@ -125,6 +148,25 @@ describe("attempt failure classification", () => {
 		const classified = classifyAttemptFailure(input);
 		expect(classified.code).toBe(code);
 		expect(classified.retry).toBe(retry);
+	});
+
+	it("builds a capacity refusal from its own values, not exception text", () => {
+		const error = new VmCapacityExhaustedError(16, 600_000);
+		error.message = "host detail that must not be persisted";
+		const capacity = classifyAttemptFailure({
+			error,
+			timedOut: false,
+			sandboxCleanup: "not-needed",
+			workspaceCleanup: "not-needed",
+		});
+		expect(capacity).toEqual({
+			code: "capacity",
+			origin: "service",
+			retry: "backoff",
+			message: "VM capacity exhausted: 16 slots busy for 600 s",
+			guidance: expect.stringContaining("VM slot"),
+			retryAfterMs: 30_000,
+		});
 	});
 
 	it("separates budget exhaustion from generic workspace failures", () => {
