@@ -17,17 +17,21 @@ const fake = vi.hoisted(() => ({
 	installExit: 0,
 	checkpointBuildId: "9ec8f6c5-bd1f-5ac8-9bc2-2efd531c2359",
 	commands: [] as string[][],
+	onInstall: undefined as (() => void) | undefined,
+	failResumedStart: false,
 }));
 
 vi.mock("@earendil-works/gondolin", async (importOriginal) => {
 	const original =
 		await importOriginal<typeof import("@earendil-works/gondolin")>();
 	const { writeFile: write } = await import("node:fs/promises");
-	function vm() {
+	function vm(resumed = false) {
 		let closed = false;
 		return {
 			id: `vm-${Math.random()}`,
-			start: async () => {},
+			start: async () => {
+				if (resumed && fake.failResumedStart) throw new Error("boom");
+			},
 			close: async () => {
 				closed = true;
 			},
@@ -36,6 +40,7 @@ vi.mock("@earendil-works/gondolin", async (importOriginal) => {
 				const argv = Array.isArray(command) ? command : [command];
 				fake.commands.push(argv);
 				const install = argv.join(" ").includes("npm ci");
+				if (install) fake.onInstall?.();
 				return {
 					exitCode: install ? fake.installExit : 0,
 					ok: true,
@@ -62,7 +67,7 @@ vi.mock("@earendil-works/gondolin", async (importOriginal) => {
 				guestAssetBuildId: fake.checkpointBuildId,
 				resume: async () => {
 					fake.resumed += 1;
-					return vm();
+					return vm(true);
 				},
 			}),
 		},
@@ -89,7 +94,11 @@ async function project(): Promise<string> {
 	return root;
 }
 
-async function attempt(workspace: string, store: WarmCheckpointStore) {
+async function attempt(
+	workspace: string,
+	store: WarmCheckpointStore,
+	signal?: AbortSignal,
+) {
 	const capacity = await createVmCapacityManager({
 		root: path.join(store.root, "..", `capacity-${randomUUID()}`),
 		maxSlots: 1,
@@ -100,6 +109,7 @@ async function attempt(workspace: string, store: WarmCheckpointStore) {
 		readOnly: false,
 		workspaceWriteBytes: 1024,
 		capacity,
+		...(signal ? { capacityWait: { signal } } : {}),
 		memoryBytes: 1024 * 1024 * 1024,
 		createDependencyMountpoints: true,
 		warmCheckpoints: { store, guestAssetBuildId: BUILD_ID },
@@ -121,6 +131,8 @@ describe("warm checkpoint boot", () => {
 		fake.installExit = 0;
 		fake.checkpointBuildId = BUILD_ID;
 		fake.commands = [];
+		fake.onInstall = undefined;
+		fake.failResumedStart = false;
 	});
 
 	it("warms a project once, then resumes every attempt from the checkpoint", async () => {
@@ -171,6 +183,41 @@ describe("warm checkpoint boot", () => {
 			warmup: "failed-recently",
 		});
 		expect(fake.created).toBe(3);
+	});
+
+	it("records nothing when the attempt is cancelled during warm-up", async () => {
+		const workspace = await project();
+		const store = newStore();
+		const controller = new AbortController();
+		fake.installExit = 1;
+		fake.onInstall = () => controller.abort("caller-interrupt");
+		await expect(attempt(workspace, store, controller.signal)).rejects.toBe(
+			"caller-interrupt",
+		);
+		expect(
+			(await readdir(store.root)).filter((entry) =>
+				entry.endsWith(".failed.json"),
+			),
+		).toEqual([]);
+		fake.installExit = 0;
+		fake.onInstall = undefined;
+		const next = await attempt(workspace, store);
+		expect(next.boot).toMatchObject({ mode: "warm", warmup: "created" });
+	});
+
+	it("releases the checkpoint lease when a resumed VM fails to start", async () => {
+		const workspace = await project();
+		const store = newStore();
+		const first = await attempt(workspace, store);
+		fake.failResumedStart = true;
+		await expect(attempt(workspace, store)).rejects.toThrow(
+			"sandbox startup failed",
+		);
+		expect(
+			await readdir(
+				path.join(store.root, "leases", first.boot.checkpointKey as string),
+			),
+		).toEqual([]);
 	});
 
 	it("boots cold when the checkpoint was made from another guest image", async () => {

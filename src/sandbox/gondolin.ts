@@ -330,8 +330,12 @@ async function runWarmup(options: {
 		} catch {
 			failure = "install-failed";
 		}
-		if (options.signal?.aborted) cancelled = options.signal.reason;
-		else if (timeout.aborted) failure = "timeout";
+		// A cancelled install is not a failed one: nothing is recorded, so the
+		// key stays warmable for the next attempt.
+		if (options.signal?.aborted) {
+			cancelled = options.signal.reason;
+			failure = undefined;
+		} else if (timeout.aborted) failure = "timeout";
 	}
 	if (vm && !failure && cancelled === undefined) {
 		try {
@@ -343,6 +347,10 @@ async function runWarmup(options: {
 	if (vm) {
 		await vm.close().catch(() => {});
 		if (vm.getHostPid() !== null) throw new WarmupCleanupError();
+	}
+	if (cancelled === undefined && options.signal?.aborted) {
+		cancelled = options.signal.reason;
+		failure = undefined;
 	}
 	if (cancelled !== undefined) throw cancelled;
 	return failure;
