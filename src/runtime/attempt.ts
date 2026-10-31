@@ -75,6 +75,17 @@ export type AttemptExecutionResult = {
 	error: string | undefined;
 };
 
+// "handled" means an input handler consumed the text before it reached the
+// agent; an accepted-by-session receipt would claim a delivery that never
+// happened, so it surfaces as a failed control instead.
+async function requireQueued(
+	disposition: ReturnType<AgentSession["steer"]>,
+): Promise<void> {
+	if ((await disposition) !== "queued") {
+		throw new Error("control input was handled before reaching the session");
+	}
+}
+
 function assistantOutput(session: AgentSession, firstMessageIndex = 0): string {
 	for (
 		let index = session.messages.length - 1;
@@ -602,11 +613,13 @@ export async function runNativeAttempt(options: {
 		};
 		options.registerControl?.({
 			steer: (text) =>
-				session?.steer(text) ??
-				Promise.reject(new Error("session unavailable")),
+				session
+					? requireQueued(session.steer(text))
+					: Promise.reject(new Error("session unavailable")),
 			followUp: (text) =>
-				session?.followUp(text) ??
-				Promise.reject(new Error("session unavailable")),
+				session
+					? requireQueued(session.followUp(text))
+					: Promise.reject(new Error("session unavailable")),
 		});
 		sessionFile = session.sessionFile;
 		await options.journal.append("session-started", {
