@@ -18,6 +18,14 @@ import { type WriteBudget, withWriteBudget } from "./write-budget.js";
 
 const GONDOLIN_VERSION = "0.12.0";
 const DEFAULT_CPUS = 1;
+const DEFAULT_START_TIMEOUT_MS = 60_000;
+/**
+ * The code Gondolin sets on the error `vm.start()` rejects with when the guest
+ * does not reach readiness within `startTimeoutMs`. It is a runtime property,
+ * not part of Gondolin's declared types, so a test pins it against the
+ * installed package.
+ */
+export const GONDOLIN_START_TIMEOUT_CODE = "vm_start_timeout";
 
 /**
  * Convert a resolved per-run memory ceiling into a Gondolin memory size. The
@@ -79,6 +87,28 @@ async function closeStartedVm(
 		);
 	}
 	await capacity.release();
+}
+
+function isGuestReadinessTimeout(error: unknown): boolean {
+	return (
+		error instanceof Error &&
+		(error as { code?: unknown }).code === GONDOLIN_START_TIMEOUT_CODE
+	);
+}
+
+/**
+ * The failure message for a VM that did not start. It is built from the
+ * launch's own bounds, never from the underlying exception, whose text is not
+ * persisted.
+ */
+export function sandboxStartFailureMessage(
+	error: unknown,
+	bounds: { startTimeoutMs: number; memory: string },
+): string {
+	if (!isGuestReadinessTimeout(error)) return "sandbox startup failed";
+	return `sandbox startup failed: guest did not become ready within ${
+		bounds.startTimeoutMs / 1000
+	} s at ${bounds.memory}`;
 }
 
 export async function createGondolinAttemptSandbox(options: {
@@ -157,6 +187,7 @@ export async function createGondolinAttemptSandbox(options: {
 	const { httpHooks } = createHttpHooks({ blockInternalRanges: true });
 	const memory = guestMemorySize(options.memoryBytes);
 	const cpus = options.cpus ?? DEFAULT_CPUS;
+	const startTimeoutMs = options.startTimeoutMs ?? DEFAULT_START_TIMEOUT_MS;
 	const capacityLease = await options.capacity.acquire(options.owner);
 	let vm: VM;
 	try {
@@ -165,7 +196,7 @@ export async function createGondolinAttemptSandbox(options: {
 			memory,
 			cpus,
 			rootfs: { mode: "memory" },
-			startTimeoutMs: options.startTimeoutMs ?? 60_000,
+			startTimeoutMs,
 			allowWebSockets: false,
 			maxHttpBodyBytes: 8 * 1024 * 1024,
 			maxHttpResponseBodyBytes: 32 * 1024 * 1024,
@@ -250,6 +281,9 @@ export async function createGondolinAttemptSandbox(options: {
 				{ cause: new AggregateError([error, cleanupError]) },
 			);
 		}
-		throw new GondolinSandboxError("sandbox startup failed", { cause: error });
+		throw new GondolinSandboxError(
+			sandboxStartFailureMessage(error, { startTimeoutMs, memory }),
+			{ cause: error },
+		);
 	}
 }
