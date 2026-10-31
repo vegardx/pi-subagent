@@ -185,6 +185,7 @@ function fakeSandbox(): GondolinAttemptSandbox {
 			memory: "1024M",
 			cpus: 1,
 			rootfs: GUEST_ROOTFS_POLICY,
+			dependencies: { bound: [], skipped: [] },
 			startedAt: new Date().toISOString(),
 		},
 		vm: {} as GondolinAttemptSandbox["vm"],

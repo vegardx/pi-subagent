@@ -18,7 +18,12 @@ import type {
 	VmCapacityLease,
 	VmCapacityManager,
 } from "./capacity.js";
-import { createGondolinTools } from "./tools.js";
+import {
+	type DependencyDirectoryPlan,
+	dependencyBindCommands,
+	planDependencyDirectories,
+} from "./dependencies.js";
+import { createGondolinTools, GUEST_WORKSPACE } from "./tools.js";
 import { type WriteBudget, withWriteBudget } from "./write-budget.js";
 
 /**
@@ -95,6 +100,8 @@ export type GondolinSandboxRecord = {
 	memory: string;
 	cpus: number;
 	rootfs: typeof GUEST_ROOTFS_POLICY;
+	/** Workspace dependency directories bound onto the root disk. */
+	dependencies: DependencyDirectoryPlan;
 	startedAt: string;
 };
 
@@ -150,6 +157,23 @@ export function sandboxStartFailureMessage(
 	} s at ${bounds.memory}`;
 }
 
+/**
+ * Bind each planned dependency directory onto the guest root disk before any
+ * tool runs, so installs never traverse the workspace VFS. A bind that fails
+ * fails the start: the record would otherwise claim a layout the guest lacks.
+ */
+async function bindDependencyDirectories(
+	vm: VM,
+	plan: DependencyDirectoryPlan,
+): Promise<void> {
+	for (const command of dependencyBindCommands(plan, GUEST_WORKSPACE)) {
+		const result = await vm.exec(command);
+		if (result.exitCode !== 0) {
+			throw new GondolinSandboxError("dependency directory bind failed");
+		}
+	}
+}
+
 export async function createGondolinAttemptSandbox(options: {
 	owner: string;
 	workspace: string;
@@ -164,6 +188,12 @@ export async function createGondolinAttemptSandbox(options: {
 	workspaceAliases?: string[];
 	skillMounts?: Array<{ hostBaseDir: string; guestBaseDir: string }>;
 	contextMounts?: Array<{ guestFilePath: string; content: string }>;
+	/**
+	 * Whether absent dependency directories may be created on the host side of
+	 * the workspace mount. True only for a checkout the host owns: a worktree
+	 * or a read-only snapshot, never the operator's live checkout.
+	 */
+	createDependencyMountpoints?: boolean;
 	onFatalToolAbort?: () => void;
 }): Promise<GondolinAttemptSandbox> {
 	let workspace: string;
@@ -175,6 +205,17 @@ export async function createGondolinAttemptSandbox(options: {
 	} catch (error) {
 		if (error instanceof GondolinSandboxError) throw error;
 		throw new GondolinSandboxError("sandbox workspace is unavailable", {
+			cause: error,
+		});
+	}
+	let dependencies: DependencyDirectoryPlan;
+	try {
+		dependencies = await planDependencyDirectories({
+			workspace,
+			createMountpoints: options.createDependencyMountpoints === true,
+		});
+	} catch (error) {
+		throw new GondolinSandboxError("dependency directory planning failed", {
 			cause: error,
 		});
 	}
@@ -267,6 +308,7 @@ export async function createGondolinAttemptSandbox(options: {
 			throw new GondolinSandboxError("started VM has no host PID");
 		}
 		const hostProcessIdentity = await captureQemuProcessIdentity(hostPid);
+		await bindDependencyDirectories(vm, dependencies);
 		let closed = false;
 		let closePromise: Promise<void> | undefined;
 		const close = () => {
@@ -311,6 +353,7 @@ export async function createGondolinAttemptSandbox(options: {
 			memory,
 			cpus,
 			rootfs: GUEST_ROOTFS_POLICY,
+			dependencies,
 			startedAt: new Date().toISOString(),
 		};
 		return {
