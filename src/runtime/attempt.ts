@@ -165,6 +165,28 @@ function delegatedPrompt(plan: AgentLaunchPlan): string {
 		.join("\n\n");
 }
 
+export const INTERRUPTED_RESUME_PROMPT =
+	"Resume the interrupted task. Revalidate the current workspace state, complete the original goal, and return the required final result.";
+
+/**
+ * The first user message of an attempt: the delegated task for a fresh
+ * session, and for a restored session either the caller's resume message or
+ * the fixed instruction to finish the interrupted task.
+ */
+export function firstAttemptPrompt(input: {
+	plan: AgentLaunchPlan;
+	resumeSessionFile?: string;
+	resumeMessage?: string;
+}): string {
+	if (input.resumeSessionFile === undefined) {
+		if (input.resumeMessage !== undefined) {
+			throw new Error("a resume message requires a restored session");
+		}
+		return delegatedPrompt(input.plan);
+	}
+	return input.resumeMessage ?? INTERRUPTED_RESUME_PROMPT;
+}
+
 function terminalResult(input: {
 	plan: AgentLaunchPlan;
 	status: RunResult["status"];
@@ -217,6 +239,8 @@ export async function runNativeAttempt(options: {
 	forkContext?: ForkContextProjection;
 	sessionRoot: string;
 	resumeSessionFile?: string;
+	/** Delivered as the restored session's first user message. */
+	resumeMessage?: string;
 	registerControl?: (control: AttemptControl | undefined) => void;
 	signal?: AbortSignal;
 }): Promise<AttemptExecutionResult> {
@@ -236,6 +260,7 @@ export async function runNativeAttempt(options: {
 		throw new Error("attempt ownership mismatch");
 	}
 	assertContextFileProjection(options.plan, options.contextFiles);
+	const firstPrompt = firstAttemptPrompt(options);
 	if (
 		(options.plan.contextMode === "fork" && !options.forkContext) ||
 		(options.plan.contextMode === "fresh" && options.forkContext) ||
@@ -642,11 +667,7 @@ export async function runNativeAttempt(options: {
 			sessionId: session.sessionId,
 			sessionFile: session.sessionFile,
 		});
-		await session.prompt(
-			options.resumeSessionFile
-				? "Resume the interrupted task. Revalidate the current workspace state, complete the original goal, and return the required final result."
-				: delegatedPrompt(options.plan),
-		);
+		await session.prompt(firstPrompt);
 		if (finalAnswer) {
 			for (
 				let repair = 0;
