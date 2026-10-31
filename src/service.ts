@@ -27,8 +27,14 @@ import type {
 	SubagentRequest,
 } from "./launch-contracts.js";
 import { DEFAULT_MAX_TASK_COST } from "./launch-contracts.js";
-import { transitionRunStatus } from "./lifecycle/reducer.js";
-import { AttemptRecordStore } from "./persistence/attempt-record.js";
+import {
+	InvalidRunTransitionError,
+	transitionRunStatus,
+} from "./lifecycle/reducer.js";
+import {
+	type AttemptRecord,
+	AttemptRecordStore,
+} from "./persistence/attempt-record.js";
 import {
 	type JournalEvent,
 	PersistenceCorruptionError,
@@ -275,6 +281,18 @@ export type ControlInput = {
 	text: string;
 };
 
+/** Upper bound on a resume message, the same as a steer or follow-up text. */
+export const MAX_RESUME_MESSAGE_BYTES = 64 * 1024;
+
+/**
+ * Continues a run's own session in a fresh worktree checked out at the run's
+ * latest hand-off. `message` is the restored session's first user message.
+ */
+export type ResumeInput = {
+	continueFromHandoff: true;
+	message: string;
+};
+
 export type ControlReceipt = {
 	operationId: string;
 	state: "accepted-by-session" | "missed" | "failed";
@@ -304,7 +322,7 @@ export type SubagentClient = {
 	steer(runId: RunId, input: ControlInput): Promise<ControlReceipt>;
 	followUp(runId: RunId, input: ControlInput): Promise<ControlReceipt>;
 	retry(runId: RunId): Promise<RunReceipt>;
-	resume(runId: RunId): Promise<RunReceipt>;
+	resume(runId: RunId, input?: ResumeInput): Promise<RunReceipt>;
 	reconcile(runId: RunId): Promise<ReconcileResult>;
 	release(runId: RunId): Promise<RunReceipt>;
 	abandon(runId: RunId): Promise<RunReceipt>;
@@ -508,9 +526,12 @@ function resumePlan(
 	current: AgentLaunchPlan,
 	result: AttemptExecutionResult,
 	ordinal: number,
+	continueFromHandoff: boolean,
 ): AgentLaunchPlan {
 	if (current.limits.resumes < 1) throw new Error("resume budget exhausted");
-	if (result.result.failure?.retry !== "resume") {
+	// Continuing from a hand-off follows a terminal result, not an interruption,
+	// so the failure disposition does not apply to it.
+	if (!continueFromHandoff && result.result.failure?.retry !== "resume") {
 		throw new Error("failure classification does not permit resume");
 	}
 	const remainingRuntimeMs =
@@ -552,6 +573,61 @@ function resumePlan(
 		},
 	};
 	return { ...draft, identitySha256: canonicalSha256(draft) };
+}
+
+function assertResumeInput(input: ResumeInput): void {
+	if (input.continueFromHandoff !== true) {
+		throw new Error("resume input requires continueFromHandoff: true");
+	}
+	if (
+		typeof input.message !== "string" ||
+		!input.message.trim() ||
+		Buffer.byteLength(input.message, "utf8") > MAX_RESUME_MESSAGE_BYTES
+	) {
+		throw new Error(
+			`resume message must be non-blank and at most ${MAX_RESUME_MESSAGE_BYTES} bytes`,
+		);
+	}
+}
+
+async function readAttemptWorktree(
+	root: string,
+	worktreeAttemptId: string,
+): Promise<WorktreeRecord | undefined> {
+	try {
+		return await readWorktreeRecord(
+			path.join(root, "workspace", "records", `${worktreeAttemptId}.json`),
+		);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+		throw error;
+	}
+}
+
+/**
+ * The hand-off a worktree leaves its run with: its own capture, or, when it
+ * continued from one of the run's earlier hand-offs and captured nothing new,
+ * that earlier hand-off, which then remains the run's hand-off.
+ */
+async function carriedHandoff(
+	root: string,
+	attempts: readonly AttemptRecord[],
+	record: WorktreeRecord | undefined,
+): Promise<WorktreeRecord | undefined> {
+	if (!record || record.handoffCommit) return record;
+	if (!record.startCommit) return undefined;
+	for (const attempt of attempts) {
+		const id = attempt.worktreeAttemptId;
+		if (!id || id === record.attemptId) continue;
+		const prior = await readAttemptWorktree(root, id);
+		if (
+			prior?.runId === record.runId &&
+			prior.handoffCommit === record.startCommit
+		) {
+			return prior;
+		}
+	}
+	return undefined;
 }
 
 type SessionEvidence =
@@ -1086,18 +1162,16 @@ export async function createSubagentService(options: {
 			}
 			let recoveredHandoff: WorktreeRecord | undefined;
 			if (latestAttempt?.worktreeAttemptId) {
-				try {
-					recoveredHandoff = await readWorktreeRecord(
-						path.join(
-							options.root,
-							"workspace",
-							"records",
-							`${latestAttempt.worktreeAttemptId}.json`,
-						),
-					);
-				} catch (error) {
-					if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-				}
+				const latestWorktree = await readAttemptWorktree(
+					options.root,
+					latestAttempt.worktreeAttemptId,
+				);
+				recoveredHandoff =
+					(await carriedHandoff(
+						options.root,
+						await attemptRecords.list(recoveredPlan.runId),
+						latestWorktree,
+					)) ?? latestWorktree;
 			}
 			const execution: AttemptExecutionResult = {
 				result,
@@ -1154,12 +1228,15 @@ export async function createSubagentService(options: {
 		contextFiles: ContextFileProjection;
 		forkContext?: ForkContextProjection;
 		kind: "initial" | "retry" | "resume";
-		expectedPriorStatus?: "failed" | "interrupted";
+		expectedPriorStatus?: RunStatus;
 		ordinal: number;
 		parentAttemptId?: AttemptId;
 		rootPlan: AgentLaunchPlan;
 		resumeSessionFile?: string;
+		resumeMessage?: string;
 		existingWorktree?: WorktreeRecord;
+		/** The run's own hand-off the new worktree is checked out at. */
+		continueFrom?: WorktreeRecord;
 	}): Promise<RunReceipt> => {
 		const lease = await acquireRunLease({
 			root: path.join(options.root, "leases"),
@@ -1175,6 +1252,14 @@ export async function createSubagentService(options: {
 			);
 			if (input.expectedPriorStatus) {
 				await assertDurableStatus(journal, input.expectedPriorStatus);
+			}
+			if (input.continueFrom) {
+				await journal.append("resume-at-handoff", {
+					attemptId: input.plan.attemptId,
+					fromAttemptId: input.continueFrom.attemptId,
+					startCommit: input.continueFrom.handoffCommit,
+					messageBytes: Buffer.byteLength(input.resumeMessage ?? "", "utf8"),
+				});
 			}
 			const attemptHostTools = currentHostTools();
 			assertHostToolProjection(input.plan, attemptHostTools);
@@ -1203,6 +1288,7 @@ export async function createSubagentService(options: {
 					attemptId: input.plan.attemptId,
 					workspace: input.workspace,
 					lease,
+					...(input.continueFrom ? { continueFrom: input.continueFrom } : {}),
 				});
 			}
 			if (
@@ -1261,6 +1347,9 @@ export async function createSubagentService(options: {
 				...(input.resumeSessionFile
 					? { resumeSessionFile: input.resumeSessionFile }
 					: {}),
+				...(input.resumeMessage !== undefined
+					? { resumeMessage: input.resumeMessage }
+					: {}),
 				registerControl(control) {
 					pendingControl = control;
 					if (active && control) active.control = control;
@@ -1289,9 +1378,19 @@ export async function createSubagentService(options: {
 				lease,
 			};
 			const running = active;
+			const attemptWorktree = worktree;
 			running.promise = rawPromise.then(
-				async (result) => {
+				async (executed) => {
+					let result = executed;
 					try {
+						if (!result.handoff && attemptWorktree) {
+							const carried = await carriedHandoff(
+								options.root,
+								await attemptRecords.list(input.plan.runId),
+								attemptWorktree,
+							);
+							if (carried) result = { ...result, handoff: carried };
+						}
 						await journal.writeSnapshot(result);
 					} catch (error) {
 						running.status = "cleanup-blocked";
@@ -1482,6 +1581,7 @@ export async function createSubagentService(options: {
 			run.status === "failed" &&
 			run.result !== undefined &&
 			(retryFailure?.retry === "manual" || retryFailure?.retry === "backoff") &&
+			run.result.handoff?.handoffCommit === undefined &&
 			run.plan.limits.retries > 0 &&
 			remainingRuntime >= 1_000 &&
 			(remainingTokens === undefined || remainingTokens >= 1) &&
@@ -2137,6 +2237,13 @@ export async function createSubagentService(options: {
 						) {
 							throw new Error("failure classification does not permit retry");
 						}
+						// A retry starts over at the plan's start, so it would drop the
+						// hand-off a resumed attempt carried forward.
+						if (run.result.handoff?.handoffCommit !== undefined) {
+							throw new Error(
+								"retry would discard the run's hand-off; resume at the hand-off instead",
+							);
+						}
 						const latest = await attemptRecords.latest(runId);
 						if (!latest || latest.attemptId !== run.plan.attemptId) {
 							throw new Error("attempt history mismatch");
@@ -2231,24 +2338,57 @@ export async function createSubagentService(options: {
 					});
 				},
 
-				async resume(runId) {
+				async resume(runId, input) {
+					if (input !== undefined) assertResumeInput(input);
 					return runExclusive(async () => {
 						const run = ownedRun(runId);
-						if (run.status !== "interrupted" || !run.result?.sessionFile) {
-							throw new Error("run is not resumable");
+						const continuing = input !== undefined;
+						if (continuing) {
+							if (run.plan.workspace.mode !== "worktree") {
+								throw new Error("resume at hand-off requires a worktree run");
+							}
+							try {
+								transitionRunStatus(run.status, { type: "resume-at-handoff" });
+							} catch (error) {
+								if (!(error instanceof InvalidRunTransitionError)) throw error;
+								throw new Error(
+									`resume at hand-off requires a completed, failed, or cancelled run; run is ${run.status}`,
+								);
+							}
+							if (!run.result?.handoff?.handoffCommit) {
+								throw new Error(
+									"run has no exported hand-off to continue from",
+								);
+							}
+						} else {
+							if (run.status !== "interrupted" || !run.result?.sessionFile) {
+								throw new Error("run is not resumable");
+							}
+							if (run.result.result.failure?.retry !== "resume") {
+								throw new Error(
+									"failure classification does not permit resume",
+								);
+							}
 						}
-						if (run.result.result.failure?.retry !== "resume") {
-							throw new Error("failure classification does not permit resume");
+						const prior = run.result;
+						if (!prior?.sessionFile) {
+							throw new Error("run has no retained session to resume");
 						}
 						const latest = await attemptRecords.latest(runId);
 						if (!latest || latest.attemptId !== run.plan.attemptId) {
 							throw new Error("attempt history mismatch");
 						}
+						const plan = resumePlan(
+							run.plan,
+							prior,
+							latest.ordinal + 1,
+							continuing,
+						);
 						const rootRecord = await runRecords.read(runId);
 						const sessionEvidence = await observeSessionEvidence(
 							options.root,
 							await run.journal.readEvents(),
-							run.result.sessionFile,
+							prior.sessionFile,
 						);
 						if (sessionEvidence.state !== "valid") {
 							throw new Error("retained session identity is unproved");
@@ -2289,9 +2429,26 @@ export async function createSubagentService(options: {
 							scopes: run.plan.contextScopes,
 						});
 						assertContextFileProjection(run.plan, contextFiles);
-						const plan = resumePlan(run.plan, run.result, latest.ordinal + 1);
 						let existingWorktree: WorktreeRecord | undefined;
-						if (run.plan.workspace.mode === "worktree") {
+						let continueFrom: WorktreeRecord | undefined;
+						if (continuing) {
+							const handoff = prior.handoff;
+							continueFrom = handoff
+								? await readAttemptWorktree(options.root, handoff.attemptId)
+								: undefined;
+							if (
+								!handoff ||
+								!continueFrom ||
+								continueFrom.runId !== runId ||
+								continueFrom.attemptId !== handoff.attemptId ||
+								continueFrom.handoffCommit !== handoff.handoffCommit ||
+								continueFrom.baselineHead !== handoff.baselineHead ||
+								continueFrom.handoffRef !==
+									handoffRefName(runId, handoff.attemptId)
+							) {
+								throw new Error("durable handoff identity mismatch");
+							}
+						} else if (run.plan.workspace.mode === "worktree") {
 							existingWorktree = await readWorktreeRecord(
 								path.join(
 									options.root,
@@ -2327,12 +2484,14 @@ export async function createSubagentService(options: {
 							skills,
 							contextFiles,
 							kind: "resume",
-							expectedPriorStatus: "interrupted",
+							expectedPriorStatus: run.status,
 							ordinal: latest.ordinal + 1,
 							parentAttemptId: latest.attemptId,
 							rootPlan: rootRecord.plan,
 							resumeSessionFile: sessionFile,
+							...(input ? { resumeMessage: input.message } : {}),
 							...(existingWorktree ? { existingWorktree } : {}),
+							...(continueFrom ? { continueFrom } : {}),
 						});
 					});
 				},

@@ -43,6 +43,10 @@ export const RunTransitionEventSchema = Type.Union([
 		{ additionalProperties: false },
 	),
 	Type.Object(
+		{ type: Type.Literal("resume-at-handoff") },
+		{ additionalProperties: false },
+	),
+	Type.Object(
 		{
 			type: Type.Literal("abandon"),
 			sandboxCleanup: CleanupOutcomeSchema,
@@ -123,7 +127,9 @@ export function transitionRunStatus(
 			if (event.type === "cleanup-blocked") return "cleanup-blocked";
 			return invalid(current, event);
 		case "failed":
-			return event.type === "retry" ? "queued" : invalid(current, event);
+			if (event.type === "retry") return "queued";
+			if (event.type === "resume-at-handoff") return "queued";
+			return invalid(current, event);
 		case "interrupted":
 			if (event.type === "resume") return "queued";
 			if (event.type === "abandon") {
@@ -139,6 +145,9 @@ export function transitionRunStatus(
 				: "cleanup-blocked";
 		case "completed":
 		case "cancelled":
+			return event.type === "resume-at-handoff"
+				? "queued"
+				: invalid(current, event);
 		case "abandoned":
 			return invalid(current, event);
 	}

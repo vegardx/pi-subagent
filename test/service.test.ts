@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -28,14 +28,20 @@ import { digestFileResource } from "../src/preflight/resources.js";
 import { preflightWorkspace } from "../src/preflight/workspace.js";
 import type { HostToolDeclaration } from "../src/runtime/host-tools.js";
 import { createVmCapacityManager } from "../src/sandbox/capacity.js";
-import { createSubagentService, RetryBackoffError } from "../src/service.js";
+import {
+	createSubagentService,
+	type ResumeInput,
+	RetryBackoffError,
+} from "../src/service.js";
 import { registerSessionModelProvider } from "../src/session-model-provider.js";
 import {
 	createReadOnlySnapshot,
 	finalizeWorktreeHandoff,
 	handoffRefName,
 	listRunSnapshots,
+	readWorktreeRecord,
 	removeReadOnlySnapshot,
+	type WorktreeRecord,
 } from "../src/workspace/worktree.js";
 
 const execFileAsync = promisify(execFile);
@@ -260,7 +266,7 @@ async function worktreeServiceFor(
 	return { ...data, agent, service };
 }
 
-async function reopenService(data: Awaited<ReturnType<typeof serviceFor>>) {
+async function reopenService(data: { root: string; agent: DiscoveredAgent }) {
 	return createSubagentService({
 		root: path.join(data.root, "state"),
 		agentDir: path.join(data.root, "agent"),
@@ -2272,5 +2278,337 @@ describe("inherited session model", () => {
 		expect(pinned.launchPlan.modelSource).toBe("template");
 		expect(provider).not.toHaveBeenCalled();
 		await data.service.shutdown();
+	});
+});
+
+describe("resume at a hand-off", () => {
+	type ExecutorInput = Parameters<
+		NonNullable<Parameters<typeof createSubagentService>[0]["executeAttempt"]>
+	>[0];
+	type Observed = {
+		resumeSessionFile?: string;
+		resumeMessage?: string;
+		worktree?: WorktreeRecord;
+		startFiles?: string[];
+		captureError?: string;
+	};
+
+	const resumeInput: ResumeInput = {
+		continueFromHandoff: true,
+		message: "Check report: 1 failure.\nFinding: rename second.txt.",
+	};
+
+	async function writeSession(root: string, label: string) {
+		const manager = SessionManager.create(
+			"/workspace",
+			path.join(root, "state", "sessions", label),
+		);
+		manager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "implement" }],
+			timestamp: Date.now(),
+		});
+		const header = manager.getHeader();
+		const file = manager.getSessionFile();
+		if (!header || !file) throw new Error("session fixture missing");
+		await writeFile(
+			file,
+			`${[header, ...manager.getEntries()]
+				.map((entry) => JSON.stringify(entry))
+				.join("\n")}\n`,
+		);
+		return { file, sessionId: manager.getSessionId() };
+	}
+
+	/**
+	 * The first attempt writes `first.txt` and hands it off from a real session;
+	 * every later attempt runs `second` in its worktree and finalizes it.
+	 */
+	async function continuedService(
+		name: string,
+		second: (worktree: WorktreeRecord) => Promise<void>,
+		options: { firstChanges?: boolean; resumes?: number } = {},
+	) {
+		const observed: Observed[] = [];
+		let dataRoot = "";
+		const data = await worktreeServiceFor(
+			name,
+			async (input: ExecutorInput) => {
+				const worktree = input.worktree;
+				if (!worktree) throw new Error("worktree missing");
+				const seen: Observed = {
+					...(input.resumeSessionFile
+						? { resumeSessionFile: input.resumeSessionFile }
+						: {}),
+					...(input.resumeMessage !== undefined
+						? { resumeMessage: input.resumeMessage }
+						: {}),
+					worktree,
+					startFiles: (
+						await execFileAsync("git", ["ls-files"], {
+							cwd: worktree.worktreePath,
+						})
+					).stdout
+						.trim()
+						.split("\n"),
+				};
+				observed.push(seen);
+				let sessionFile = input.resumeSessionFile;
+				if (!sessionFile) {
+					const session = await writeSession(dataRoot, "implementer");
+					sessionFile = session.file;
+					await input.journal.append("session-started", {
+						sessionId: session.sessionId,
+						sessionFile,
+					});
+					if (options.firstChanges !== false) {
+						await writeFile(
+							path.join(worktree.worktreePath, "first.txt"),
+							"1\n",
+						);
+					}
+				} else {
+					await second(worktree);
+				}
+				let handoff: WorktreeRecord | undefined;
+				let status: RunResult["status"] = "completed";
+				try {
+					handoff = await finalizeWorktreeHandoff(
+						worktree,
+						`feat(subagent): handoff ${input.plan.attemptId}`,
+						input.lease,
+					);
+				} catch (error) {
+					seen.captureError = (error as Error).message;
+					status = "failed";
+				}
+				const execution = {
+					result: {
+						...result(input.plan.runId, status),
+						workspaceCleanup:
+							status === "completed"
+								? ("proved" as const)
+								: ("retained" as const),
+					},
+					output: "done",
+					sessionFile,
+					handoff,
+					structuredOutput: undefined,
+					error: status === "failed" ? "capture refused" : undefined,
+				};
+				await input.journal.writeSnapshot(execution);
+				return execution;
+			},
+		);
+		dataRoot = data.root;
+		const client = data.service.forOwner({ id: `owner-${name}` });
+		const preflight = await client.preflight({
+			...data.request,
+			operationId: `operation-${name}`,
+			limits: {
+				...data.request.limits,
+				resumes: options.resumes ?? data.request.limits.resumes,
+			},
+		});
+		const initial = await client.launch(
+			preflight.preflightId,
+			preflight.identitySha256,
+		);
+		const first = await client.wait(initial.runId);
+		const baselineHead = (
+			await execFileAsync("git", ["rev-parse", "HEAD"], {
+				cwd: data.repository,
+			})
+		).stdout.trim();
+		return { data, client, initial, first, observed, baselineHead };
+	}
+
+	it("continues the session at its hand-off and squashes both changes onto the baseline", async () => {
+		const run = await continuedService("resume-change", async (worktree) => {
+			await writeFile(path.join(worktree.worktreePath, "second.txt"), "2\n");
+		});
+		const firstHandoff = run.first.handoff;
+		if (!firstHandoff?.handoffCommit) throw new Error("first hand-off missing");
+		const resumed = await run.client.resume(run.initial.runId, resumeInput);
+		expect(resumed.attemptId).not.toBe(run.initial.attemptId);
+		const settled = await run.client.wait(run.initial.runId);
+		expect(settled.result.status).toBe("completed");
+
+		const continued = run.observed[1];
+		expect(continued?.resumeMessage).toBe(resumeInput.message);
+		expect(continued?.resumeSessionFile).toBe(
+			await realpath(run.first.sessionFile ?? ""),
+		);
+		expect(continued?.startFiles).toEqual(["file.txt", "first.txt"]);
+		const record = await readWorktreeRecord(
+			continued?.worktree?.recordPath ?? "",
+		);
+		expect(record.attemptId).toBe(resumed.attemptId);
+		expect(record.startCommit).toBe(firstHandoff.handoffCommit);
+		expect(record.baselineHead).toBe(run.baselineHead);
+
+		const exported = await run.client.exportHandoff(run.initial.runId);
+		expect(exported.ref).toMatchObject({
+			attemptId: resumed.attemptId,
+			baselineHead: run.baselineHead,
+		});
+		expect(exported.ref.handoffCommit).not.toBe(firstHandoff.handoffCommit);
+		const clone = path.join(run.data.root, "clone");
+		await execFileAsync("git", [
+			"clone",
+			"--quiet",
+			run.data.repository,
+			clone,
+		]);
+		await execFileAsync("git", ["config", "user.name", "Qualification"], {
+			cwd: clone,
+		});
+		await execFileAsync(
+			"git",
+			["config", "user.email", "qualification@example.invalid"],
+			{ cwd: clone },
+		);
+		const patch = path.join(run.data.root, "handoff.patch");
+		await writeFile(patch, exported.content);
+		await execFileAsync("git", ["am", "--quiet", patch], { cwd: clone });
+		expect(
+			(
+				await execFileAsync(
+					"git",
+					["rev-list", "--count", `${run.baselineHead}..HEAD`],
+					{
+						cwd: clone,
+					},
+				)
+			).stdout.trim(),
+		).toBe("1");
+		expect(
+			(await execFileAsync("git", ["ls-files"], { cwd: clone })).stdout
+				.trim()
+				.split("\n"),
+		).toEqual(["file.txt", "first.txt", "second.txt"]);
+
+		const attempts = await (
+			await AttemptRecordStore.open(
+				path.join(run.data.root, "state", "attempt-records"),
+			)
+		).list(run.initial.runId);
+		expect(attempts.map((attempt) => attempt.kind)).toEqual([
+			"initial",
+			"resume",
+		]);
+		const event = (await run.client.logs(run.initial.runId)).events.find(
+			(candidate) => candidate.type === "resume-at-handoff",
+		);
+		expect(event?.data).toEqual({
+			attemptId: resumed.attemptId,
+			fromAttemptId: run.initial.attemptId,
+			startCommit: firstHandoff.handoffCommit,
+			messageBytes: Buffer.byteLength(resumeInput.message, "utf8"),
+		});
+		await expect(
+			run.client.resume(run.initial.runId, resumeInput),
+		).rejects.toThrow("resume budget exhausted");
+		await run.data.service.shutdown();
+	});
+
+	it("keeps the first hand-off when the resumed attempt changes nothing", async () => {
+		const run = await continuedService("resume-unchanged", async () => {});
+		const before = await run.client.exportHandoff(run.initial.runId);
+		await run.client.resume(run.initial.runId, resumeInput);
+		const settled = await run.client.wait(run.initial.runId);
+		expect(settled.result.status).toBe("completed");
+		expect(settled.handoff?.handoffCommit).toBe(before.ref.handoffCommit);
+		const after = await run.client.exportHandoff(run.initial.runId);
+		expect(after.ref).toEqual(before.ref);
+		expect(after.ref.attemptId).toBe(run.initial.attemptId);
+		await run.data.service.shutdown();
+		const restarted = await reopenService(run.data);
+		const recovered = await restarted
+			.forOwner({ id: "owner-resume-unchanged" })
+			.exportHandoff(run.initial.runId);
+		expect(recovered.ref).toEqual(before.ref);
+		await restarted.shutdown();
+	});
+
+	it("refuses by name a resumed attempt that reverts to the baseline", async () => {
+		const run = await continuedService("resume-revert", async (worktree) => {
+			await rm(path.join(worktree.worktreePath, "first.txt"));
+		});
+		const before = await run.client.exportHandoff(run.initial.runId);
+		await run.client.resume(run.initial.runId, resumeInput);
+		const settled = await run.client.wait(run.initial.runId);
+		expect(run.observed[1]?.captureError).toBe(
+			"worktree reverted the hand-off it started at; its final tree equals the baseline",
+		);
+		expect(settled.result.status).toBe("failed");
+		expect((await run.client.exportHandoff(run.initial.runId)).ref).toEqual(
+			before.ref,
+		);
+		const summary = (await run.client.listRuns()).runs[0];
+		expect(summary?.retryable).toBe(false);
+		await expect(run.client.retry(run.initial.runId)).rejects.toThrow(
+			"retry would discard the run's hand-off; resume at the hand-off instead",
+		);
+		await run.data.service.shutdown();
+	});
+
+	it("refuses a run with no hand-off, a read-only run, and spent resumes", async () => {
+		const empty = await continuedService("resume-empty", async () => {}, {
+			firstChanges: false,
+		});
+		expect(empty.first.handoff?.handoffCommit).toBeUndefined();
+		await expect(
+			empty.client.resume(empty.initial.runId, resumeInput),
+		).rejects.toThrow("run has no exported hand-off to continue from");
+		await empty.data.service.shutdown();
+
+		const spent = await continuedService("resume-spent", async () => {}, {
+			resumes: 0,
+		});
+		await expect(
+			spent.client.resume(spent.initial.runId, resumeInput),
+		).rejects.toThrow("resume budget exhausted");
+		await expect(
+			spent.client.resume(spent.initial.runId, {
+				...resumeInput,
+				message: " ",
+			}),
+		).rejects.toThrow(
+			"resume message must be non-blank and at most 65536 bytes",
+		);
+		await expect(
+			spent.client.resume(spent.initial.runId, {
+				...resumeInput,
+				message: "x".repeat(64 * 1024 + 1),
+			}),
+		).rejects.toThrow(
+			"resume message must be non-blank and at most 65536 bytes",
+		);
+		await spent.data.service.shutdown();
+
+		const readOnly = await serviceFor("resume-read-only", async (input) => {
+			const execution = {
+				result: result(input.plan.runId, "completed"),
+				output: "read",
+				sessionFile: undefined,
+				handoff: undefined,
+				structuredOutput: undefined,
+				error: undefined,
+			};
+			await input.journal.writeSnapshot(execution);
+			return execution;
+		});
+		const client = readOnly.service.forOwner({ id: "owner-read-only" });
+		const preflight = await client.preflight(readOnly.request);
+		const receipt = await client.launch(
+			preflight.preflightId,
+			preflight.identitySha256,
+		);
+		await client.wait(receipt.runId);
+		await expect(client.resume(receipt.runId, resumeInput)).rejects.toThrow(
+			"resume at hand-off requires a worktree run",
+		);
+		await readOnly.service.shutdown();
 	});
 });
