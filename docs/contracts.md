@@ -85,7 +85,7 @@ type CommitId = string; // ^[a-f0-9]{40,64}$
 
 interface RunLimits {
 	cumulativeRuntimeMs: number; // cumulative across every attempt
-	attemptTimeoutMs: number;    // wall deadline for one attempt
+	attemptTimeoutMs: number;    // one attempt's deadline, VM boot excluded
 	totalTokens?: number;        // optional all-traffic guard
 	cost: number;                // provider-reported dollars
 	outputBytes: number;
