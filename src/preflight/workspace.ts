@@ -4,6 +4,10 @@ import { lstat, readFile, readlink, realpath } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import type { WorkspaceRequest } from "../launch-contracts.js";
+import {
+	HANDOFF_REF_PATTERN,
+	HANDOFF_REF_PREFIX,
+} from "../workspace/worktree.js";
 import { canonicalSha256 } from "./canonical.js";
 import type { ResolvedWorkspace } from "./compile.js";
 
@@ -109,6 +113,115 @@ async function digestUntracked(
 	return entries;
 }
 
+/** The request that re-resolves an already-preflighted workspace. */
+export function repeatWorkspaceRequest(workspace: {
+	mode: WorkspaceRequest["mode"];
+	cwd: string;
+	startAt?: string;
+}): WorkspaceRequest {
+	return {
+		mode: workspace.mode,
+		cwd: workspace.cwd,
+		...(workspace.startAt ? { startAt: workspace.startAt } : {}),
+	};
+}
+
+async function revParseCommit(
+	cwd: string,
+	commit: string,
+	signal?: AbortSignal,
+): Promise<string | undefined> {
+	try {
+		return (
+			await execFileAsync(
+				"git",
+				[
+					"--no-replace-objects",
+					"rev-parse",
+					"--verify",
+					"--quiet",
+					"--end-of-options",
+					`${commit}^{commit}`,
+				],
+				{
+					cwd,
+					encoding: "utf8",
+					maxBuffer: 4096,
+					env: {
+						...process.env,
+						GIT_CONFIG_NOSYSTEM: "1",
+						GIT_TERMINAL_PROMPT: "0",
+					},
+					...(signal ? { signal } : {}),
+				},
+			)
+		).stdout.trim();
+	} catch (error) {
+		signal?.throwIfAborted();
+		// `rev-parse --verify --quiet` exits 1 only for an unknown object; any
+		// other failure is not evidence that the commit is absent.
+		if ((error as { code?: unknown }).code === 1) return undefined;
+		throw new WorkspacePreflightError("git preflight failed: rev-parse", {
+			cause: error,
+		});
+	}
+}
+
+/**
+ * A workspace may start only at a hand-off this repository already holds, and
+ * only one whose sole parent is the current HEAD: the squashed export then
+ * stays exactly one commit on HEAD instead of a chain of hand-offs.
+ */
+async function verifyStartAt(
+	repositoryRoot: string,
+	startAt: string,
+	head: string,
+	signal?: AbortSignal,
+): Promise<void> {
+	if ((await revParseCommit(repositoryRoot, startAt, signal)) !== startAt) {
+		throw new WorkspacePreflightError(
+			"workspace startAt commit does not exist in the repository",
+		);
+	}
+	const refs = (
+		await git(
+			repositoryRoot,
+			[
+				"--no-replace-objects",
+				"for-each-ref",
+				"--format=%(refname)",
+				`--points-at=${startAt}`,
+				HANDOFF_REF_PREFIX,
+			],
+			signal,
+		)
+	)
+		.toString("utf8")
+		.split("\n")
+		.filter(Boolean);
+	const handoffRef = new RegExp(HANDOFF_REF_PATTERN);
+	if (!refs.some((ref) => handoffRef.test(ref))) {
+		throw new WorkspacePreflightError(
+			"workspace startAt is not the target of a hand-off ref in this repository",
+		);
+	}
+	const parents = (
+		await git(
+			repositoryRoot,
+			["--no-replace-objects", "rev-list", "--parents", "-n1", startAt],
+			signal,
+		)
+	)
+		.toString("utf8")
+		.trim()
+		.split(/\s+/);
+	if (parents.length !== 2 || parents[1] !== head) {
+		throw new WorkspacePreflightError(
+			"workspace startAt must have exactly one parent, the repository HEAD",
+		);
+	}
+}
+
 export async function preflightWorkspace(
 	request: WorkspaceRequest,
 	signal?: AbortSignal,
@@ -130,6 +243,10 @@ export async function preflightWorkspace(
 	)
 		.toString("utf8")
 		.trim();
+	const startAt = request.startAt;
+	if (startAt !== undefined) {
+		await verifyStartAt(canonicalRoot, startAt, head, signal);
+	}
 	const status = await git(
 		canonicalRoot,
 		["status", "--porcelain=v1", "-z", "--untracked-files=all"],
@@ -144,7 +261,10 @@ export async function preflightWorkspace(
 
 	let baselineSha256: string;
 	if (!dirty) {
-		baselineSha256 = canonicalSha256({ head });
+		baselineSha256 = canonicalSha256({
+			head,
+			...(startAt ? { startAt } : {}),
+		});
 	} else {
 		const diff = await git(
 			canonicalRoot,
@@ -162,6 +282,7 @@ export async function preflightWorkspace(
 			.filter(Boolean);
 		baselineSha256 = canonicalSha256({
 			head,
+			...(startAt ? { startAt } : {}),
 			status: status.toString("base64"),
 			diff: diff.toString("base64"),
 			untracked: await digestUntracked(canonicalRoot, untrackedPaths),
@@ -180,5 +301,6 @@ export async function preflightWorkspace(
 			relativeCwd: relativeCwd.split(path.sep).join(path.posix.sep),
 		}),
 		baselineSha256,
+		...(startAt ? { startAt } : {}),
 	};
 }

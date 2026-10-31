@@ -43,6 +43,7 @@ describe("runtime contracts", () => {
 			agentRootsFirst: true,
 			delegationCeiling: true,
 			sessionModelInherit: true,
+			workspaceStartAt: true,
 		});
 	});
 

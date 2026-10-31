@@ -81,11 +81,22 @@ export const WorkspaceModeSchema = Type.Union([
 ]);
 export type WorkspaceMode = Static<typeof WorkspaceModeSchema>;
 
+export const CommitIdSchema = Type.String({ pattern: "^[a-f0-9]{40,64}$" });
+
+/**
+ * The hand-off commit a workspace is checked out at. Preflight refuses a
+ * commit that is not the target of one of this repository's hand-off refs or
+ * whose sole parent is not the current HEAD, so a hand-off started from
+ * another stays one squashed commit on that HEAD.
+ */
+const WorkspaceStartAtSchema = Type.Optional(CommitIdSchema);
+
 export const WorkspaceRequestSchema = Type.Union([
 	Type.Object(
 		{
 			mode: Type.Literal("read-only"),
 			cwd: Type.String({ minLength: 1, maxLength: 4096 }),
+			startAt: WorkspaceStartAtSchema,
 		},
 		{ additionalProperties: false },
 	),
@@ -93,6 +104,7 @@ export const WorkspaceRequestSchema = Type.Union([
 		{
 			mode: Type.Literal("worktree"),
 			cwd: Type.String({ minLength: 1, maxLength: 4096 }),
+			startAt: WorkspaceStartAtSchema,
 		},
 		{ additionalProperties: false },
 	),
@@ -290,6 +302,7 @@ export const AgentLaunchPlanSchema = Type.Object(
 				mode: WorkspaceModeSchema,
 				hostPathSha256: Sha256Schema,
 				baselineSha256: Sha256Schema,
+				startAt: Type.Optional(CommitIdSchema),
 			},
 			{ additionalProperties: false },
 		),

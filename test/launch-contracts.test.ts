@@ -37,7 +37,7 @@ const request = {
 
 const plan = {
 	schema: "pi-subagent-launch",
-	contractRevision: 9,
+	contractRevision: 10,
 	operationId: "operation-1",
 	ownerId: "owner-1",
 	runId: "run_launch",

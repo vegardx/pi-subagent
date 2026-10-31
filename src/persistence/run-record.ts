@@ -43,6 +43,7 @@ export const RunRecordSchema = Type.Object(
 				dirty: Type.Boolean(),
 				hostPathSha256: Type.String({ pattern: "^[a-f0-9]{64}$" }),
 				baselineSha256: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+				startAt: Type.Optional(Type.String({ pattern: "^[a-f0-9]{40,64}$" })),
 			},
 			{ additionalProperties: false },
 		),
@@ -160,6 +161,7 @@ export class RunRecordStore {
 				record.plan.workspace.hostPathSha256 ||
 			record.workspace.baselineSha256 !==
 				record.plan.workspace.baselineSha256 ||
+			record.workspace.startAt !== record.plan.workspace.startAt ||
 			!verifyLaunchPlanIdentity(record.plan)
 		) {
 			throw new PersistenceCorruptionError("run record identity mismatch");

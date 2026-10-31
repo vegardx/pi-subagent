@@ -39,6 +39,7 @@ export type ResolvedWorkspace = {
 	mode: WorkspaceMode;
 	hostPathSha256: string;
 	baselineSha256: string;
+	startAt?: string;
 };
 
 export type ResolvedSandbox = {
@@ -259,7 +260,10 @@ export async function compileLaunchPlan(input: {
 	if (!input.agent.workspaceModes.includes(input.request.workspace.mode)) {
 		throw new PreflightError("workspace mode exceeds ceiling");
 	}
-	if (input.workspace.mode !== input.request.workspace.mode) {
+	if (
+		input.workspace.mode !== input.request.workspace.mode ||
+		input.workspace.startAt !== input.request.workspace.startAt
+	) {
 		throw new PreflightError("workspace resolution mismatch");
 	}
 	assertHostCeiling(input.request);
@@ -343,6 +347,7 @@ export async function compileLaunchPlan(input: {
 			mode: input.workspace.mode,
 			hostPathSha256: input.workspace.hostPathSha256,
 			baselineSha256: input.workspace.baselineSha256,
+			...(input.workspace.startAt ? { startAt: input.workspace.startAt } : {}),
 		},
 		...(input.request.ceiling
 			? { ceiling: recordedCeiling(input.request.ceiling) }

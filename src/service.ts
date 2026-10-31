@@ -74,6 +74,7 @@ import {
 } from "./preflight/skills.js";
 import {
 	preflightWorkspace,
+	repeatWorkspaceRequest,
 	type WorkspacePreflight,
 } from "./preflight/workspace.js";
 import {
@@ -1925,10 +1926,9 @@ export async function createSubagentService(options: {
 						}
 					}
 					await resolveModel(prepared.launchPlan.model);
-					const currentWorkspace = await preflightWorkspace({
-						mode: prepared.workspace.mode,
-						cwd: prepared.workspace.cwd,
-					});
+					const currentWorkspace = await preflightWorkspace(
+						repeatWorkspaceRequest(prepared.workspace),
+					);
 					if (
 						currentWorkspace.hostPathSha256 !==
 							prepared.workspace.hostPathSha256 ||
@@ -2109,10 +2109,9 @@ export async function createSubagentService(options: {
 							}
 						}
 						const rootRecord = await runRecords.read(runId);
-						const workspace = await preflightWorkspace({
-							mode: run.workspace.mode,
-							cwd: run.workspace.cwd,
-						});
+						const workspace = await preflightWorkspace(
+							repeatWorkspaceRequest(run.workspace),
+						);
 						if (
 							workspace.hostPathSha256 !== run.workspace.hostPathSha256 ||
 							workspace.baselineSha256 !== run.workspace.baselineSha256
@@ -2204,10 +2203,9 @@ export async function createSubagentService(options: {
 							throw new Error("retained session identity is unproved");
 						}
 						const sessionFile = sessionEvidence.file;
-						const workspace = await preflightWorkspace({
-							mode: run.workspace.mode,
-							cwd: run.workspace.cwd,
-						});
+						const workspace = await preflightWorkspace(
+							repeatWorkspaceRequest(run.workspace),
+						);
 						if (
 							workspace.hostPathSha256 !== run.workspace.hostPathSha256 ||
 							workspace.baselineSha256 !== run.workspace.baselineSha256
