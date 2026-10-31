@@ -594,7 +594,9 @@ async function qualifyGlobalCapacity(): Promise<string> {
 	});
 	const first = await manager.acquire("qualification-first");
 	try {
-		await assertRejectsCapacity(() => manager.acquire("qualification-second"));
+		await assertRejectsCapacity(() =>
+			manager.acquire("qualification-second", { waitMs: 0 }),
+		);
 	} finally {
 		await first.release();
 	}
