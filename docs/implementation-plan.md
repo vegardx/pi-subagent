@@ -686,7 +686,7 @@ The extension entry is separate:
 | 0.17 | Contract revision 10: workspaces that start at a hand-off commit (`workspaceStartAt`), squashed hand-off export, and a per-call deadline on guest tools |
 | 0.18 | Resume at the run's own hand-off with a message (`resumeAtHandoff`), contract revision 10 unchanged |
 | 0.19 | Contract revision 11: guest memory floor and default of 1 GiB, a typed guest-readiness failure, and an attempt deadline that excludes VM boot |
-| 0.20 | Contract revision 12: waiting for a VM slot (`capacityWait`), the typed `capacity` refusal, complete usage for attempts that never started a session, and the `maxSlots` setting reported as `capacity.maxSlots` |
+| 0.20 | Contract revision 12: waiting for a VM slot (`capacityWait`), the typed `capacity` refusal, complete usage for attempts that never started a session, the `maxSlots` setting reported as `capacity.maxSlots`, Gondolin 0.14.0, a copy-on-write root disk without scratch tmpfs, root-disk dependency binds, and warm npm checkpoints |
 | 1.0 | Production-core stable contract |
 
 Versions are capability milestones, not deadlines.
