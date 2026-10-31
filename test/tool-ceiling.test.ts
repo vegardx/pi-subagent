@@ -1,6 +1,5 @@
 import type {
 	ExtensionAPI,
-	ExtensionContext,
 	ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { createEventBus, type EventBus } from "@earendil-works/pi-coding-agent";
@@ -28,7 +27,9 @@ vi.mock("../src/service.js", async (importOriginal) => {
 
 const { default: piSubagentExtension } = await import("../src/extension.js");
 
-function context(): ExtensionContext {
+type ToolContext = Parameters<ToolDefinition["execute"]>[4];
+
+function context(): ToolContext {
 	return {
 		cwd: process.cwd(),
 		model: { provider: "github-copilot", id: "gpt-5.6-luna" },
@@ -43,7 +44,7 @@ function context(): ExtensionContext {
 			getSessionId: () => "session-tool-ceiling",
 			getSessionFile: () => undefined,
 		},
-	} as unknown as ExtensionContext;
+	} as unknown as ToolContext;
 }
 
 function subagentTool(events: EventBus): ToolDefinition {
