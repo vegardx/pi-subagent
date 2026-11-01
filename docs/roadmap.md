@@ -90,7 +90,10 @@ earlier one. Contract revision 11 raises the guest memory floor and default to
 revision 10 must move to 11. Contract revision 12 makes attempts wait for a VM
 slot (`capacityWait`), types a slot that never frees as the `capacity` failure,
 and reports the host's `capacity.maxSlots` (default 16); a consumer that pins
-revision 11 must move to 12.
+revision 11 must move to 12. Contract revision 13 adds host-admitted models
+(`hostModelAdmission`): a definition's `allowedModels` may list `host`, a host
+registers one model-admission provider, and the launch plan records which fence
+entry admitted its model; a consumer that pins revision 12 must move to 13.
 
 Consumer integration starts only after pi-subagent completes full acceptance,
 dogfood cutover, and stable release qualification:

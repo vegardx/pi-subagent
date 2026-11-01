@@ -36,6 +36,7 @@ these definitions rather than redefine them.
 | Tool declaration | Single registry entry binding a tool's schema, grant, implementation, authority, and acceptance coverage. |
 | Capability | Stable semantic permission mapped to concrete tools and resources. |
 | Authority ceiling | Maximum capabilities an agent definition permits. Calls may narrow but not widen it. |
+| Model fence | An agent definition's `allowedModels`: exact `provider/id:thinking` routes, `inherit` (the host session's model), and `host` (any exact model the host's model-admission provider admits). The launch plan's `modelAdmission` records which entry admitted its model: `exact`, `inherit`, or `host`. |
 | Memory ceiling | Per-agent maximum guest VM memory (`memoryBytes`): a multiple of 64 MiB from 1 GiB to 4 GiB, default 1 GiB. A launch request may narrow it; the resolved value is part of the launch identity. |
 | VM capacity slot | One of `maxSlots` (default 16, at most 32) host-wide leases, held as an OS-owned localhost listener, that an attempt holds while its VM runs. An attempt waits up to `capacityWaitMs` for one before failing as `capacity`. |
 | Workspace write budget | Cumulative `workspaceWriteBytes` bound enforced by the workspace VFS. Exhaustion refuses guest writes with `EDQUOT` and classifies the attempt `workspace-budget`. |
