@@ -47,6 +47,7 @@ describe("runtime contracts", () => {
 			workspaceStartAt: true,
 			resumeAtHandoff: true,
 			capacityWait: true,
+			hostModelAdmission: true,
 		});
 		expect(SUBAGENT_RUNTIME_CONTRACT.capacity).toEqual({ maxSlots: 16 });
 	});

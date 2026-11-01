@@ -52,6 +52,13 @@ export type ExactModelRequest = Static<typeof ExactModelRequestSchema>;
 export const INHERIT_MODEL = "inherit" as const;
 
 /**
+ * The `allowedModels` entry that hands a definition's model fence to the host:
+ * any exact model the host-registered model-admission provider stands behind
+ * is admitted. Only a fence entry; a request never names it.
+ */
+export const HOST_MODEL = "host" as const;
+
+/**
  * The model a request asks for. An `ExactModelRequest` names one exactly;
  * `inherit` asks for the host session's current model and thinking level,
  * which pi-subagent resolves through the host-registered session-model
@@ -74,6 +81,18 @@ export const ModelSourceSchema = Type.Union([
 	Type.Literal("inherited"),
 ]);
 export type ModelSource = Static<typeof ModelSourceSchema>;
+
+/**
+ * Who stood behind the launch plan's exact model at the fence: an exact entry
+ * of the definition's `allowedModels`, its `inherit` entry (the host session's
+ * model), or its `host` entry (the host's model-admission provider).
+ */
+export const ModelAdmissionSchema = Type.Union([
+	Type.Literal("exact"),
+	Type.Literal("inherit"),
+	Type.Literal("host"),
+]);
+export type ModelAdmission = Static<typeof ModelAdmissionSchema>;
 
 export const WorkspaceModeSchema = Type.Union([
 	Type.Literal("read-only"),
@@ -206,9 +225,10 @@ export const SubagentRequestSchema = Type.Object(
 		contextMode: Type.Union([Type.Literal("fresh"), Type.Literal("fork")]),
 		/**
 		 * An exact model, or `inherit` for the host session's current model and
-		 * thinking level. Absent leaves the agent definition's pin in force. An
-		 * inherited request needs a registered session-model provider and a
-		 * definition whose `allowedModels` admits `inherit`.
+		 * thinking level. Absent leaves the agent definition's pin in force, and
+		 * is refused against a definition that has none. An inherited request
+		 * needs a registered session-model provider and a definition whose
+		 * `allowedModels` admits `inherit`.
 		 */
 		model: Type.Optional(ModelRequestSchema),
 		tools: Type.Array(ResourceNameSchema, { maxItems: 64, uniqueItems: true }),
@@ -290,6 +310,8 @@ export const AgentLaunchPlanSchema = Type.Object(
 		model: ExactModelRequestSchema,
 		/** Where `model` came from: the request, the definition's pin, or the host session. */
 		modelSource: ModelSourceSchema,
+		/** Which fence entry admitted `model`, so the record says who vouched for it. */
+		modelAdmission: ModelAdmissionSchema,
 		cwd: Type.Literal("/workspace"),
 		tools: Type.Array(ResourceNameSchema, { maxItems: 64, uniqueItems: true }),
 		preloadSkills: Type.Array(ResourceNameSchema, {

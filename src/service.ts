@@ -31,6 +31,7 @@ import {
 	InvalidRunTransitionError,
 	transitionRunStatus,
 } from "./lifecycle/reducer.js";
+import { resolveModelAdmission } from "./model-admission-provider.js";
 import {
 	type AttemptRecord,
 	AttemptRecordStore,
@@ -1021,6 +1022,12 @@ export async function createSubagentService(options: {
 	 */
 	const inheritSessionModel = (): ExactModelRequest | undefined =>
 		options.events ? resolveSessionModel(options.events) : undefined;
+	/**
+	 * The host's answer for a model a definition admits through `host`, asked
+	 * at preflight. Without an event bus there is no provider to ask.
+	 */
+	const admitHostModel = (model: ExactModelRequest): boolean | undefined =>
+		options.events ? resolveModelAdmission(options.events, model) : undefined;
 
 	for (const record of await runRecords.list()) {
 		const recoveredSkills: SkillProjection = {
@@ -2026,6 +2033,7 @@ export async function createSubagentService(options: {
 						...(forkContext ? { forkContext: forkContext.grant } : {}),
 						resolveModel,
 						inheritSessionModel,
+						admitHostModel,
 					});
 					const preflightId = randomUUID();
 					const prepared: PreparedPreflight = {

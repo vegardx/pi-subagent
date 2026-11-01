@@ -102,7 +102,7 @@ describe("Pi extension host settings", () => {
 
 	it("publishes the default sixteen slots without a settings file", () => {
 		expect(publishedContract()).toMatchObject({
-			contractRevision: 12,
+			contractRevision: 13,
 			features: { capacityWait: true },
 			capacity: { maxSlots: 16 },
 		});
