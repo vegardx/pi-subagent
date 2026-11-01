@@ -81,6 +81,20 @@ describe("model admission provider", () => {
 		}
 	});
 
+	it("gives no answer when the provider throws", async () => {
+		const events = createEventBus();
+		const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+		registerModelAdmissionProvider(events, () => {
+			throw new Error("router unavailable at /private/host/path");
+		});
+		try {
+			expect(resolveModelAdmission(events, routed)).toBeUndefined();
+			await Promise.resolve();
+		} finally {
+			logged.mockRestore();
+		}
+	});
+
 	it("fails closed when two providers answer the same launch", () => {
 		const events = createEventBus();
 		registerModelAdmissionProvider(events, () => true);
