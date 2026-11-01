@@ -23,6 +23,8 @@ for (const required of [
 	"dist/extension.js",
 	"dist/index.d.ts",
 	"dist/index.js",
+	"dist/model-admission-provider.d.ts",
+	"dist/model-admission-provider.js",
 	"dist/service-provider.d.ts",
 	"dist/service-provider.js",
 	"dist/session-model-provider.d.ts",

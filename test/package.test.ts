@@ -56,6 +56,10 @@ describe("package contract", () => {
 			types: "./dist/session-model-provider.d.ts",
 			import: "./dist/session-model-provider.js",
 		});
+		expect(packageJson.exports?.["./model-admission-provider"]).toEqual({
+			types: "./dist/model-admission-provider.d.ts",
+			import: "./dist/model-admission-provider.js",
+		});
 		expect(packageJson.pi?.extensions).toEqual(["./dist/extension.js"]);
 	});
 
@@ -85,6 +89,9 @@ describe("package contract", () => {
 		const sessionModelProvider = await import(
 			"../src/session-model-provider.js"
 		);
+		const modelAdmissionProvider = await import(
+			"../src/model-admission-provider.js"
+		);
 		expect(extension.default).toBeTypeOf("function");
 		expect(publicApi.createVmCapacityManager).toBeTypeOf("function");
 		expect(serviceProvider.acquireSubagentService).toBeTypeOf("function");
@@ -92,6 +99,9 @@ describe("package contract", () => {
 			"function",
 		);
 		expect(sessionModelProvider.registerSessionModelProvider).toBeTypeOf(
+			"function",
+		);
+		expect(modelAdmissionProvider.registerModelAdmissionProvider).toBeTypeOf(
 			"function",
 		);
 	}, 30_000);
