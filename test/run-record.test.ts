@@ -18,7 +18,7 @@ function root(name: string): string {
 function plan(): AgentLaunchPlan {
 	const draft = {
 		schema: "pi-subagent-launch" as const,
-		contractRevision: 12 as const,
+		contractRevision: 13 as const,
 		operationId: "operation",
 		ownerId: "owner",
 		runId: "run_record",
@@ -37,6 +37,7 @@ function plan(): AgentLaunchPlan {
 			thinking: "low" as const,
 		},
 		modelSource: "request" as const,
+		modelAdmission: "exact" as const,
 		cwd: "/workspace" as const,
 		tools: ["read"],
 		preloadSkills: [],

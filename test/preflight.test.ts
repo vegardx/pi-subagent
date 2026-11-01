@@ -326,6 +326,7 @@ describe("semantic preflight", () => {
 		};
 		const { model: _pinned, ...withoutModel } = request;
 		expect((await compile()).modelSource).toBe("request");
+		expect((await compile()).modelAdmission).toBe("exact");
 		expect(
 			(await compile({ request: withoutModel as SubagentRequest })).modelSource,
 		).toBe("template");
@@ -342,6 +343,7 @@ describe("semantic preflight", () => {
 		});
 		expect(plan.model).toEqual(inherited);
 		expect(plan.modelSource).toBe("inherited");
+		expect(plan.modelAdmission).toBe("inherit");
 
 		await expect(
 			compile({ request: inheritRequest, agent: admitting }),
@@ -360,6 +362,144 @@ describe("semantic preflight", () => {
 			}),
 		).rejects.toThrow(
 			"model exceeds ceiling: anthropic/opus-5:xhigh (template admits github-copilot/gpt-5.6-luna:low, not inherit)",
+		);
+	});
+
+	it("admits a routed model the host stands behind when the template admits host", async () => {
+		const routed = {
+			provider: "anthropic",
+			id: "opus-5",
+			thinking: "high" as const,
+		};
+		const hosted = {
+			...agent,
+			allowedModels: [...agent.allowedModels, "host"],
+		};
+		const asked: unknown[] = [];
+		const plan = await compile({
+			request: { ...request, model: routed },
+			agent: hosted,
+			admitHostModel: (model) => {
+				asked.push(model);
+				return true;
+			},
+		});
+		expect(asked).toEqual([routed]);
+		expect(plan.model).toEqual(routed);
+		expect(plan.modelSource).toBe("request");
+		expect(plan.modelAdmission).toBe("host");
+		expect(verifyLaunchPlanIdentity(plan)).toBe(true);
+		expect(verifyLaunchPlanIdentity({ ...plan, modelAdmission: "exact" })).toBe(
+			false,
+		);
+	});
+
+	it("refuses a routed model by name when the host does not admit it or nobody answers", async () => {
+		const routed = {
+			provider: "anthropic",
+			id: "opus-5",
+			thinking: "high" as const,
+		};
+		const hosted = {
+			...agent,
+			allowedModels: [...agent.allowedModels, "host"],
+		};
+		await expect(
+			compile({
+				request: { ...request, model: routed },
+				agent: hosted,
+				admitHostModel: () => false,
+			}),
+		).rejects.toThrow(
+			"model exceeds ceiling: anthropic/opus-5:high (template admits host, host does not admit it)",
+		);
+		for (const admitHostModel of [undefined, () => undefined]) {
+			await expect(
+				compile({
+					request: { ...request, model: routed },
+					agent: hosted,
+					...(admitHostModel ? { admitHostModel } : {}),
+				}),
+			).rejects.toThrow(
+				"model exceeds ceiling: anthropic/opus-5:high (template admits host, no host model admission provider answered)",
+			);
+		}
+		await expect(
+			compile({
+				request: { ...request, model: routed },
+				admitHostModel: () => true,
+			}),
+		).rejects.toThrow("model exceeds ceiling: anthropic/opus-5:high");
+	});
+
+	it("admits an exact entry without asking the host, and leaves inherit to inherit", async () => {
+		const asked: unknown[] = [];
+		const admitHostModel = (model: unknown) => {
+			asked.push(model);
+			return false;
+		};
+		const hosted = {
+			...agent,
+			allowedModels: [...agent.allowedModels, "host"],
+		};
+		const exact = await compile({ agent: hosted, admitHostModel });
+		expect(exact.modelAdmission).toBe("exact");
+		const { model: _pinned, ...withoutModel } = request;
+		const pinned = await compile({
+			request: withoutModel as SubagentRequest,
+			agent: hosted,
+			admitHostModel,
+		});
+		expect(pinned.modelSource).toBe("template");
+		expect(pinned.modelAdmission).toBe("exact");
+		expect(asked).toEqual([]);
+
+		const inherited = {
+			provider: "anthropic",
+			id: "opus-5",
+			thinking: "xhigh" as const,
+		};
+		const plan = await compile({
+			request: { ...request, model: "inherit" },
+			agent: { ...agent, allowedModels: ["inherit"] },
+			inheritSessionModel: () => inherited,
+			admitHostModel,
+		});
+		expect(plan.modelSource).toBe("inherited");
+		expect(plan.modelAdmission).toBe("inherit");
+		await expect(
+			compile({
+				request: { ...request, model: "inherit" },
+				agent: { ...agent, allowedModels: ["host"] },
+				inheritSessionModel: () => inherited,
+				admitHostModel: () => true,
+			}),
+		).rejects.toThrow(
+			"model exceeds ceiling: anthropic/opus-5:xhigh (template admits host, not inherit)",
+		);
+		expect(asked).toEqual([]);
+	});
+
+	it("runs a definition without a default only on a model the request names", async () => {
+		const { defaultModel: _default, ...rest } = agent;
+		const undefaulted: AgentDefinition = { ...rest, allowedModels: ["host"] };
+		const plan = await compile({
+			agent: undefaulted,
+			admitHostModel: () => true,
+		});
+		expect(plan.model).toEqual(model);
+		expect(plan.modelSource).toBe("request");
+		expect(plan.modelAdmission).toBe("host");
+
+		const { model: _pinned, ...withoutModel } = request;
+		await expect(
+			compile({
+				request: withoutModel as SubagentRequest,
+				agent: undefaulted,
+				admitHostModel: () => true,
+			}),
+		).rejects.toThrow(
+			"model required: definition names no default model; the request must name one",
 		);
 	});
 

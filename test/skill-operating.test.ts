@@ -418,6 +418,7 @@ describe("operating skill budgets, isolation, and evidence", () => {
 		expect(SUBAGENT_RUNTIME_CONTRACT.features.workspaceStartAt).toBe(true);
 		expect(SUBAGENT_RUNTIME_CONTRACT.features.resumeAtHandoff).toBe(true);
 		expect(SUBAGENT_RUNTIME_CONTRACT.features.capacityWait).toBe(true);
+		expect(SUBAGENT_RUNTIME_CONTRACT.features.hostModelAdmission).toBe(true);
 		expect(flatSkill).toContain("`background: false`");
 		expect(flatSkill).toContain("`survivesSeatExit: false`");
 		expect(flatSkill).toContain("`vmMemoryCeiling: true`");
@@ -427,6 +428,7 @@ describe("operating skill budgets, isolation, and evidence", () => {
 		expect(flatSkill).toContain("`workspaceStartAt: true`");
 		expect(flatSkill).toContain("`resumeAtHandoff: true`");
 		expect(flatSkill).toContain("`capacityWait: true`");
+		expect(flatSkill).toContain("`hostModelAdmission: true`");
 		expect(flatSkill).toContain("`capacity.maxSlots`");
 	});
 
@@ -502,6 +504,14 @@ describe("operating skill quoted runtime messages", () => {
 			[
 				"model exceeds ceiling: <key> (template admits <routes>, not inherit)",
 				`model exceeds ceiling: ${slot("modelKey(requestedModel)")} (template admits ${slot('[...agent.allowedModels].sort().join(", ")')}, not inherit)`,
+			],
+			[
+				"model exceeds ceiling: <key> (template admits host, host does not admit it)",
+				`model exceeds ceiling: ${slot("modelKey(requestedModel)")} (template admits host, host does not admit it)`,
+			],
+			[
+				"model exceeds ceiling: <key> (template admits host, no host model admission provider answered)",
+				`model exceeds ceiling: ${slot("modelKey(requestedModel)")} (template admits host, no host model admission provider answered)`,
 			],
 			["limit exceeds ceiling: <key>", `limit exceeds ceiling: ${slot("key")}`],
 			[

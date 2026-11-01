@@ -1,7 +1,7 @@
 import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
 
-export const CONTRACT_REVISION = 12 as const;
+export const CONTRACT_REVISION = 13 as const;
 /** The most concurrent VMs a host may configure (`maxSlots`). */
 export const MAX_SLOTS = 32;
 /** Concurrent VMs on a host whose settings leave `maxSlots` unset. */
@@ -275,6 +275,7 @@ export const SubagentRuntimeContractSchema = Type.Object(
 				workspaceStartAt: Type.Boolean(),
 				resumeAtHandoff: Type.Boolean(),
 				capacityWait: Type.Boolean(),
+				hostModelAdmission: Type.Boolean(),
 			},
 			{ additionalProperties: false },
 		),
@@ -323,6 +324,7 @@ export const SUBAGENT_RUNTIME_FEATURES: SubagentRuntimeContract["features"] =
 		workspaceStartAt: true,
 		resumeAtHandoff: true,
 		capacityWait: true,
+		hostModelAdmission: true,
 	});
 
 /**

@@ -17,6 +17,7 @@ import type {
 	ExactModelRequest,
 	SubagentRequest,
 } from "../src/launch-contracts.js";
+import { registerModelAdmissionProvider } from "../src/model-admission-provider.js";
 import { AttemptRecordStore } from "../src/persistence/attempt-record.js";
 import { RunJournal } from "../src/persistence/journal.js";
 import { OperationIndex } from "../src/persistence/operation-index.js";
@@ -2289,6 +2290,65 @@ describe("inherited session model", () => {
 		expect(pinned.launchPlan.model).toEqual(data.agent.defaultModel);
 		expect(pinned.launchPlan.modelSource).toBe("template");
 		expect(provider).not.toHaveBeenCalled();
+		await data.service.shutdown();
+	});
+});
+
+describe("host-admitted model", () => {
+	const routed = {
+		provider: "anthropic",
+		id: "opus-5",
+		thinking: "high" as const,
+	};
+
+	it("asks the registered host about a model the template hands to it", async () => {
+		const events = createEventBus();
+		const provider = vi.fn(
+			(model: ExactModelRequest) => model.provider === "anthropic",
+		);
+		registerModelAdmissionProvider(events, provider);
+		const data = await sessionModelServiceFor("host-admitted", events, [
+			"github-copilot/gpt-5.6-luna:low",
+			"host",
+		]);
+		const client = data.service.forOwner({ id: "owner-host-admitted" });
+		const admitted = await client.preflight({ ...data.request, model: routed });
+		expect(admitted.launchPlan.model).toEqual(routed);
+		expect(admitted.launchPlan.modelAdmission).toBe("host");
+		expect(provider).toHaveBeenCalledWith(routed);
+
+		const exact = await client.preflight({
+			...data.request,
+			operationId: "operation-2",
+		});
+		expect(exact.launchPlan.modelAdmission).toBe("exact");
+		expect(provider).toHaveBeenCalledTimes(1);
+
+		await expect(
+			client.preflight({
+				...data.request,
+				operationId: "operation-3",
+				model: { provider: "openai", id: "gpt-6", thinking: "low" },
+			}),
+		).rejects.toThrow(
+			"model exceeds ceiling: openai/gpt-6:low (template admits host, host does not admit it)",
+		);
+		await data.service.shutdown();
+	});
+
+	it("refuses a host-admitted model when no host answers", async () => {
+		const data = await sessionModelServiceFor(
+			"host-no-provider",
+			createEventBus(),
+			["host"],
+		);
+		await expect(
+			data.service
+				.forOwner({ id: "owner-host-no-provider" })
+				.preflight({ ...data.request, model: routed }),
+		).rejects.toThrow(
+			"model exceeds ceiling: anthropic/opus-5:high (template admits host, no host model admission provider answered)",
+		);
 		await data.service.shutdown();
 	});
 });

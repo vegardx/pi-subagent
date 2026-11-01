@@ -6,8 +6,10 @@ import {
 	type ContextScope,
 	type DelegationCeiling,
 	type ExactModelRequest,
+	HOST_MODEL,
 	INHERIT_MODEL,
 	MemoryBytesSchema,
+	type ModelAdmission,
 	type ModelSource,
 	type ResourceGrant,
 	type RunLimits,
@@ -25,7 +27,12 @@ export type AgentDefinition = {
 	scope: "builtin" | "package" | "global" | "project";
 	source: string;
 	sha256: string;
-	defaultModel: ExactModelRequest;
+	/**
+	 * The model a request that names none runs on. Absent only when
+	 * `allowedModels` hands the choice on (`inherit` or `host`); such a
+	 * definition refuses a request that names no model.
+	 */
+	defaultModel?: ExactModelRequest;
 	allowedModels: string[];
 	tools: string[];
 	preloadSkills: string[];
@@ -67,6 +74,21 @@ export class PreflightError extends Error {
 export const MODEL_INHERIT_REFUSAL =
 	"model inherit: no session model to inherit";
 
+/**
+ * The refusal when a request names no model and the definition has no default
+ * to fall back on.
+ */
+export const MODEL_DEFAULT_REFUSAL =
+	"model required: definition names no default model; the request must name one";
+
+/**
+ * Whether the host stands behind an exact model: `true` or `false` is the
+ * host's answer, `undefined` means no host answered.
+ */
+export type HostModelAdmission = (
+	model: ExactModelRequest,
+) => boolean | undefined;
+
 function modelKey(model: ExactModelRequest): string {
 	return `${model.provider}/${model.id}:${model.thinking}`;
 }
@@ -89,31 +111,49 @@ function resolveRequestedModel(
 	if (request.model) {
 		return { requestedModel: request.model, modelSource: "request" };
 	}
+	if (!agent.defaultModel) throw new PreflightError(MODEL_DEFAULT_REFUSAL);
 	return { requestedModel: agent.defaultModel, modelSource: "template" };
 }
 
 /**
- * The agent definition fences which models a launch may use. An exact
- * `allowedModels` entry admits exactly that provider/id:thinking. The entry
- * `inherit` admits whatever the host session answers, any model and any
- * thinking level, so for an inherited model the fence lives at the host.
+ * The agent definition fences which models a launch may use, and the answer
+ * says which entry admitted the model. An exact `allowedModels` entry admits
+ * exactly that provider/id:thinking. The entry `inherit` admits whatever the
+ * host session answers, any model and any thinking level, so for an inherited
+ * model the fence lives at the host. The entry `host` admits any other exact
+ * model the host's admission provider stands behind, so for a routed model the
+ * fence lives at the host too; an exact entry never consults it.
  */
 function assertModelAdmitted(
 	agent: AgentDefinition,
 	requestedModel: ExactModelRequest,
 	modelSource: ModelSource,
-): void {
+	admitHostModel?: HostModelAdmission,
+): ModelAdmission {
 	if (modelSource === "inherited") {
-		if (agent.allowedModels.includes(INHERIT_MODEL)) return;
+		if (agent.allowedModels.includes(INHERIT_MODEL)) return "inherit";
 		throw new PreflightError(
 			`model exceeds ceiling: ${modelKey(requestedModel)} (template admits ${[...agent.allowedModels].sort().join(", ")}, not inherit)`,
 		);
 	}
-	if (!agent.allowedModels.includes(modelKey(requestedModel))) {
+	if (agent.allowedModels.includes(modelKey(requestedModel))) return "exact";
+	if (!agent.allowedModels.includes(HOST_MODEL)) {
 		throw new PreflightError(
 			`model exceeds ceiling: ${modelKey(requestedModel)}`,
 		);
 	}
+	const admitted = admitHostModel?.(requestedModel);
+	if (admitted === undefined) {
+		throw new PreflightError(
+			`model exceeds ceiling: ${modelKey(requestedModel)} (template admits host, no host model admission provider answered)`,
+		);
+	}
+	if (!admitted) {
+		throw new PreflightError(
+			`model exceeds ceiling: ${modelKey(requestedModel)} (template admits host, host does not admit it)`,
+		);
+	}
+	return "host";
 }
 
 function assertSubset(
@@ -236,6 +276,12 @@ export async function compileLaunchPlan(input: {
 	 * it. Absent, or answering nothing, refuses such a request.
 	 */
 	inheritSessionModel?: () => ExactModelRequest | undefined;
+	/**
+	 * The host's model admission, consulted only when the model is not an
+	 * exact entry of a definition that admits `host`. Absent, or answering
+	 * nothing, refuses such a launch.
+	 */
+	admitHostModel?: HostModelAdmission;
 }): Promise<AgentLaunchPlan> {
 	if (!Value.Check(SubagentRequestSchema, input.request)) {
 		const details = [...Value.Errors(SubagentRequestSchema, input.request)]
@@ -305,7 +351,12 @@ export async function compileLaunchPlan(input: {
 		input.agent,
 		input.inheritSessionModel,
 	);
-	assertModelAdmitted(input.agent, requestedModel, modelSource);
+	const modelAdmission = assertModelAdmitted(
+		input.agent,
+		requestedModel,
+		modelSource,
+		input.admitHostModel,
+	);
 	const model = await input.resolveModel(requestedModel);
 	if (
 		model.provider !== requestedModel.provider ||
@@ -333,6 +384,7 @@ export async function compileLaunchPlan(input: {
 		...(input.forkContext ? { forkContext: input.forkContext } : {}),
 		model,
 		modelSource,
+		modelAdmission,
 		cwd: "/workspace" as const,
 		tools: [...input.request.tools].sort(),
 		preloadSkills,

@@ -99,6 +99,81 @@ describe("agent discovery", () => {
 		).rejects.toThrow("agent name does not match file");
 	});
 
+	it("lets a definition that hands the model to the host omit its default", async () => {
+		const unpinned = (name: string, allowed: string) =>
+			definition(name, "prompt").replace(
+				"model:\n  provider: github-copilot\n  id: gpt-5.6-luna\n  thinking: low\n",
+				`allowedModels: [${allowed}]\n`,
+			);
+		const directory = await sourceDirectory("unpinned");
+		await writeFile(
+			path.join(directory, "routed.md"),
+			unpinned("routed", "host"),
+		);
+		await writeFile(
+			path.join(directory, "inheriting.md"),
+			unpinned("inheriting", "inherit"),
+		);
+		await writeFile(
+			path.join(directory, "pinned.md"),
+			definition("pinned", "prompt").replace(
+				"tools:",
+				"allowedModels: [github-copilot/gpt-5.6-luna:low, host]\ntools:",
+			),
+		);
+		const agents = await discoverAgents([
+			{ scope: "global", directory, trusted: true },
+		]);
+		expect(agents.get("routed")?.defaultModel).toBeUndefined();
+		expect(agents.get("routed")?.allowedModels).toEqual(["host"]);
+		expect(agents.get("inheriting")?.defaultModel).toBeUndefined();
+		expect(agents.get("inheriting")?.allowedModels).toEqual(["inherit"]);
+		expect(agents.get("pinned")?.defaultModel).toEqual({
+			provider: "github-copilot",
+			id: "gpt-5.6-luna",
+			thinking: "low",
+		});
+		expect(agents.get("pinned")?.allowedModels).toEqual([
+			"github-copilot/gpt-5.6-luna:low",
+			"host",
+		]);
+
+		const fenced = await sourceDirectory("unpinned-fenced");
+		await writeFile(
+			path.join(fenced, "worker.md"),
+			unpinned("worker", "github-copilot/gpt-5.6-luna:low"),
+		);
+		await expect(
+			discoverAgents([{ scope: "global", directory: fenced, trusted: true }]),
+		).rejects.toThrow(
+			"agent definition names no model and its allowedModels admit neither inherit nor host",
+		);
+		const bare = await sourceDirectory("unpinned-bare");
+		await writeFile(
+			path.join(bare, "worker.md"),
+			definition("worker", "prompt").replace(
+				"model:\n  provider: github-copilot\n  id: gpt-5.6-luna\n  thinking: low\n",
+				"",
+			),
+		);
+		await expect(
+			discoverAgents([{ scope: "global", directory: bare, trusted: true }]),
+		).rejects.toThrow(
+			"agent definition names no model and its allowedModels admit neither inherit nor host",
+		);
+		const outside = await sourceDirectory("pinned-outside");
+		await writeFile(
+			path.join(outside, "worker.md"),
+			definition("worker", "prompt").replace(
+				"tools:",
+				"allowedModels: [host]\ntools:",
+			),
+		);
+		await expect(
+			discoverAgents([{ scope: "global", directory: outside, trusted: true }]),
+		).rejects.toThrow("default model exceeds agent model ceiling");
+	});
+
 	it("defaults, accepts, and validates the VM memory ceiling", async () => {
 		const directory = await sourceDirectory("memory");
 		await writeFile(

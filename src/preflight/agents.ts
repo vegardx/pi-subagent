@@ -6,7 +6,9 @@ import { parse } from "yaml";
 import {
 	ContextScopeSchema,
 	DEFAULT_MEMORY_BYTES,
+	type ExactModelRequest,
 	ExactModelRequestSchema,
+	HOST_MODEL,
 	INHERIT_MODEL,
 	MemoryBytesSchema,
 	RunLimitsSchema,
@@ -38,11 +40,14 @@ const ModelRouteSchema = Type.String({
 });
 /**
  * One entry of a definition's model fence: an exact provider/id:thinking route,
- * or `inherit`, which admits whatever model the host session answers with.
+ * `inherit`, which admits whatever model the host session answers with, or
+ * `host`, which admits any exact model the host's admission provider stands
+ * behind.
  */
 const AllowedModelSchema = Type.Union([
 	ModelRouteSchema,
 	Type.Literal(INHERIT_MODEL),
+	Type.Literal(HOST_MODEL),
 ]);
 
 /** Closed frontmatter contract for a discovered agent definition. */
@@ -52,7 +57,7 @@ export const AgentFrontmatterSchema = Type.Object(
 			pattern: "^[a-zA-Z0-9][a-zA-Z0-9._-]*$",
 			maxLength: 128,
 		}),
-		model: ExactModelRequestSchema,
+		model: Type.Optional(ExactModelRequestSchema),
 		allowedModels: Type.Optional(
 			Type.Array(AllowedModelSchema, { maxItems: 64, uniqueItems: true }),
 		),
@@ -117,6 +122,36 @@ function splitFrontmatter(content: string): {
 	return { metadata, prompt };
 }
 
+/**
+ * The definition's model fence. A pin with no `allowedModels` admits exactly
+ * the pin. A definition may omit the pin only when its fence hands the choice
+ * on (`inherit` or `host`): no exact default makes sense for a model the host
+ * picks, and every request against it must then name one.
+ */
+function admittedModels(
+	filePath: string,
+	frontmatter: { model?: ExactModelRequest; allowedModels?: string[] },
+): string[] {
+	if (!frontmatter.model) {
+		const allowedModels = frontmatter.allowedModels ?? [];
+		if (
+			!allowedModels.includes(INHERIT_MODEL) &&
+			!allowedModels.includes(HOST_MODEL)
+		) {
+			throw new AgentDiscoveryError(
+				`agent definition names no model and its allowedModels admit neither inherit nor host: ${filePath}`,
+			);
+		}
+		return allowedModels;
+	}
+	const exactModel = `${frontmatter.model.provider}/${frontmatter.model.id}:${frontmatter.model.thinking}`;
+	const allowedModels = frontmatter.allowedModels ?? [exactModel];
+	if (!allowedModels.includes(exactModel)) {
+		throw new AgentDiscoveryError("default model exceeds agent model ceiling");
+	}
+	return allowedModels;
+}
+
 async function loadAgent(
 	filePath: string,
 	scope: AgentSourceScope,
@@ -133,7 +168,7 @@ async function loadAgent(
 	}
 	const frontmatter = metadata as {
 		name: string;
-		model: DiscoveredAgent["defaultModel"];
+		model?: ExactModelRequest;
 		allowedModels?: string[];
 		tools: string[];
 		preloadSkills: string[];
@@ -148,17 +183,13 @@ async function loadAgent(
 		);
 	}
 	const digest = await digestFileResource(filePath);
-	const exactModel = `${frontmatter.model.provider}/${frontmatter.model.id}:${frontmatter.model.thinking}`;
-	const allowedModels = frontmatter.allowedModels ?? [exactModel];
-	if (!allowedModels.includes(exactModel)) {
-		throw new AgentDiscoveryError("default model exceeds agent model ceiling");
-	}
+	const allowedModels = admittedModels(filePath, frontmatter);
 	return {
 		name: frontmatter.name,
 		displayName: frontmatter.name,
 		source: digest.canonicalPath,
 		sha256: digest.sha256,
-		defaultModel: frontmatter.model,
+		...(frontmatter.model ? { defaultModel: frontmatter.model } : {}),
 		allowedModels,
 		tools: [...frontmatter.tools],
 		preloadSkills: [...frontmatter.preloadSkills],

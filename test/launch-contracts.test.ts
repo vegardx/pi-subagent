@@ -37,7 +37,7 @@ const request = {
 
 const plan = {
 	schema: "pi-subagent-launch",
-	contractRevision: 12,
+	contractRevision: 13,
 	operationId: "operation-1",
 	ownerId: "owner-1",
 	runId: "run_launch",
@@ -52,6 +52,7 @@ const plan = {
 	contextMode: "fresh",
 	model: { provider: "github-copilot", id: "gpt-5.6-luna", thinking: "low" },
 	modelSource: "request",
+	modelAdmission: "exact",
 	cwd: "/workspace",
 	tools: ["read", "write", "edit", "bash"],
 	preloadSkills: [],
@@ -198,6 +199,22 @@ describe("launch contracts", () => {
 		).toBe(false);
 		const { modelSource: _source, ...withoutSource } = plan;
 		expect(Value.Check(AgentLaunchPlanSchema, withoutSource)).toBe(false);
+	});
+
+	it("records which fence entry admitted the plan's model", () => {
+		for (const modelAdmission of ["exact", "inherit", "host"]) {
+			expect(
+				Value.Check(AgentLaunchPlanSchema, { ...plan, modelAdmission }),
+			).toBe(true);
+		}
+		expect(
+			Value.Check(AgentLaunchPlanSchema, { ...plan, modelAdmission: "router" }),
+		).toBe(false);
+		const { modelAdmission: _admission, ...withoutAdmission } = plan;
+		expect(Value.Check(AgentLaunchPlanSchema, withoutAdmission)).toBe(false);
+		expect(
+			Value.Check(SubagentRequestSchema, { ...request, model: "host" }),
+		).toBe(false);
 	});
 
 	it("rejects incompatible revisions and host cwd projection", () => {
