@@ -152,13 +152,21 @@ asks for the host session's current model and thinking level, which pi-subagent
 resolves at preflight through the registered session-model provider; with no
 provider, or a provider that answers with nothing, preflight refuses with
 `model inherit: no session model to inherit`. An absent `model` leaves the agent
-definition's own pin in force. A definition's `allowedModels` fences the choice:
-an exact entry admits exactly that `provider/id:thinking`, and the entry
-`inherit` admits whatever the host session answers with, any model at any
-thinking level, so for an inherited model the fence lives at the host. A
-definition without `inherit` refuses an inherited request with
-`model exceeds ceiling: anthropic/opus-5:high (template admits
-github-copilot/gpt-5.6-luna:low, not inherit)`.
+definition's own pin in force; against a definition without a pin preflight
+refuses with `model required: definition names no default model; the request
+must name one`. A definition's `allowedModels` fences the choice: an exact entry
+admits exactly that `provider/id:thinking`, and the entry `inherit` admits
+whatever the host session answers with, any model at any thinking level, so for
+an inherited model the fence lives at the host. A definition without `inherit`
+refuses an inherited request with `model exceeds ceiling: anthropic/opus-5:high
+(template admits github-copilot/gpt-5.6-luna:low, not inherit)`. The entry
+`host` admits an exact model that is not an exact entry when the registered
+model-admission provider stands behind it, so for a routed model the fence lives
+at the host too. It refuses with `model exceeds ceiling: <key> (template admits
+host, host does not admit it)` when the host says no, and with `model exceeds
+ceiling: <key> (template admits host, no host model admission provider
+answered)` when no provider answers. `host` applies to exact models only: an
+inherited request still needs `inherit`.
 
 `ceiling` is a bound the host puts on one delegation, stated in this runtime's
 own vocabulary: workspace modes and tool names, never a host's own mode names.
@@ -210,7 +218,7 @@ model:
   provider: github-copilot
   id: gpt-5.6-luna
   thinking: low
-allowedModels: [github-copilot/gpt-5.6-luna:low, inherit]   # optional; default [the pin]
+allowedModels: [github-copilot/gpt-5.6-luna:low, inherit]   # optional; default [the pin]; may list host
 tools: [read, grep]
 preloadSkills: []
 contextScopes: [project]
@@ -230,9 +238,12 @@ Frontmatter is strict: unknown keys, a `memoryBytes` that is not a multiple
 of 64 MiB, and a `memoryBytes` below 1 GiB or above 4 GiB are rejected at
 discovery with `invalid agent frontmatter`, naming the schema violation. Every declared value is a ceiling, never a floor.
 
-`allowedModels` holds `provider/id:thinking` routes and the entry `inherit`, and
-must contain the `model` pin. It defaults to exactly that pin, so a definition
-admits an inherited model only by saying so.
+`allowedModels` holds `provider/id:thinking` routes and the entries `inherit`
+and `host`, and must contain the `model` pin when there is one. It defaults to
+exactly that pin, so a definition hands the model choice to the host only by
+saying so. `model` may be omitted only when `allowedModels` contains `inherit`
+or `host`; otherwise discovery refuses with `agent definition names no model and
+its allowedModels admit neither inherit nor host`.
 
 ## Effective launch plan
 
@@ -249,6 +260,7 @@ interface AgentLaunchPlan {
 	context: ResolvedContextProjection;
 	model: { provider: string; id: string; thinking: string };
 	modelSource: "request" | "template" | "inherited";
+	modelAdmission: "exact" | "inherit" | "host";
 	cwd: "/workspace";
 	tools: ToolGrant[];
 	preloadSkills: string[];
@@ -295,7 +307,10 @@ controlled by `contextMode`.
 
 `model` is always exact: a plan never carries `inherit`. `modelSource` records
 which of the three ways supplied it, so the persisted record says where the model
-came from, and both fields are part of the launch identity digest. A retry or
+came from. `modelAdmission` records which `allowedModels` entry admitted it — an
+exact route, `inherit`, or `host` — so the record says whether the definition or
+the host stood behind the model. All three fields are part of the launch
+identity digest. A retry or
 resume reruns the plan's recorded model rather than resolving the session again.
 
 `ceiling` records the host bound the plan was compiled under, present only when
@@ -600,6 +615,38 @@ request with `model inherit: no session model to inherit`. Resolution fails
 closed on an answer that violates the contract rather than compiling a model no
 host stands behind.
 
+## Model admission provider
+
+A definition whose `allowedModels` lists `host` hands its model fence to the
+host. A host registers one provider through the
+`@vegardx/pi-subagent/model-admission-provider` export:
+
+```ts
+type ModelAdmissionProvider = (model: ExactModelRequest) => boolean;
+
+function registerModelAdmissionProvider(
+	events: EventBus,
+	provider: ModelAdmissionProvider,
+): () => void;
+
+function resolveModelAdmission(
+	events: EventBus,
+	model: ExactModelRequest,
+): boolean | undefined;
+```
+
+The channel is `@vegardx/pi-subagent/model-admission-provider/request/v1` and
+the request schema `pi-subagent-model-admission-request-v1`; the request
+carries the exact model (a copy) and `respond(admitted)`. Preflight asks only
+when the requested exact model is not an exact entry of a definition that lists
+`host`. Exactly one provider may be registered: a second registration is
+refused with `A pi-subagent model admission provider is already registered.`
+and leaves the first in place. `resolveModelAdmission` returns `undefined` when
+no provider answers, which refuses the launch; it throws
+`ModelAdmissionProviderError` with `code: "duplicate"` when two answer and
+`code: "invalid"` when the answer is not a boolean. A provider that throws gives
+no answer, so the launch is refused as if none were registered.
+
 ## Control receipt
 
 ```ts
@@ -652,6 +699,7 @@ interface SubagentRuntimeContract {
 		workspaceStartAt: boolean;
 		resumeAtHandoff: boolean;
 		capacityWait: boolean;
+		hostModelAdmission: boolean;
 	};
 	capacity: {
 		maxSlots: number; // integer 1..32
@@ -659,7 +707,7 @@ interface SubagentRuntimeContract {
 }
 ```
 
-The current revision is 12. `handoffExport` states that `exportHandoff`,
+The current revision is 13. `handoffExport` states that `exportHandoff`,
 `HandoffRef`, the `export-handoff` action, durable handoff refs, and the
 `handoff-exported` receipt are implemented. `vmMemoryCeiling` states that agent
 definitions carry an optional `memoryBytes` ceiling, that a request may narrow
@@ -714,6 +762,12 @@ any warm-up failure code); `docs/authority.md` describes warm checkpoints and
 dependency binds. `mountPolicySha256` now digests `GUEST_MOUNT_POLICY`
 (mount layout version 2, which adds the dependency binds) instead of the
 revision 11 layout. As with every revision, revision 11 state is not read.
+Revision 13 adds `hostModelAdmission`: a definition's `allowedModels` may list
+`host`, a host may register one model-admission provider that preflight
+consults for an exact model the definition does not list, a definition that
+lists `inherit` or `host` may omit its `model` pin, and the launch plan records
+`modelAdmission`. The new launch-plan field is why revision 12 state is not
+read.
 Consumers check the exact contract
 revision and required features rather than
 infer support from package versions. Revisions are not backwards-compatible:

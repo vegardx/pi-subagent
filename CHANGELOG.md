@@ -6,6 +6,41 @@ The project keeps no backwards compatibility: an incompatible public contract or
 persisted format fails explicitly instead of migrating. Persisted state written
 at an earlier contract revision is quarantined, not read.
 
+## 0.21.0
+
+Contract revision 13. Revision 12 state is quarantined, not read.
+
+### Added
+
+- `host` entry in an agent definition's `allowedModels`: an exact model the
+  definition does not list exactly is admitted when the host's model-admission
+  provider stands behind it, at any thinking level the host admits. An exact
+  entry never consults the host; an inherited request still needs `inherit`.
+  Refusals name the model:
+  `model exceeds ceiling: <key> (template admits host, host does not admit it)`
+  and
+  `model exceeds ceiling: <key> (template admits host, no host model admission provider answered)`.
+- `registerModelAdmissionProvider` and `resolveModelAdmission` in the new
+  `@vegardx/pi-subagent/model-admission-provider` entry point
+  (`ModelAdmissionProvider = (model: ExactModelRequest) => boolean`). Exactly
+  one provider may be registered; a duplicate registration, two answers, or a
+  non-boolean answer fail closed with `ModelAdmissionProviderError`.
+- `modelAdmission` (`exact`, `inherit`, or `host`) in the launch plan and its
+  identity digest: which fence entry admitted the plan's model.
+- `hostModelAdmission` feature. `HOST_MODEL`, `ModelAdmissionSchema`,
+  `ModelAdmission`, `HostModelAdmission`, and `MODEL_DEFAULT_REFUSAL` are
+  exported.
+
+### Changed
+
+- An agent definition's `model` is optional when `allowedModels` lists
+  `inherit` or `host`; without either, discovery refuses a definition with no
+  `model`. A request that names no model against a definition without one is
+  refused with
+  `model required: definition names no default model; the request must name one`.
+- `AgentDefinition.defaultModel` is optional, and `compileLaunchPlan` takes an
+  optional `admitHostModel`.
+
 ## 0.20.0
 
 Contract revision 12. Revision 11 state is quarantined, not read.

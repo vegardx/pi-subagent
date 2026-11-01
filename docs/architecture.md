@@ -205,6 +205,27 @@ host's own session, not the definition. A definition that does not carry
 records the resolved model, a retry or resume reruns that model rather than
 whichever model the session has since moved to.
 
+## Host-admitted models
+
+A consumer may resolve a role to an exact model through the host's own router
+(rosters, tiers, regions, authentication) and send that model on the request.
+Its shipped definitions cannot know which models a given host has, and shipped
+definitions win over host or project copies, so no exact list in them can admit
+a routed model. The entry `host` in `allowedModels` hands that fence to the host,
+symmetric with `inherit`: the host registers one model-admission provider on the
+process-local event bus (`src/model-admission-provider.ts`), and preflight asks
+it about the exact model, at that thinking level, only when the model is not an
+exact entry of the definition. An exact entry never consults the host. No
+provider, or a provider that says no, refuses the launch by name. The plan
+records `modelAdmission` — `exact`, `inherit`, or `host` — so the persisted
+record says whether the definition or the host stood behind the model. A
+definition that admits `inherit` or `host` may omit its `model` pin; a request
+against it that names no model is refused at preflight.
+
+The model-facing `subagent` tool synthesizes a definition that admits exactly
+the model it was called with, so it never reaches the `host` entry; it compiles
+through the same service preflight, and its plans record `exact`.
+
 ## Workspace model
 
 Read-only attempts mount the active checkout through a filtered read-only VFS.

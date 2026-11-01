@@ -155,7 +155,13 @@ thinking level. Use this when the work needs a specific model and must not drift
 with whatever the seat happens to be set to.
 
 **The definition's default.** The request says nothing about a model and the
-definition's own `model` pin applies.
+definition's own `model` pin applies. A definition that hands the choice to the
+host (its `allowedModels` lists `inherit` or `host`) may omit the pin; a request
+against it must then name a model:
+
+```text
+model required: definition names no default model; the request must name one
+```
 
 **Inherited.** The request states the literal `"inherit"`, and the launch runs on
 the model the person is working with in the host session, at that session's
@@ -198,6 +204,34 @@ what it does admit:
 model exceeds ceiling: anthropic/opus-5:high (template admits github-copilot/gpt-5.6-luna:low, not inherit)
 ```
 
+The entry `host` hands the fence for an exact model to the host. A consumer that
+resolves roles through the host's own model router sends the exact model it got;
+its shipped definitions cannot list every model every host has, so they list
+`host` instead. The host registers one admission provider, and preflight asks it
+about any requested exact model the definition does not list exactly:
+
+```ts
+import { registerModelAdmissionProvider } from "@vegardx/pi-subagent/model-admission-provider";
+
+const unregister = registerModelAdmissionProvider(pi.events, (model) =>
+	router.admits(model.provider, model.id, model.thinking),
+);
+```
+
+An exact entry never consults the host. Exactly one provider may be registered;
+a second registration is refused, and an answer that is not a boolean fails
+closed. A host that says no, or no provider at all, refuses the launch by name:
+
+```text
+model exceeds ceiling: anthropic/opus-5:high (template admits host, host does not admit it)
+model exceeds ceiling: anthropic/opus-5:high (template admits host, no host model admission provider answered)
+```
+
+`host` covers exact models only; an inherited request still needs `inherit`.
+The launch plan records which entry admitted its model in `modelAdmission` —
+`exact`, `inherit`, or `host` — so the persisted record says whether the
+definition or the host stood behind it.
+
 The model-facing `subagent` tool accepts `"inherit"` in its own `model`
 parameter and resolves it through the same provider at the call.
 
@@ -208,7 +242,8 @@ Two ceilings bound a launch, and a launch may only narrow them.
 The **agent definition's allowance** is the first: every frontmatter value above
 is a maximum, and a request that asks for a tool, model, workspace mode, limit,
 or memory grant the definition does not declare fails preflight. `allowedModels`
-is the one place a definition can hand that choice on, by admitting `inherit`.
+is the one place a definition can hand that choice on, by admitting `inherit`
+or `host`.
 
 The **host ceiling** is the second. A host whose own mode restricts what it may
 do (a read-only review mode, say) must be able to bound what it delegates, or
@@ -248,6 +283,7 @@ import piSubagentExtension from "@vegardx/pi-subagent/extension";
 import { acquireSubagentService } from "@vegardx/pi-subagent/service-provider";
 import { registerDelegationCeilingProvider } from "@vegardx/pi-subagent/ceiling-provider";
 import { registerSessionModelProvider } from "@vegardx/pi-subagent/session-model-provider";
+import { registerModelAdmissionProvider } from "@vegardx/pi-subagent/model-admission-provider";
 ```
 
 The extension registers its lazy service provider on Pi's process-local event
@@ -298,6 +334,8 @@ plan or definition below it is refused and revision 10 state is not read.
 Revision 12 reports the host's `capacity.maxSlots` so a consumer can cap
 fan-out, adds `capacityWait` and the `capacity` failure code, and reports
 `usageComplete: true` for attempts that ended before a model session existed.
+Revision 13 adds `hostModelAdmission`: a definition may list `host` in
+`allowedModels`, and the launch plan records `modelAdmission`.
 
 ## License
 

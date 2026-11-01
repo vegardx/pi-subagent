@@ -15,6 +15,11 @@
   bounded below the prompt layer and across concurrent seat processes.
 - VM memory is a per-agent ceiling, not a global constant: an agent definition
   declares it and a launch request may only narrow it.
+- The model fence is the definition's `allowedModels`. It hands the choice to
+  the host only by saying so: `inherit` admits the host session's model, `host`
+  admits an exact model the host's registered model-admission provider stands
+  behind. No provider means no `host` admission. The launch plan records which
+  entry admitted its model (`modelAdmission`).
 
 ## Capability resolution
 
