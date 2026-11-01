@@ -35,6 +35,10 @@
 		"./session-model-provider": {
 			"types": "./dist/session-model-provider.d.ts",
 			"import": "./dist/session-model-provider.js"
+		},
+		"./model-admission-provider": {
+			"types": "./dist/model-admission-provider.d.ts",
+			"import": "./dist/model-admission-provider.js"
 		}
 	},
 	"pi": {
